@@ -1,54 +1,66 @@
-# CRAFT ELE - Addon de Instalações Elétricas (NBR 5410) para CADCraft
+# CRAFT ELE - Projeto elétrico (NBR 5410) dentro do CADCraft
 
-O **CRAFT ELE** é uma extensão/addon de engenharia elétrica projetada especificamente para o **CADCraft**, funcionando de forma análoga a extensões profissionais de CAD (como PRO-Elétrica e Lumine).
-
----
-
-## 🎯 Proposta e Fluxo do Addon
-
-O usuário projeta normalmente dentro do **CADCraft**:
-1. **Lançamento no CADCraft**: O projetista insere os blocos (quadros, tomadas, interruptores, luminárias) e desenha o traçado dos eletrodutos no CADCraft.
-2. **Disparo do Addon**: Pelo próprio CADCraft (via comando AutoLISP na linha de comando, ex: `CRAFTELE`), o addon é acionado sobre o desenho ativo.
-3. **Processamento NBR 5410**: O motor analisa a topologia do circuito, calcula potência, corrente, fatores de agrupamento/temperatura, queda de tensão, dimensiona condutores, disjuntores e eletrodutos.
-4. **Retorno Automático no Desenho**: O addon insere de volta no desenho do CADCraft as indicações de fiação (fase, neutro, terra, retornos), as etiquetas de circuito e desenha o Quadro de Cargas executivo.
+O **CRAFT ELE** é um addon de projeto elétrico predial para o **CADCraft**, no estilo do
+PRO-Elétrica e do Lumine. Ele aparece como um painel acoplado dentro do próprio CADCraft,
+ao lado de Propriedades e Camadas.
 
 ---
 
-## 🔌 Arquitetura de Integração com o CADCraft
+## Por que um fork do CADCraft
 
-```text
-       ┌────────────────────────────────────────────────────────┐
-       │                CADCraft (Aplicação CAD)                │
-       │  - Interface de Desenho (Modelspace)                   │
-       │  - Comandos AutoLISP (acaddoc.lsp em %APPDATA%/support)│
-       │  - Canal de Controle IPC / MCP (JSON line 127.0.0.1)   │
-       └───────────────────────────┬────────────────────────────┘
-                                   │
-              AutoLISP / IPC / DXF │ (Comunicação bidirecional)
-                                   ▼
-┌───────────────────────────────────────────────────────────────────────┐
-│                     CRAFT ELE (Motor / Addon)                         │
-│                                                                       │
-│  [src/adapters/]  Adaptador CADCraft (Leitura/escrita de entidades)  │
-│         │                                                             │
-│  [src/graph/]     Grafo Topológico da Instalação (NetworkX)          │
-│         │                                                             │
-│  [src/core/]      Cálculos Puros da NBR 5410 (Bitolas, Queda, DR)    │
-└───────────────────────────────────────────────────────────────────────┘
-```
+O CADCraft não tem sistema de plugins: os painéis são fixos no código-fonte e o AutoLISP não
+abre janelas. Para ter um painel acoplado de verdade, o CRAFT ELE vive num **fork do CADCraft**
+(pasta `cadcraft/`, branch `craft-ele`), escrito em Rust como o resto do programa.
+
+O fork mexe o mínimo possível nos arquivos do CADCraft, para facilitar puxar as atualizações
+do projeto original:
+
+| Onde | O quê |
+| :--- | :--- |
+| `cadcraft/crates/ele/` | Biblioteca do CRAFT ELE: pontos, circuitos e NBR 5410. Não depende da interface. |
+| `cadcraft/crates/ui-egui/src/eletrica.rs` | O painel Elétrica. |
+| `docking.rs`, `menus.rs`, `lib.rs`, `i18n/*.tsv` | Poucas linhas para registrar o painel, o comando e o menu. |
 
 ---
 
-## 📁 Estrutura do Repositório
+## Fluxo de uso
 
-```text
-CRAFT ELE/
-├── cadcraft/                     # Repositório do CADCraft (código-fonte de referência)
-├── src/
-│   ├── adapters/                 # Ponte de comunicação com o CADCraft (DXF / IPC)
-│   ├── graph/                    # Montagem da malha elétrica e traçado dos circuitos
-│   └── core/                     # Dimensionamento normativo NBR 5410
-├── tests/                        # Testes automatizados de validação
-├── pyproject.toml
-└── requirements.txt
-```
+1. O projetista insere os blocos (quadro, pontos de luz, tomadas, interruptores) com os
+   atributos do [padrão de blocos](docs/padrao_blocos_eletricos.md).
+2. Digita `ELETRICA` na linha de comando (ou **Janela > Elétrica**).
+3. O painel lista os pontos e os circuitos do desenho aberto, ao vivo, com os avisos de
+   preenchimento. Clicar num circuito seleciona os pontos dele no desenho.
+4. **Dimensionar quadro** calcula corrente, seção, disjuntor e balanceamento de fases.
+5. **Ajustar fiação** (próxima etapa) vai escrever fiação e bitolas sobre os eletrodutos.
+
+Os mesmos resultados saem em JSON pelos comandos `eletrica.analisar` e `eletrica.dimensionar`,
+pelo canal de controle do CADCraft.
+
+---
+
+## Compilar e abrir
+
+- `COMPILAR_CADCRAFT.bat` compila o fork (`release` como argumento gera a versão otimizada).
+- `INICIAR_CRAFT_ELE.bat` abre o CADCraft compilado.
+
+O toolchain Rust (variante GNU), o MinGW e a pasta de saída ficam em `C:\rust`, porque as
+ferramentas GNU não aceitam o caractere acentuado do nome da pasta do usuário.
+
+---
+
+## Estado do dimensionamento (NBR 5410)
+
+Feito: corrente de projeto, seção mínima (tabela 47), capacidade de condução (tabela 36,
+cobre, PVC, método B1) com FCT e FCA informados, disjuntor com Ib ≤ In ≤ Iz e
+balanceamento de fases.
+
+Falta: queda de tensão, fator de agrupamento pelos eletrodutos, outros métodos de instalação,
+DR, eletrodutos e a escrita no desenho. Os valores das tabelas devem ser conferidos contra a
+norma vigente.
+
+---
+
+## Protótipo em Python
+
+`src/`, `craftele_ui.py` e `poc_read_cadcraft_dxf.py` são o primeiro protótipo, que lia DXF
+salvo e abria uma janela separada. Ficam como referência e não são mais o caminho principal.
