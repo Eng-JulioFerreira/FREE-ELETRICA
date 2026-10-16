@@ -68,15 +68,15 @@ class BlockInsertInfo:
     @property
     def tipo(self) -> str:
         """Tipo/categoria do elemento elétrico."""
-        val = self.get_first_attr(["TIPO", "TYPE", "CATEGORIA"])
+        val = self.get_first_attr(["TIPO", "TIPO_PONTO", "TYPE", "CATEGORIA"])
         if val:
             return val
         # Inferência por nome do bloco caso atributo não esteja explícito
         n = self.name.upper()
         if "INT" in n or "SWITCH" in n:
             return "INTERRUPTOR"
-        if "TUG" in n or "TOMADA" in n:
-            return "TOMADA_TUG"
+        if "TUG" in n or "TOMADA" in n or "TOM" in n:
+            return "TOMADA"
         if "TUE" in n:
             return "TOMADA_TUE"
         if "LUM" in n or "LAMP" in n or "ILUM" in n:
@@ -87,7 +87,7 @@ class BlockInsertInfo:
 
     @property
     def potencia_raw(self) -> Optional[str]:
-        """Texto bruto do atributo de potência (ex: '100VA', '600W')."""
+        """Texto bruto do atributo de potência (ex: '100VA', '600W', '100W')."""
         return self.get_first_attr(["POTENCIA", "POT", "POWER", "W", "VA"])
 
     @property
@@ -113,7 +113,8 @@ class BlockInsertInfo:
     @property
     def fases(self) -> str:
         """Número de fases (1, 2, 3 ou 'MONO', 'BI', 'TRI')."""
-        return self.get_first_attr(["FASES", "NUM_FASES", "FASE", "F"], default="")
+        return self.get_first_attr(["FASES", "NUMERO_FASES", "NUM_FASES", "FASE", "F"], default="")
+
 
     @property
     def circuito(self) -> str:
