@@ -27,14 +27,19 @@ do projeto original:
 
 1. O projetista insere os blocos (quadro, pontos de luz, tomadas, interruptores) com os
    atributos do [padrão de blocos](docs/padrao_blocos_eletricos.md).
-2. Digita `ELETRICA` na linha de comando (ou **Janela > Elétrica**).
-3. O painel lista os pontos e os circuitos do desenho aberto, ao vivo, com os avisos de
-   preenchimento. Clicar num circuito seleciona os pontos dele no desenho.
-4. **Dimensionar quadro** calcula corrente, seção, disjuntor e balanceamento de fases.
-5. **Ajustar fiação** (próxima etapa) vai escrever fiação e bitolas sobre os eletrodutos.
+2. A paleta **Elétrica** já abre com o programa, acima das Tool Sets. Ela só tem ferramentas.
+   Se for fechada, volta com `ELETRICA` ou **Janela > Elétrica**.
+3. **Configurações...** (`ELECONFIG`) define o setup do projeto: sistema de distribuição
+   (tensões e fases) e temperatura ambiente, de onde sai o FCT. O FCA não é digitado: vai sair
+   do agrupamento nos eletrodutos e, até lá, vale 1,00.
+4. **Conferir pontos e circuitos...** (`ELECONFERIR`) abre a janela com os pontos, os circuitos
+   e os atributos que faltam. Clicar num circuito seleciona os pontos dele no desenho.
+5. **Dimensionar quadro...** (`ELEQUADRO`) abre o quadro de cargas: corrente, seção, disjuntor e
+   balanceamento de fases.
+6. **Ajustar fiação** (próxima etapa) vai escrever fiação e bitolas sobre os eletrodutos.
 
-Os mesmos resultados saem em JSON pelos comandos `eletrica.analisar` e `eletrica.dimensionar`,
-pelo canal de controle do CADCraft.
+Os mesmos resultados saem em JSON pelos comandos `eletrica.analisar`, `eletrica.dimensionar` e
+`eletrica.setup`, pelo canal de controle do CADCraft.
 
 ---
 
