@@ -640,6 +640,7 @@ dependencies = [
  "cadcraft-constraints",
  "cadcraft-doc",
  "cadcraft-dxf",
+ "cadcraft-ele",
  "cadcraft-fonts",
  "cadcraft-geom",
  "cadcraft-io",

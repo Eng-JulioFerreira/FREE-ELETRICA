@@ -1,18 +1,21 @@
 //! Pontos elétricos: blocos inseridos no espaço do modelo que carregam atributos elétricos
 //! (padrão em `docs/padrao_blocos_eletricos.md` do CRAFT ELE).
 
-use cadcraft_doc::{Drawing, EntityKind, Handle, Insert};
+use cadcraft_doc::{Drawing, EntityKind, Handle, Insert, RawTag};
 use serde::Serialize;
 
 /// Atributos que marcam um bloco como ponto elétrico. Um bloco sem nenhum deles (porta, móvel,
-/// carimbo) não entra na análise, mesmo que o nome lembre um ponto elétrico.
-const TAGS_TIPO: &[&str] = &["TIPO_PONTO", "TIPO", "TYPE", "CATEGORIA"];
-const TAGS_POTENCIA: &[&str] = &["POTENCIA", "POT", "POWER"];
-const TAGS_TENSAO: &[&str] = &["TENSAO", "VOLTS", "VOLTAGEM"];
-const TAGS_FASES: &[&str] = &["NUMERO_FASES", "FASES", "NUM_FASES", "FASE"];
-const TAGS_CIRCUITO: &[&str] = &["CIRCUITO", "CIRC", "CIRCUIT"];
-const TAGS_COMANDO: &[&str] = &["COMANDO", "CMD"];
-const TAGS_ID: &[&str] = &["TAG", "ID", "NOME"];
+/// carimbo) não entra na análise, mesmo que o nome lembre um ponto elétrico. A primeira tag de
+/// cada lista é a que o CRAFT ELE grava.
+pub const TAGS_TIPO: &[&str] = &["TIPO_PONTO", "TIPO", "TYPE", "CATEGORIA"];
+pub const TAGS_POTENCIA: &[&str] = &["POTENCIA", "POT", "POWER"];
+pub const TAGS_TENSAO: &[&str] = &["TENSAO", "VOLTS", "VOLTAGEM"];
+pub const TAGS_FASES: &[&str] = &["NUMERO_FASES", "FASES", "NUM_FASES", "FASE"];
+pub const TAGS_CIRCUITO: &[&str] = &["CIRCUITO", "CIRC", "CIRCUIT"];
+pub const TAGS_COMANDO: &[&str] = &["COMANDO", "CMD"];
+pub const TAGS_ID: &[&str] = &["TAG", "ID", "NOME"];
+pub const TAGS_ALTURA: &[&str] = &["ALTURA", "ALTURA_INSTALACAO", "H_INSTALACAO", "ALT"];
+pub const TAGS_QUADRO: &[&str] = &["QUADRO"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -112,22 +115,60 @@ pub struct PontoEletrico {
     pub circuito: Option<String>,
     pub comando: Option<String>,
     pub tag: Option<String>,
+    /// Altura de instalação (m), do atributo ALTURA. `None`: usa a altura padrão do tipo.
+    pub altura: Option<f64>,
+    /// O quadro que alimenta o ponto (XDATA gravado pela ferramenta de circuitos, atributo
+    /// QUADRO com a TAG do quadro, ou o único quadro do desenho).
+    #[serde(serialize_with = "handle_hex_opcional")]
+    pub quadro: Option<Handle>,
+    /// A referência ao quadro como estava escrita, antes de ser resolvida.
+    #[serde(skip)]
+    pub quadro_ref: Option<String>,
     /// Todos os atributos lidos, na ordem do bloco.
     pub atributos: Vec<(String, String)>,
+    /// Valores que o CRAFT ELE gravou no XDATA do bloco (valem quando o bloco não tem o atributo).
+    pub extras: Vec<(String, String)>,
 }
 
 fn handle_hex<S: serde::Serializer>(h: &Handle, s: S) -> Result<S::Ok, S::Error> {
     s.serialize_str(&h.hex())
 }
 
+pub(crate) fn handle_hex_opcional<S: serde::Serializer>(h: &Option<Handle>, s: S) -> Result<S::Ok, S::Error> {
+    match h {
+        Some(h) => s.serialize_str(&h.hex()),
+        None => s.serialize_none(),
+    }
+}
+
+/// O primeiro valor não vazio entre `tags` (sem diferenciar maiúsculas): primeiro os atributos
+/// do bloco, depois o XDATA do CRAFT ELE.
+fn buscar<'a>(atributos: &'a [(String, String)], extras: &'a [(String, String)], tags: &[&str]) -> Option<&'a str> {
+    let achar = |lista: &'a [(String, String)]| {
+        tags.iter().find_map(|t| lista.iter().find(|(tag, v)| tag.eq_ignore_ascii_case(t) && !v.trim().is_empty()).map(|(_, v)| v.trim()))
+    };
+    achar(atributos).or_else(|| achar(extras))
+}
+
 impl PontoEletrico {
-    /// O primeiro atributo não vazio entre `tags` (sem diferenciar maiúsculas).
-    fn atributo<'a>(atributos: &'a [(String, String)], tags: &[&str]) -> Option<&'a str> {
-        tags.iter().find_map(|t| atributos.iter().find(|(tag, v)| tag.eq_ignore_ascii_case(t) && !v.trim().is_empty()).map(|(_, v)| v.trim()))
+    /// O valor de um atributo (ou do XDATA do CRAFT ELE) entre `tags`.
+    pub fn valor(&self, tags: &[&str]) -> Option<&str> {
+        buscar(&self.atributos, &self.extras, tags)
+    }
+
+    /// O bloco tem um atributo de verdade (ATTRIB) com uma destas tags.
+    pub fn tem_atributo(&self, tags: &[&str]) -> bool {
+        self.atributos.iter().any(|(t, _)| tags.iter().any(|x| t.eq_ignore_ascii_case(x)))
     }
 
     /// Lê um bloco inserido. `None` quando ele não tem nenhum atributo elétrico.
     pub fn de_insert(doc: &Drawing, handle: Handle, camada: &str, ins: &Insert) -> Option<Self> {
+        Self::de_entidade(doc, handle, camada, ins, &[])
+    }
+
+    /// Lê um bloco inserido com o XDATA da entidade.
+    pub fn de_entidade(doc: &Drawing, handle: Handle, camada: &str, ins: &Insert, xdata: &[RawTag]) -> Option<Self> {
+        let extras = crate::xdata::ler(xdata);
         let mut atributos: Vec<(String, String)> = ins.attribs.iter().map(|a| (a.tag.trim().to_string(), a.text.value.clone())).collect();
         // Atributos constantes ficam só na definição do bloco.
         if let Some(def) = doc.blocks.get(&ins.block) {
@@ -140,13 +181,14 @@ impl PontoEletrico {
                 }
             }
         }
-        let todas = [TAGS_TIPO, TAGS_POTENCIA, TAGS_TENSAO, TAGS_FASES, TAGS_CIRCUITO, TAGS_COMANDO];
-        if !todas.iter().any(|tags| Self::atributo(&atributos, tags).is_some()) {
+        let todas = [TAGS_TIPO, TAGS_POTENCIA, TAGS_TENSAO, TAGS_FASES, TAGS_CIRCUITO, TAGS_COMANDO, TAGS_ALTURA, TAGS_QUADRO];
+        if !todas.iter().any(|tags| buscar(&atributos, &extras, tags).is_some()) {
             return None;
         }
-        let tipo_attr = Self::atributo(&atributos, TAGS_TIPO).and_then(TipoPonto::classificar);
+        let valor = |tags| buscar(&atributos, &extras, tags);
+        let tipo_attr = valor(TAGS_TIPO).and_then(TipoPonto::classificar);
         let tipo = tipo_attr.or_else(|| TipoPonto::classificar(&ins.block)).unwrap_or(TipoPonto::Outro);
-        let texto = |tags| Self::atributo(&atributos, tags).map(str::to_string);
+        let texto = |tags| valor(tags).map(str::to_string);
         Some(PontoEletrico {
             handle,
             bloco: ins.block.clone(),
@@ -154,13 +196,17 @@ impl PontoEletrico {
             posicao: [ins.insert.x, ins.insert.y],
             tipo,
             tipo_informado: tipo_attr.is_some(),
-            potencia: Self::atributo(&atributos, TAGS_POTENCIA).and_then(potencia_va),
-            tensao: Self::atributo(&atributos, TAGS_TENSAO).and_then(numero),
-            fases: Self::atributo(&atributos, TAGS_FASES).and_then(fases),
+            potencia: valor(TAGS_POTENCIA).and_then(potencia_va),
+            tensao: valor(TAGS_TENSAO).and_then(numero),
+            fases: valor(TAGS_FASES).and_then(fases),
             circuito: texto(TAGS_CIRCUITO),
             comando: texto(TAGS_COMANDO),
             tag: texto(TAGS_ID),
+            altura: valor(TAGS_ALTURA).and_then(altura_m),
+            quadro: None,
+            quadro_ref: texto(TAGS_QUADRO),
             atributos,
+            extras,
         })
     }
 
@@ -179,12 +225,7 @@ impl PontoEletrico {
                     v.push("interruptor sem CIRCUITO".into());
                 }
             }
-            TipoPonto::Quadro => {
-                if self.tensao.is_none() {
-                    v.push("quadro sem TENSAO".into());
-                }
-            }
-            TipoPonto::Caixa => {}
+            TipoPonto::Quadro | TipoPonto::Caixa => {}
             TipoPonto::Iluminacao | TipoPonto::Tomada | TipoPonto::TomadaEspecifica | TipoPonto::Outro => {
                 if self.tipo == TipoPonto::Outro {
                     v.push("tipo não reconhecido: preencha TIPO_PONTO (TUG, TUE, ILUM, INTERRUPTOR, QUADRO)".into());
@@ -193,15 +234,28 @@ impl PontoEletrico {
                     v.push("ponto de carga sem POTENCIA".into());
                 }
                 if self.tensao.is_none() {
-                    v.push("ponto sem TENSAO".into());
+                    v.push("ponto sem TENSAO: usando a do sistema das configurações".into());
                 }
                 if self.fases.is_none() {
-                    v.push("ponto sem NUMERO_FASES".into());
+                    v.push("ponto sem NUMERO_FASES: considerado monofásico".into());
                 }
                 if self.circuito.is_none() {
                     v.push("ponto sem CIRCUITO".into());
                 }
             }
+        }
+        if self.altura.is_none() {
+            match self.tipo {
+                TipoPonto::Caixa => {}
+                TipoPonto::Iluminacao => v.push("sem ALTURA de instalação: considerado no teto".into()),
+                t => v.push(format!("sem ALTURA de instalação: usando {} m", br(altura_padrao(t, None)))),
+            }
+        }
+        if self.tipo != TipoPonto::Quadro
+            && let Some(r) = &self.quadro_ref
+            && self.quadro.is_none()
+        {
+            v.push(format!("QUADRO \"{r}\" não encontrado no desenho"));
         }
         v
     }
@@ -212,15 +266,69 @@ impl PontoEletrico {
     }
 }
 
-/// Todos os pontos elétricos do espaço do modelo.
+/// Todos os pontos elétricos do espaço do modelo, cada um ligado ao seu quadro.
 pub fn ler_pontos(doc: &Drawing) -> Vec<PontoEletrico> {
-    doc.model
+    let mut pontos: Vec<PontoEletrico> = doc
+        .model
         .iter()
         .filter_map(|e| match &e.kind {
-            EntityKind::Insert(ins) => PontoEletrico::de_insert(doc, e.handle, &e.common.layer, ins),
+            EntityKind::Insert(ins) => PontoEletrico::de_entidade(doc, e.handle, &e.common.layer, ins, &e.common.xdata),
             _ => None,
         })
-        .collect()
+        .collect();
+    let quadros: Vec<(Handle, Option<String>)> = pontos.iter().filter(|p| p.tipo == TipoPonto::Quadro).map(|p| (p.handle, p.tag.clone())).collect();
+    for p in pontos.iter_mut().filter(|p| p.tipo != TipoPonto::Quadro) {
+        p.quadro = match &p.quadro_ref {
+            // O handle gravado pela ferramenta de circuitos, ou a TAG do quadro escrita à mão.
+            Some(r) => Handle::parse_hex(r)
+                .filter(|h| quadros.iter().any(|(q, _)| q == h))
+                .or_else(|| quadros.iter().find(|(_, tag)| tag.as_deref().is_some_and(|t| t.eq_ignore_ascii_case(r))).map(|(q, _)| *q)),
+            // Sem referência: o único quadro do desenho.
+            None => (quadros.len() == 1).then(|| quadros[0].0),
+        };
+    }
+    pontos
+}
+
+/// Leitura de um único ponto pelo handle (sem resolver o quadro).
+pub fn ler_ponto(doc: &Drawing, h: Handle) -> Option<PontoEletrico> {
+    let e = doc.model.get(h)?;
+    match &e.kind {
+        EntityKind::Insert(ins) => PontoEletrico::de_entidade(doc, e.handle, &e.common.layer, ins, &e.common.xdata),
+        _ => None,
+    }
+}
+
+/// Altura de instalação padrão quando o bloco não informa (m). Iluminação e caixas ficam no
+/// teto: com o pé-direito, a descida é zero.
+pub fn altura_padrao(tipo: TipoPonto, pe_direito: Option<f64>) -> f64 {
+    let teto = pe_direito.unwrap_or(2.8);
+    match tipo {
+        TipoPonto::Iluminacao | TipoPonto::Caixa => teto,
+        TipoPonto::Interruptor => 1.1,
+        TipoPonto::Quadro => 1.5,
+        TipoPonto::Tomada | TipoPonto::TomadaEspecifica | TipoPonto::Outro => 0.3,
+    }
+}
+
+/// Altura em metros: "0,30", "1.10 m", "30cm", "300 mm". Sem unidade e acima de 10, é cm.
+pub fn altura_m(texto: &str) -> Option<f64> {
+    let n = numero(texto)?;
+    let t = texto.to_ascii_lowercase();
+    Some(if t.contains("mm") {
+        n / 1000.0
+    } else if t.contains("cm") || (!t.contains('m') && n > 10.0) {
+        n / 100.0
+    } else {
+        n
+    })
+}
+
+/// Número com vírgula decimal, sem zeros sobrando.
+pub fn br(v: f64) -> String {
+    let s = format!("{v:.2}");
+    let s = s.trim_end_matches('0').trim_end_matches('.');
+    s.replace('.', ",")
 }
 
 /// O primeiro número do texto. Aceita vírgula decimal ("1,5") e ponto de milhar ("1.500").

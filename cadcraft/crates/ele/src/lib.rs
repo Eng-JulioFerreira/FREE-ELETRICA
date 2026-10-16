@@ -1,25 +1,29 @@
 //! CRAFT ELE: projeto elétrico de baixa tensão (NBR 5410) sobre o desenho do CADCraft.
 //!
-//! Lê os pontos elétricos (blocos com atributos), agrupa em circuitos e dimensiona o quadro.
-//! Não depende da interface: o painel Elétrica do `cadcraft-ui-egui` só mostra o que está aqui.
+//! Lê os pontos elétricos (blocos com atributos), agrupa em circuitos por quadro, roteia a
+//! fiação pelos eletrodutos e dimensiona cada circuito. Não depende da interface: a paleta
+//! Elétrica do `cadcraft-ui-egui` e os comandos do motor só usam o que está aqui.
 
 pub mod circuito;
+pub mod editar;
 pub mod nbr5410;
 pub mod ponto;
 pub mod quadro;
+pub mod rota;
 pub mod setup;
+pub mod xdata;
 
 #[cfg(test)]
 mod tests;
 
-use cadcraft_doc::Drawing;
+use cadcraft_doc::{Drawing, Handle};
 use serde::Serialize;
 
 pub use circuito::{Circuito, Natureza};
 pub use nbr5410::Config;
 pub use ponto::{PontoEletrico, TipoPonto};
-pub use quadro::QuadroDeCargas;
-pub use setup::{Setup, Sistema};
+pub use quadro::{ResumoQuadro, Sobrescrita};
+pub use setup::{CaboTelecom, CategoriaTelecom, CorCabo, Setup, Sistema, Unidade};
 
 /// O que o desenho tem de instalação elétrica.
 #[derive(Clone, Debug, Default, Serialize)]
@@ -38,6 +42,15 @@ impl Analise {
     pub fn avisos_pontos(&self) -> Vec<(String, String)> {
         self.pontos.iter().flat_map(|p| p.avisos().into_iter().map(move |a| (p.rotulo(), a))).collect()
     }
+
+    pub fn ponto(&self, h: Handle) -> Option<&PontoEletrico> {
+        self.pontos.iter().find(|p| p.handle == h)
+    }
+
+    /// Os quadros do desenho.
+    pub fn quadros(&self) -> Vec<&PontoEletrico> {
+        quadro::quadros(self)
+    }
 }
 
 pub fn analisar(doc: &Drawing) -> Analise {
@@ -46,6 +59,7 @@ pub fn analisar(doc: &Drawing) -> Analise {
     Analise { pontos, circuitos }
 }
 
-pub fn dimensionar_quadro(analise: &Analise, cfg: &Config) -> QuadroDeCargas {
-    quadro::montar(analise, cfg)
+/// Roteia e dimensiona os circuitos de um quadro (a tabela de resumo de Rotear fiação).
+pub fn rotear_quadro(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle) -> Result<ResumoQuadro, String> {
+    quadro::rotear(doc, analise, setup, quadro)
 }

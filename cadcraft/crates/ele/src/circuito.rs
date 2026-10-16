@@ -34,6 +34,9 @@ impl Natureza {
 #[serde(rename_all = "camelCase")]
 pub struct Circuito {
     pub id: String,
+    /// O quadro que alimenta o circuito. `None`: os pontos não dizem e há mais de um quadro.
+    #[serde(serialize_with = "crate::ponto::handle_hex_opcional")]
+    pub quadro: Option<Handle>,
     #[serde(skip)]
     pub pontos: Vec<Handle>,
     pub natureza: Natureza,
@@ -48,18 +51,46 @@ pub struct Circuito {
     pub avisos: Vec<String>,
 }
 
-/// Agrupa os pontos por circuito, em ordem natural ("2" antes de "10").
+/// Agrupa os pontos por quadro e circuito: o circuito 1 de um quadro não é o do outro. Dentro
+/// de cada quadro, em ordem natural ("2" antes de "10").
 pub fn agrupar(pontos: &[PontoEletrico]) -> Vec<Circuito> {
-    let mut ids: Vec<&str> = pontos.iter().filter(|p| p.tipo != TipoPonto::Quadro).filter_map(|p| p.circuito.as_deref()).collect();
-    ids.sort_by(|a, b| ordem_natural(a, b));
-    ids.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
-    ids.into_iter()
-        .map(|id| {
-            let membros: Vec<&PontoEletrico> =
-                pontos.iter().filter(|p| p.tipo != TipoPonto::Quadro && p.circuito.as_deref().is_some_and(|c| c.eq_ignore_ascii_case(id))).collect();
-            montar(id, &membros)
+    let mut chaves: Vec<(Option<Handle>, &str)> =
+        pontos.iter().filter(|p| p.tipo != TipoPonto::Quadro).filter_map(|p| p.circuito.as_deref().map(|c| (p.quadro, c))).collect();
+    chaves.sort_by(|a, b| a.0.map(|h| h.0).cmp(&b.0.map(|h| h.0)).then_with(|| ordem_natural(a.1, b.1)));
+    chaves.dedup_by(|a, b| a.0 == b.0 && a.1.eq_ignore_ascii_case(b.1));
+    chaves
+        .into_iter()
+        .map(|(quadro, id)| {
+            let membros: Vec<&PontoEletrico> = pontos
+                .iter()
+                .filter(|p| p.tipo != TipoPonto::Quadro && p.quadro == quadro && p.circuito.as_deref().is_some_and(|c| c.eq_ignore_ascii_case(id)))
+                .collect();
+            let mut c = montar(id, &membros);
+            c.quadro = quadro;
+            if quadro.is_none() {
+                c.avisos.push("circuito sem quadro: use Criar circuito ou o atributo QUADRO com a TAG do quadro".into());
+            }
+            c
         })
         .collect()
+}
+
+/// A próxima letra de comando livre num circuito: "a", "b"... (as letras dos interruptores e
+/// luminárias dele).
+pub fn proxima_letra(pontos: &[PontoEletrico], quadro: Option<Handle>, circuito: Option<&str>) -> String {
+    let usadas: Vec<String> = pontos
+        .iter()
+        .filter(|p| p.quadro == quadro && circuito.is_some_and(|c| p.circuito.as_deref().is_some_and(|pc| pc.eq_ignore_ascii_case(c))))
+        .filter_map(|p| p.comando.as_ref().map(|c| c.to_ascii_lowercase()))
+        .collect();
+    ('a'..='z').map(|l| l.to_string()).find(|l| !usadas.contains(l)).unwrap_or_else(|| "a".into())
+}
+
+/// O próximo número de circuito livre no quadro: o maior número usado mais um.
+pub fn proximo_circuito(pontos: &[PontoEletrico], quadro: Handle) -> String {
+    let maior =
+        pontos.iter().filter(|p| p.quadro == Some(quadro)).filter_map(|p| p.circuito.as_deref()?.trim().parse::<u32>().ok()).max().unwrap_or(0);
+    (maior + 1).to_string()
 }
 
 fn montar(id: &str, membros: &[&PontoEletrico]) -> Circuito {
@@ -91,6 +122,7 @@ fn montar(id: &str, membros: &[&PontoEletrico]) -> Circuito {
     }
     Circuito {
         id: id.to_string(),
+        quadro: None,
         pontos: membros.iter().map(|p| p.handle).collect(),
         natureza,
         potencia: cargas.iter().filter_map(|p| p.potencia).sum(),
