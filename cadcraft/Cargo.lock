@@ -623,6 +623,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "cadcraft-ele"
+version = "0.7.0"
+dependencies = [
+ "cadcraft-doc",
+ "cadcraft-geom",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "cadcraft-engine"
 version = "0.7.0"
 dependencies = [
@@ -708,6 +718,7 @@ version = "0.7.0"
 dependencies = [
  "cadcraft-color",
  "cadcraft-doc",
+ "cadcraft-ele",
  "cadcraft-engine",
  "cadcraft-fonts",
  "cadcraft-geom",

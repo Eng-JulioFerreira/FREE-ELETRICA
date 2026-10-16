@@ -1,0 +1,17 @@
+[package]
+name = "cadcraft-ele"
+description = "CRAFT ELE: pontos, circuitos e dimensionamento NBR 5410 sobre o desenho do CADCraft"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+cadcraft-doc = { workspace = true }
+serde = { workspace = true }
+
+[dev-dependencies]
+cadcraft-geom = { workspace = true }
+serde_json = { workspace = true }
