@@ -1,4 +1,8 @@
+# Submodulos / Repositorios externos de referencia
+cadcraft/
+
 # Python
+
 __pycache__/
 *.py[cod]
 *$py.class

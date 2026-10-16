@@ -55,15 +55,16 @@ def test_extract_block_inserts_with_attributes(synthetic_dxf_path: Path):
     assert lum.get_attr_value("COMANDO") == "a"
     assert lum.get_attr_value("POTENCIA") == "100VA"
 
-    # Localizar Interruptor e verificar regra da NBR 5410: COMANDO presente, SEM POTENCIA
+    # Localizar Interruptor e verificar regra da NBR 5410 / POO: COMANDO presente, POTENCIA = 0W
     interruptor = next((b for b in blocks if b.name == "INTERRUPTOR_SIMPLES"), None)
     assert interruptor is not None
     assert interruptor.is_switch is True
     assert interruptor.comando == "a"
     assert interruptor.circuito == "1"
-    assert interruptor.potencia_raw is None
-    assert interruptor.potencia_num is None
+    assert interruptor.potencia_raw == "0W"
+    assert interruptor.potencia_num == 0.0
     assert len(interruptor.validate_schema()) == 0
+
 
     # Localizar Tomada TUG e verificar propriedades normalizadas
     tug = next((b for b in blocks if b.name == "TOMADA_TUG_BAIXA"), None)

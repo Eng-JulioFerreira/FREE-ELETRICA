@@ -70,72 +70,80 @@ class CraftEleUI(tk.Tk):
         style = ttk.Style(self)
         style.theme_use("clam")
 
-        # Cores Dark
-        bg_dark = "#1e1e1e"
-        bg_card = "#252526"
-        fg_text = "#d4d4d4"
-        accent = "#007acc"
-        accent_hover = "#1f8ad2"
+        # Tokens de Design Oficiais do CADCraft (medidos de theme.rs - Tokens::DARK)
+        self.CAD_CHROME = "#3b4453"       # Barra superior / cromo
+        self.CAD_CHROME_DARK = "#313844"  # Header escuro
+        self.CAD_PANEL = "#3c4452"        # Painéis e abas ativas
+        self.CAD_TAB_ACTIVE = "#4e5a6e"   # Aba selecionada
+        self.CAD_CONTROL = "#505a6d"      # Botões e controles
+        self.CAD_CONTROL_HOVER = "#5c677c"# Hover de botão
+        self.CAD_BORDER = "#232930"       # Bordas sutis
+        self.CAD_CANVAS = "#22282f"       # Fundo do desenho / background
+        self.CAD_TEXT = "#f5f6f8"         # Texto principal
+        self.CAD_TEXT_DIM = "#c0c4cc"     # Texto secundário
+        self.CAD_ACCENT = "#2670e8"       # Azul de destaque oficial
 
-        style.configure(".", background=bg_dark, foreground=fg_text)
-        style.configure("TFrame", background=bg_dark)
-        style.configure("Card.TFrame", background=bg_card, relief="flat")
+        self.configure(bg=self.CAD_CANVAS)
 
-        # Botões
+        style.configure(".", background=self.CAD_CANVAS, foreground=self.CAD_TEXT)
+        style.configure("TFrame", background=self.CAD_CANVAS)
+        style.configure("Card.TFrame", background=self.CAD_PANEL, relief="flat")
+
+        # Botões com visual do CADCraft
         style.configure(
             "Primary.TButton",
-            background=accent,
+            background=self.CAD_ACCENT,
             foreground="#ffffff",
             font=("Segoe UI", 9, "bold"),
             padding=(12, 6),
             borderwidth=0,
         )
-        style.map("Primary.TButton", background=[("active", accent_hover)])
+        style.map("Primary.TButton", background=[("active", "#3b82f6")])
 
         style.configure(
             "Secondary.TButton",
-            background="#333333",
+            background=self.CAD_CONTROL,
             foreground="#ffffff",
             font=("Segoe UI", 9),
             padding=(10, 5),
             borderwidth=0,
         )
-        style.map("Secondary.TButton", background=[("active", "#444444")])
+        style.map("Secondary.TButton", background=[("active", self.CAD_CONTROL_HOVER)])
 
-        # Notebook (Abas)
+        # Notebook (Abas idênticas às Tool Sets do CADCraft)
         style.configure(
             "TNotebook",
-            background=bg_dark,
+            background=self.CAD_CANVAS,
             borderwidth=0,
             tabmargins=[2, 5, 2, 0],
         )
         style.configure(
             "TNotebook.Tab",
-            background="#2d2d2d",
-            foreground="#cccccc",
+            background=self.CAD_CHROME_DARK,
+            foreground=self.CAD_TEXT_DIM,
             padding=[15, 6],
             font=("Segoe UI", 9, "bold"),
             borderwidth=0,
         )
         style.map(
             "TNotebook.Tab",
-            background=[("selected", bg_card)],
-            foreground=[("selected", "#ffffff")],
+            background=[("selected", self.CAD_PANEL)],
+            foreground=[("selected", self.CAD_TEXT)],
         )
 
-        # Treeview (Tabelas)
+        # Treeview (Tabelas com fundo dos painéis do CADCraft)
         style.configure(
             "Treeview",
-            background="#252526",
-            foreground="#d4d4d4",
-            fieldbackground="#252526",
+            background=self.CAD_PANEL,
+            foreground=self.CAD_TEXT,
+            fieldbackground=self.CAD_PANEL,
             rowheight=26,
             font=("Segoe UI", 9),
             borderwidth=0,
         )
         style.configure(
             "Treeview.Heading",
-            background="#333333",
+            background=self.CAD_CHROME_DARK,
             foreground="#ffffff",
             font=("Segoe UI", 9, "bold"),
             padding=(6, 4),
@@ -143,7 +151,7 @@ class CraftEleUI(tk.Tk):
         )
         style.map(
             "Treeview",
-            background=[("selected", "#094771")],
+            background=[("selected", self.CAD_ACCENT)],
             foreground=[("selected", "#ffffff")],
         )
 

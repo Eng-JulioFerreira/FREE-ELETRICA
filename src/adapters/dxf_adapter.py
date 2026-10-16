@@ -159,19 +159,20 @@ class BlockInsertInfo:
         if self.is_switch:
             if not self.comando:
                 warnings.append("Interruptor sem atributo 'COMANDO' (letra de acionamento).")
-            if self.potencia_raw:
-                warnings.append(f"Atenção: Interruptor não deve possuir potência ('{self.potencia_raw}').")
+            if self.potencia_num is not None and self.potencia_num > 0:
+                warnings.append(f"Atenção: Interruptor deve ter potência 0W (atual: '{self.potencia_raw}').")
         elif self.is_board:
             if not self.tensao:
                 warnings.append("Quadro sem atributo 'TENSAO' definida.")
         else:
-            # Ponto de Carga
-            if not self.potencia_raw:
+            # Ponto de Carga (Tomadas, Iluminação, etc.)
+            if self.potencia_num is None:
                 warnings.append("Ponto de carga sem atributo 'POTENCIA'.")
             if not self.tensao:
                 warnings.append("Ponto sem atributo 'TENSAO'.")
             if not self.fases:
-                warnings.append("Ponto sem atributo 'FASES'.")
+                warnings.append("Ponto sem atributo 'NUMERO_FASES' ou 'FASES'.")
+
 
         return warnings
 
@@ -570,14 +571,16 @@ class CADCraftDXFAdapter:
         ins_lum.add_attrib("FASES", "1", dxfattribs={"flags": 0})
         ins_lum.add_attrib("COMANDO", "a", dxfattribs={"flags": 0})
 
-        # Inserção 3: Interruptor em (4.0, 3.0, 1.2) com ATTRIBs explícitos (SEM POTÊNCIA)
+        # Inserção 3: Interruptor em (4.0, 3.0, 1.2) com ATTRIBs explícitos (POTÊNCIA ZERADA: 0W)
         ins_int = msp.add_blockref("INTERRUPTOR_SIMPLES", (4.0, 3.0, 1.2), dxfattribs={"layer": "ELETRO_COMANDOS"})
         ins_int.add_attrib("TAG", "INT-SALA", dxfattribs={"flags": 0})
         ins_int.add_attrib("TIPO", "INTERRUPTOR", dxfattribs={"flags": 0})
+        ins_int.add_attrib("POTENCIA", "0W", dxfattribs={"flags": 0})
         ins_int.add_attrib("COMANDO", "a", dxfattribs={"flags": 0})
         ins_int.add_attrib("CIRCUITO", "1", dxfattribs={"flags": 0})
         ins_int.add_attrib("TENSAO", "127V", dxfattribs={"flags": 0})
         ins_int.add_attrib("FASES", "1", dxfattribs={"flags": 0})
+
 
         # Inserção 4: Tomada em (0.0, 3.0, 0.3) com ATTRIBs explícitos
         ins_tug = msp.add_blockref("TOMADA_TUG_BAIXA", (0.0, 3.0, 0.3), dxfattribs={"layer": "ELETRO_PONTOS"})

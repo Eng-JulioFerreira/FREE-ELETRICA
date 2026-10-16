@@ -12,35 +12,24 @@ Os atributos são case-insensitive (não diferenciam maiúsculas de minúsculas)
 
 ---
 
-## 📋 2. Estrutura de Atributos por Categoria de Bloco
+## 📋 2. Estrutura Unificada de Atributos (Modelo Orientado a Objetos)
 
-### A. Pontos de Carga (Tomadas TUG/TUE, Iluminação, Cargas Especiais)
-Elementos que consomem potência elétrica e demandam condutores ativos (Fase, Neutro, Terra).
+Seguindo o paradigma de **Programação Orientada a Objetos (POO)**, todo ponto elétrico deriva de uma mesma classe base (`PontoEletrico`). Portanto, **todos os blocos compartilham exatamente os mesmos atributos**:
 
-| Atributo | Descrição | Exemplos Válidos | Sinônimos Aceitos |
+| Atributo | Descrição | Exemplo Tomada / Iluminação | Exemplo Interruptor |
 | :--- | :--- | :--- | :--- |
-| `TIPO` | Tipo do ponto ou finalidade | `TUG`, `TUE`, `ILUM`, `CHUVEIRO`, `AR_COND` | `TYPE`, `CATEGORIA` |
-| `POTENCIA` | Potência nominal (W ou VA) | `100VA`, `600VA`, `5400W`, `100`, `600` | `POT`, `POWER`, `W`, `VA` |
-| `TENSAO` | Tensão nominal de operação | `127V`, `220V`, `127`, `220` | `VOLTS`, `VOLTAGEM`, `TENSÃO` |
-| `FASES` | Quantidade de fases (1, 2 ou 3) | `1`, `2`, `3`, `MONO`, `BI`, `TRI` | `NUM_FASES`, `FASE`, `F` |
-| `CIRCUITO` | Identificador do circuito | `1`, `2`, `ILUM-01`, `TUG-02` | `CIRC`, `CIRCUIT` |
-| `TAG` | Identificador individual do ponto | `TUG-1`, `LUM-3`, `CH-01` | `ID`, `NOME` |
+| `TIPO_PONTO` | Categoria do elemento | `TOMADA`, `TUG`, `TUE`, `ILUM` | `INTERRUPTOR`, `INT_SIMPLES` |
+| `POTENCIA` | Potência nominal | `100W`, `600VA`, `5400W` | **`0W` (Sempre zerada: 0)** |
+| `TENSAO` | Tensão nominal | `127V`, `220V` | `127V`, `220V` |
+| `NUMERO_FASES` | Quantidade de fases | `1`, `2`, `3` | `1` |
+| `CIRCUITO` | Circuito associado | `1`, `2` | `1`, `2` |
+| `COMANDO` | Tecla / acionamento | `a` (em lâmpadas) ou vazio | **`a`, `b`, `c` (Obrigatório)** |
+| `TAG` | Identificador individual | `TUG-01`, `LUM-01` | `INT-01` |
 
-> [!NOTE]
-> Se a unidade de potência for omitida (ex: `600`), o motor assume `VA` para iluminação/TUG e `W` para cargas puramente resistivas (conforme fator de potência da NBR 5410).
+> [!IMPORTANT]
+> **Regra do Interruptor em POO**:
+> O interruptor possui **todos** os atributos da família de pontos elétricos. A sua potência é **sempre 0W** (zero), e a única diferença operacional é que ele possui o atributo `COMANDO` preenchido indicando a tecla de acionamento da lâmpada.
 
----
-
-### B. Pontos de Comando (Interruptores, Pulsadores, Sensores)
-Elementos de manobra que seccionam condutores. **Não são receptores de carga**.
-
-| Atributo | Descrição | Exemplos Válidos | Regra de Negócio |
-| :--- | :--- | :--- | :--- |
-| `TIPO` | Tipo do interruptor | `INT_SIMPLES`, `INT_PARALELO`, `INT_INTERMEDIARIO` | Obrigatório |
-| `COMANDO` | Letra/código da lâmpada acionada | `a`, `b`, `c`, `s1`, `A` | **Obrigatório** |
-| `CIRCUITO` | Circuito da lâmpada que ele aciona | `1`, `2` | Obrigatório |
-| `TAG` | Identificador do interruptor | `SW-01`, `INT-a` | Opcional / Recomendado |
-| `POTENCIA` | **NÃO DEVE EXISTIR** | *(ausente)* | **Interruptores não possuem potência** |
 
 ---
 
