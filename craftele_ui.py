@@ -35,7 +35,7 @@ class CraftEleUI(tk.Tk):
     def __init__(self, initial_dxf: str | Path | None = None):
         super().__init__()
 
-        self.title("⚡ CRAFT ELE - Addon de Instalações Elétricas (NBR 5410) | CADCraft")
+        self.title("CRAFT ELE - Addon de Instalacoes Eletricas (NBR 5410) | CADCraft")
         self.geometry("1100x720")
         self.minsize(900, 600)
 
@@ -64,6 +64,7 @@ class CraftEleUI(tk.Tk):
             default_sample = Path("data") / "circuito_teste_sintetico.dxf"
             if default_sample.is_file():
                 self.load_dxf(default_sample)
+
 
     def _setup_styles(self) -> None:
         style = ttk.Style(self)
@@ -156,7 +157,7 @@ class CraftEleUI(tk.Tk):
 
         lbl_logo = tk.Label(
             title_box,
-            text="⚡ CRAFT ELE",
+            text="CRAFT ELE",
             font=("Segoe UI", 14, "bold"),
             fg="#4ec9b0",
             bg="#181818",
@@ -178,7 +179,7 @@ class CraftEleUI(tk.Tk):
 
         self.lbl_cadcraft_status = tk.Label(
             badge_box,
-            text="🟢 CADCraft Integrado (Comando 'eletrica' ativo)",
+            text="[OK] CADCraft Integrado (Comando 'eletrica')",
             font=("Segoe UI", 9, "bold"),
             fg="#4ec9b0",
             bg="#223322",
@@ -195,7 +196,7 @@ class CraftEleUI(tk.Tk):
         # Botão Abrir DXF
         btn_open = ttk.Button(
             bar,
-            text="📂 Abrir Arquivo DXF...",
+            text="Abrir Arquivo DXF...",
             style="Primary.TButton",
             command=self._on_click_open_dxf,
         )
@@ -204,7 +205,7 @@ class CraftEleUI(tk.Tk):
         # Botão Recarregar
         btn_reload = ttk.Button(
             bar,
-            text="🔄 Recarregar Desenho",
+            text="Recarregar Desenho",
             style="Secondary.TButton",
             command=self._on_click_reload,
         )
@@ -261,18 +262,19 @@ class CraftEleUI(tk.Tk):
 
         # Aba 1: Blocos e Parâmetros Elétricos
         self.tab_blocks = ttk.Frame(self.notebook, style="Card.TFrame")
-        self.notebook.add(self.tab_blocks, text=" 🔌 Blocos & Parâmetros Elétricos ")
+        self.notebook.add(self.tab_blocks, text=" Blocos & Parametros Eletricos ")
         self._build_blocks_tab(self.tab_blocks)
 
         # Aba 2: Eletrodutos e Conectividade
         self.tab_conduits = ttk.Frame(self.notebook, style="Card.TFrame")
-        self.notebook.add(self.tab_conduits, text=" 📐 Eletrodutos & Topologia ")
+        self.notebook.add(self.tab_conduits, text=" Eletrodutos & Topologia ")
         self._build_conduits_tab(self.tab_conduits)
 
         # Aba 3: Resumo da Instalação e Quadro de Cargas
         self.tab_calc = ttk.Frame(self.notebook, style="Card.TFrame")
-        self.notebook.add(self.tab_calc, text=" 📊 Quadro de Cargas & NBR 5410 ")
+        self.notebook.add(self.tab_calc, text=" Quadro de Cargas & NBR 5410 ")
         self._build_calc_tab(self.tab_calc)
+
 
     def _build_blocks_tab(self, parent: ttk.Frame) -> None:
         # Split horizontal: Tabela em cima, Detalhes embaixo
@@ -421,44 +423,66 @@ class CraftEleUI(tk.Tk):
         )
         self.statusbar.pack(fill="x", side="bottom")
 
+    TRIGGER_FILES = [
+        Path("C:/Users/Public/craftele_trigger.flag"),
+        Path(__file__).parent / "craftele_trigger.flag",
+        Path(os.getenv("APPDATA", "")) / "CADCraft" / "craftele_trigger.flag",
+    ]
+
     # -----------------------------------------------------------------
     # Monitoramento do Comando 'eletrica' do CADCraft
     # -----------------------------------------------------------------
     def _init_trigger_watcher(self) -> None:
         """Verifica a cada 500ms se o comando 'eletrica' foi acionado no CADCraft."""
-        self._check_trigger_file()
+        self._check_trigger_files()
         self.after(500, self._init_trigger_watcher)
 
-    def _check_trigger_file(self) -> None:
-        if not self.TRIGGER_FILE.exists():
-            return
+    def _check_trigger_files(self) -> None:
+        for trig_path in self.TRIGGER_FILES:
+            if not trig_path.exists():
+                continue
 
-        try:
-            mtime = self.TRIGGER_FILE.stat().st_mtime
-            if mtime > self.last_trigger_mtime:
-                self.last_trigger_mtime = mtime
-                # Ler conteúdo (caminho do arquivo ativo passado pelo CADCraft)
-                try:
-                    content = self.TRIGGER_FILE.read_text(encoding="utf-8").strip()
-                except Exception:
-                    content = ""
+            try:
+                mtime = trig_path.stat().st_mtime
+                if mtime > self.last_trigger_mtime:
+                    self.last_trigger_mtime = mtime
+                    try:
+                        content = trig_path.read_text(encoding="utf-8", errors="replace").strip()
+                    except Exception:
+                        content = ""
 
-                # Trazer janela para frente
-                self.lift()
-                self.attributes("-topmost", True)
-                self.after(100, lambda: self.attributes("-topmost", False))
-                self.focus_force()
+                    # Trazer janela para a frente
+                    self.lift()
+                    self.attributes("-topmost", True)
+                    self.after(200, lambda: self.attributes("-topmost", False))
+                    self.focus_force()
 
-                self.statusbar.config(
-                    text=f"⚡ Comando 'eletrica' recebido do CADCraft às {time.strftime('%H:%M:%S')}!",
-                    bg="#4ec9b0",
-                    fg="#1e1e1e",
-                )
+                    self.statusbar.config(
+                        text=f"⚡ Comando 'eletrica' recebido do CADCraft às {time.strftime('%H:%M:%S')}! (Desenho: {content or 'Ativo'})",
+                        bg="#4ec9b0",
+                        fg="#1e1e1e",
+                    )
 
-                if content and Path(content).is_file():
-                    self.load_dxf(Path(content))
-        except Exception as e:
-            pass
+                    # Tentar resolver o arquivo de desenho
+                    target_file: Optional[Path] = None
+                    if content and Path(content).is_file():
+                        target_file = Path(content)
+                    else:
+                        # Tentar localizar no autosave do CADCraft
+                        autosave_dir = Path(os.getenv("APPDATA", "")) / "CADCraft" / "autosave"
+                        if autosave_dir.exists():
+                            candidates = list(autosave_dir.glob(f"{content}*.sv$")) if content else []
+                            if not candidates:
+                                candidates = sorted(autosave_dir.glob("*.sv$"), key=lambda p: p.stat().st_mtime, reverse=True)
+                            if candidates:
+                                target_file = candidates[0]
+
+                    if target_file and target_file.is_file():
+                        self.load_dxf(target_file)
+                    break
+            except Exception:
+                pass
+
 
     # -----------------------------------------------------------------
     # Ações e Carregamento de Arquivo
@@ -516,9 +540,9 @@ class CraftEleUI(tk.Tk):
         for b in blocks:
             warnings = b.validate_schema()
             if not warnings:
-                status = "✅ Válido (NBR 5410)"
+                status = "[OK] Valido (NBR 5410)"
             else:
-                status = f"⚠️ {warnings[0]}"
+                status = f"[!] {warnings[0]}"
 
             pot_display = b.potencia_raw or "-"
             fases_display = b.fases or "-"
@@ -548,11 +572,12 @@ class CraftEleUI(tk.Tk):
 
         for c in conduits:
             if c.is_fully_connected:
-                st = "✅ Conectado"
+                st = "[OK] Conectado"
             elif c.is_dangling:
-                st = "⚠️ Ponta Solta"
+                st = "[!] Ponta Solta"
             else:
-                st = "❌ Desconectado"
+                st = "[X] Desconectado"
+
 
             start_txt = (
                 f"{c.start_match.block.name} (#{c.start_match.block.handle})"

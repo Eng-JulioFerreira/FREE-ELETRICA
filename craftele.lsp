@@ -1,20 +1,30 @@
 ;;; ==============================================================================
-;;; CRAFT ELE - Addon de Instalações Elétricas (NBR 5410) para CADCraft
+;;; CRAFT ELE - Addon de Instalacoes Eletricas (NBR 5410) para CADCraft
 ;;; Arquivo: craftele.lsp / acaddoc.lsp
 ;;; Define o comando 'eletrica' diretamente na linha de comando do CADCraft.
 ;;; ==============================================================================
 
 (defun c:eletrica ()
-  (setq flag_path (strcat (getenv "APPDATA") "\\CADCraft\\craftele_trigger.flag"))
+  (setq flag_path "C:/Users/Public/craftele_trigger.flag")
   (setq f (open flag_path "w"))
   (if f
     (progn
-      ;; Envia o caminho do desenho atual aberto no CADCraft
-      (write-line (strcat (getvar "dwgprefix") (getvar "dwgname")) f)
+      (write-line (getvar "DWGNAME") f)
       (close f)
-      (princ "\n[CRAFT ELE] Sinal de abertura enviado! A janela grafica esta sendo exibida.")
+      (princ "\n[CRAFT ELE] Sinal enviado com sucesso! A janela do CRAFT ELE esta aberta.")
     )
-    (princ "\n[CRAFT ELE] Aviso: Nao foi possivel registrar o arquivo de trigger.")
+    (progn
+      ;; Tentativa alternativa via caminho de projeto
+      (setq f2 (open "C:/Users/JLIOFE~1/Desktop/CRAFTE~1/craftele_trigger.flag" "w"))
+      (if f2
+        (progn
+          (write-line (getvar "DWGNAME") f2)
+          (close f2)
+          (princ "\n[CRAFT ELE] Sinal enviado com sucesso! A janela do CRAFT ELE esta aberta.")
+        )
+        (princ "\n[CRAFT ELE] Erro: Nao foi possivel escrever no arquivo de comunicacao.")
+      )
+    )
   )
   (princ)
 )
