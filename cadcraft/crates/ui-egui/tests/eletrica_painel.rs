@@ -71,6 +71,10 @@ fn eletrica_abre_o_painel_e_dimensiona_o_quadro() {
     // Digitado, abre o painel.
     assert!(app.cmdline("ELETRICA").is_none());
     assert!(app.ui.docking.layout.contains(&Panel::Eletrica));
+    // Na primeira vez fica acima das Tool Sets, com altura fixa.
+    let local = app.ui.docking.layout.location(&Panel::Eletrica).unwrap();
+    assert_eq!(local.size, Some(craft_ui::layout::SplitSize::FixedFirst(250.0)));
+    assert_eq!(local.anchor, Some(Panel::ToolSets));
     // Pelo canal de controle, o resultado sai em JSON.
     let q = app.run("eletrica.dimensionar", json!({})).unwrap();
     assert_eq!(q["quadro"], "QD-01");
@@ -80,6 +84,13 @@ fn eletrica_abre_o_painel_e_dimensiona_o_quadro() {
     assert_eq!(q["linhas"][1]["dimensionamento"]["disjuntor"], 6.0);
     let a = app.run("eletrica.analisar", json!({})).unwrap();
     assert_eq!(a["pontos"].as_array().unwrap().len(), 3);
+    // As configurações mudam o cálculo: a 60 °C o FCT é 0,50 e o 2,5 mm² cai para 12 A.
+    let s = app.run("eletrica.setup", json!({ "temperaturaAmbiente": 60 })).unwrap();
+    assert_eq!(s["temperaturaAmbiente"], 60.0);
+    let q = app.run("eletrica.dimensionar", json!({})).unwrap();
+    assert_eq!(q["linhas"][1]["dimensionamento"]["iz"], 12.0);
+    app.run("eletrica.setup", json!({ "temperaturaAmbiente": 30 })).unwrap();
+    assert_eq!(app.run("eletrica.setup", json!({})).unwrap()["sistema"], "bifasico220127");
 
     app.ui.in_window_menu = false;
     let mut h = Harness::builder().with_size(vec2(1600.0, 1000.0)).build_ui_state(
@@ -90,17 +101,50 @@ fn eletrica_abre_o_painel_e_dimensiona_o_quadro() {
         app,
     );
     h.run_steps(4);
-    h.get_by_label("Pontos elétricos");
-    // Na contagem de pontos e no tipo do circuito 1.
-    assert_eq!(h.get_all_by_label("Iluminação").count(), 2);
-    h.get_by_label("Circuitos");
+    // A paleta só tem ferramentas: nenhum dado do projeto.
+    h.get_by_label("Dimensionar quadro...");
+    assert!(h.query_by_label("Pontos elétricos").is_none());
     assert!(h.query_by_label("Quadro de cargas (QD-01)").is_none());
-    h.get_by_label("Dimensionar quadro").click();
+
+    // Configurações: abas e Cancelar.
+    h.get_by_label("Configurações...").click();
     h.run_steps(3);
-    h.get_by_label("Quadro de cargas (QD-01)");
-    h.get_by_label("700 VA");
-    // Clicar no circuito seleciona os pontos dele no desenho.
+    h.get_by_label("Sistema de distribuição");
+    h.get_by_label("Condutores").click();
+    h.run_steps(3);
+    h.get_by_label("FCT (tabela 40)");
+    h.get_by_label("Cancelar").click();
+    h.run_steps(3);
+    assert!(h.query_by_label("FCT (tabela 40)").is_none());
+
+    // Conferência: pontos e circuitos; clicar no circuito seleciona os pontos dele.
+    h.get_by_label("Conferir pontos e circuitos...").click();
+    h.run_steps(3);
+    h.get_by_label("Pontos elétricos");
+    assert_eq!(h.get_all_by_label("Iluminação").count(), 2);
     h.get_all_by_label("2").next().unwrap().click();
     h.run_steps(3);
     assert_eq!(h.state().session.selection().len(), 1);
+
+    // Quadro de cargas.
+    h.get_by_label("Dimensionar quadro...").click();
+    h.run_steps(3);
+    h.get_by_label("Quadro de cargas (QD-01)");
+    h.get_by_label("700 VA");
+}
+
+#[test]
+fn eletrica_nao_abre_sozinha_sem_o_executavel_pedir() {
+    // O layout de fábrica do CADCraft continua o mesmo: só o executável pede a paleta aberta.
+    let mut app = CadApp::new(Session::default(), Services::default());
+    app.session.open_drawing(planta(), "Planta", None);
+    let mut h = Harness::builder().with_size(vec2(1200.0, 800.0)).build_ui_state(
+        |ui, app: &mut CadApp| {
+            app.logic(&ui.ctx().clone());
+            app.ui(ui);
+        },
+        app,
+    );
+    h.run_steps(3);
+    assert!(!h.state().ui.docking.layout.contains(&Panel::Eletrica));
 }

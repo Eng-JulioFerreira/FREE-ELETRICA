@@ -400,7 +400,7 @@ fn panel_limits(panel: &Panel) -> PanelLimits {
         Panel::QuickCalc => (egui::vec2(240.0, 160.0), 600.0),
         Panel::ToolSets => (egui::vec2(220.0, 150.0), 480.0),
         Panel::Layers | Panel::Properties | Panel::ExternalRefs => (egui::vec2(220.0, 100.0), 720.0),
-        Panel::Eletrica => (egui::vec2(280.0, 160.0), 900.0),
+        Panel::Eletrica => (egui::vec2(200.0, 120.0), 900.0),
     };
     PanelLimits { min, max: egui::vec2(max_width, 1_000_000.0) }
 }

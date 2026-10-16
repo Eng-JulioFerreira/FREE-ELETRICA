@@ -7,6 +7,7 @@ pub mod circuito;
 pub mod nbr5410;
 pub mod ponto;
 pub mod quadro;
+pub mod setup;
 
 #[cfg(test)]
 mod tests;
@@ -18,6 +19,7 @@ pub use circuito::{Circuito, Natureza};
 pub use nbr5410::Config;
 pub use ponto::{PontoEletrico, TipoPonto};
 pub use quadro::QuadroDeCargas;
+pub use setup::{Setup, Sistema};
 
 /// O que o desenho tem de instalação elétrica.
 #[derive(Clone, Debug, Default, Serialize)]

@@ -220,3 +220,46 @@ fn avisa_circuito_misto_e_ponto_incompleto() {
     assert_eq!(dim.tensao, 127.0);
     assert_eq!(dim.avisos.len(), 1);
 }
+
+#[test]
+fn setup_define_tensao_fases_e_fct() {
+    let padrao = Setup::default();
+    assert_eq!(padrao.sistema, Sistema::Bifasico220127);
+    assert_eq!(padrao.config(), Config { tensao_fn: 127.0, fct: 1.0, fca: 1.0, fases_padrao: 2 });
+    let quente = Setup { temperatura_ambiente: 35.0, ..Setup::default() };
+    assert_eq!(quente.fct(), 0.94);
+    // Entre duas linhas da tabela 40 vale a de cima (lado seguro).
+    assert_eq!(Setup { temperatura_ambiente: 33.0, ..Setup::default() }.fct(), 0.94);
+    assert_eq!(Setup { temperatura_ambiente: 10.0, ..Setup::default() }.fct(), 1.22);
+    let tri = Setup { sistema: Sistema::Trifasico380220, ..Setup::default() }.config();
+    assert_eq!((tri.tensao_fn, tri.fases_padrao), (220.0, 3));
+    assert_eq!(Sistema::Monofasico127.tensao_ff(), None);
+    // Gravado e lido de volta como JSON (preferências do CADCraft).
+    let json = serde_json::to_string(&quente).unwrap();
+    assert_eq!(serde_json::from_str::<Setup>(&json).unwrap(), quente);
+    // Campo faltando cai no padrão.
+    assert_eq!(serde_json::from_str::<Setup>("{\"temperaturaAmbiente\": 40}").unwrap().sistema, Sistema::Bifasico220127);
+}
+
+#[test]
+fn temperatura_alta_aumenta_o_condutor() {
+    let a = analisar(&planta());
+    let tug = &a.circuitos[1];
+    // 9,45 A: em 30 °C o 2,5 mm² (24 A) basta; a 60 °C ele cai para 12 A e o 1,5 nem entra (TUG).
+    let frio = nbr5410::dimensionar(tug, &Setup::default().config());
+    let quente = nbr5410::dimensionar(tug, &Setup { temperatura_ambiente: 60.0, ..Setup::default() }.config());
+    assert_eq!(frio.secao, Some(2.5));
+    assert_eq!(quente.iz, Some(12.0));
+    assert_eq!((quente.secao, quente.disjuntor), (Some(2.5), Some(10.0)));
+}
+
+#[test]
+fn quadro_sem_fases_usa_o_sistema_configurado() {
+    let mut d = Drawing::new_metric();
+    inserir(&mut d, "TUG", 0.0, 0.0, &[("TIPO_PONTO", "TUG"), ("POTENCIA", "600VA"), ("TENSAO", "127V"), ("CIRCUITO", "1")]);
+    let a = analisar(&d);
+    let tri = Setup { sistema: Sistema::Trifasico220127, ..Setup::default() }.config();
+    let q = dimensionar_quadro(&a, &tri);
+    assert_eq!(q.fases_quadro, 3);
+    assert!(q.avisos[0].contains("sistema"));
+}

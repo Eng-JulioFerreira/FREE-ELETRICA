@@ -41,26 +41,17 @@ pub struct QuadroDeCargas {
     pub avisos: Vec<String>,
 }
 
-/// Fases do quadro: atributo NUMERO_FASES/FASES; senão, "220/127V" indica bifásico.
-fn fases_do_quadro(q: Option<&PontoEletrico>) -> u8 {
-    let Some(q) = q else { return 2 };
-    if let Some(f) = q.fases {
-        return f;
-    }
-    let tensao = q.atributos.iter().find(|(t, _)| t.eq_ignore_ascii_case("TENSAO")).map(|(_, v)| v.as_str()).unwrap_or("");
-    if tensao.contains('/') { 2 } else { 1 }
-}
-
 pub fn montar(analise: &Analise, cfg: &Config) -> QuadroDeCargas {
     let mut avisos = Vec::new();
     let quadros: Vec<&PontoEletrico> = analise.pontos.iter().filter(|p| p.tipo == TipoPonto::Quadro).collect();
     match quadros.len() {
-        0 => avisos.push("nenhum quadro no desenho: supondo quadro bifásico".into()),
+        0 => avisos.push("nenhum quadro no desenho: usando as fases do sistema das configurações".into()),
         1 => {}
         n => avisos.push(format!("{n} quadros no desenho: por enquanto todos os circuitos vão para o primeiro")),
     }
     let quadro = quadros.first().copied();
-    let fases_quadro = fases_do_quadro(quadro).clamp(1, 3);
+    // NUMERO_FASES do bloco do quadro; sem ele, o sistema de distribuição das configurações.
+    let fases_quadro = quadro.and_then(|q| q.fases).unwrap_or(cfg.fases_padrao).clamp(1, 3);
 
     let mut linhas: Vec<Linha> =
         analise.circuitos.iter().map(|c| Linha { circuito: c.clone(), dimensionamento: nbr5410::dimensionar(c, cfg), fases: Vec::new() }).collect();

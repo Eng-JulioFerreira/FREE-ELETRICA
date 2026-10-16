@@ -32,11 +32,13 @@ pub struct Config {
     pub fct: f64,
     /// Fator de correção de agrupamento (tabela 42).
     pub fca: f64,
+    /// Fases do quadro quando o desenho não diz (sistema de distribuição do projeto).
+    pub fases_padrao: u8,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Config { tensao_fn: 127.0, fct: 1.0, fca: 1.0 }
+        Config { tensao_fn: 127.0, fct: 1.0, fca: 1.0, fases_padrao: 2 }
     }
 }
 

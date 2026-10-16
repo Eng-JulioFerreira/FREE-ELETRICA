@@ -639,6 +639,7 @@ impl CadApp {
             }
         });
         dialogs::show(self, ui.ctx());
+        eletrica::janelas(self, ui.ctx());
         palettes::patterns::prompt_picker(self, ui.ctx());
         closing::prompt(self, ui.ctx());
         autosave::show(self, ui.ctx());
