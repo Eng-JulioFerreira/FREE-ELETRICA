@@ -29,17 +29,29 @@ do projeto original:
    atributos do [padrão de blocos](docs/padrao_blocos_eletricos.md).
 2. A paleta **Elétrica** já abre com o programa, acima das Tool Sets. Ela só tem ferramentas.
    Se for fechada, volta com `ELETRICA` ou **Janela > Elétrica**.
-3. **Configurações...** (`ELECONFIG`) define o setup do projeto: sistema de distribuição
-   (tensões e fases) e temperatura ambiente, de onde sai o FCT. O FCA não é digitado: vai sair
-   do agrupamento nos eletrodutos e, até lá, vale 1,00.
-4. **Conferir pontos e circuitos...** (`ELECONFERIR`) abre a janela com os pontos, os circuitos
-   e os atributos que faltam. Clicar num circuito seleciona os pontos dele no desenho.
-5. **Dimensionar quadro...** (`ELEQUADRO`) abre o quadro de cargas: corrente, seção, disjuntor e
-   balanceamento de fases.
-6. **Ajustar fiação** (próxima etapa) vai escrever fiação e bitolas sobre os eletrodutos.
+3. **Configurações...** (`ELECONFIG`) é a aba de setup, com as premissas globais:
+   - Geral: sistema de distribuição (padrão 380/220 V), pé-direito, unidade do desenho,
+     camadas dos eletrodutos e raio de captura;
+   - Condutores: temperatura do projeto (dá o FCT), queda de tensão admissível, fator para
+     materiais, cores das fases A, B e C e seções omitidas nas indicações;
+   - Agrupamento: o FCA é automático, pelo número de circuitos em cada trecho de eletroduto;
+   - Telecom: catálogo de cabos (UTP Cat 5/6, fibra N2/N4/N12, CCI 1P a 4P, CI 10P/20P,
+     coaxial RG 59) e cadastro de cabos novos.
+4. **Criar circuito** (`ELECIRCUITO`): selecione o quadro de destino, informe o número (Enter
+   aceita o próximo livre) e selecione os pontos do circuito, um a um.
+5. **Comandos e luminárias** (`ELECOMANDO`): selecione o interruptor e depois as luminárias que
+   ele comanda. Elas recebem a letra e o circuito dele.
+6. **Conferir pontos e circuitos...** (`ELECONFERIR`) lista pontos, circuitos e atributos que
+   faltam. Clicar num circuito seleciona os pontos dele no desenho.
+7. **Rotear fiação...** (`ELEROTEAR`): escolha o quadro e clique em Rotear. Os circuitos são
+   roteados pelos eletrodutos (caminho mínimo do quadro a cada ponto, com subidas e descidas)
+   e aparecem na tabela de resumo: fatores de correção, comprimento, queda de tensão calculada
+   e admitida, pré-seleção automática de seção e disjuntor, fases e indicação de fiação. Seção e
+   disjuntor podem ser sobrescritos na própria tabela; a escolha fica gravada no quadro e é
+   conferida contra a norma. **Copiar resumo** gera o resumo técnico em texto.
 
-Os mesmos resultados saem em JSON pelos comandos `eletrica.analisar`, `eletrica.dimensionar` e
-`eletrica.setup`, pelo canal de controle do CADCraft.
+Os mesmos resultados saem em JSON pelo canal de controle do CADCraft: `eletrica.analisar`,
+`eletrica.rotear`, `eletrica.sobrescrever`, `eletrica.setup`, `elecircuito` e `elecomando`.
 
 ---
 
@@ -56,12 +68,18 @@ ferramentas GNU não aceitam o caractere acentuado do nome da pasta do usuário.
 ## Estado do dimensionamento (NBR 5410)
 
 Feito: corrente de projeto, seção mínima (tabela 47), capacidade de condução (tabela 36,
-cobre, PVC, método B1) com FCT e FCA informados, disjuntor com Ib ≤ In ≤ Iz e
-balanceamento de fases.
+cobre, PVC, método B1), FCT pela temperatura do projeto (tabela 40), FCA pelo agrupamento nos
+eletrodutos (tabela 42), queda de tensão pelo momento elétrico com ρ do cobre a 70 °C,
+disjuntor com Ib ≤ In ≤ Iz, balanceamento de fases e levantamento de cabo por seção.
 
-Falta: queda de tensão, fator de agrupamento pelos eletrodutos, outros métodos de instalação,
-DR, eletrodutos e a escrita no desenho. Os valores das tabelas devem ser conferidos contra a
-norma vigente.
+Premissas do roteamento: eletrodutos são linhas e polilinhas nas camadas configuradas e correm
+no pé-direito; linhas que se cruzam sem vértice comum não se ligam; uma ponta encostada no meio
+de outro trecho liga (derivação). Ponto fora da rede tem o comprimento estimado em L a partir do
+quadro, marcado com `*` na tabela. O FCA conta só os circuitos do quadro roteado.
+
+Falta: escrever a fiação no desenho, retornos de interruptor no levantamento, outros métodos de
+instalação e isolações, DR, curto-circuito e taxa de ocupação dos eletrodutos (inclusive com
+os cabos de telecom). Os valores das tabelas devem ser conferidos contra a norma vigente.
 
 ---
 
