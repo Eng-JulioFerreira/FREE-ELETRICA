@@ -7,7 +7,7 @@ use std::sync::{LazyLock, RwLock};
 
 use serde::{Deserialize, Serialize};
 
-use crate::nbr5410::Config;
+use crate::nbr5410::{Config, Isolacao};
 
 /// As configurações em uso no processo. Ficam no motor, e não na interface: os comandos
 /// (linha de comando, scripts, canal de controle, MCP) e a paleta leem a mesma fonte. A
@@ -233,6 +233,8 @@ pub struct CaboTelecom {
     pub categoria: CategoriaTelecom,
     /// Pares, fibras ou condutores (ver [`CategoriaTelecom::unidade`]).
     pub quantidade: u32,
+    /// Diâmetro externo (mm), para a ocupação dos eletrodutos.
+    pub diametro: f64,
     pub observacao: String,
     /// Faz parte do catálogo de fábrica: não pode ser removido.
     pub padrao: bool,
@@ -240,28 +242,118 @@ pub struct CaboTelecom {
 
 impl Default for CaboTelecom {
     fn default() -> Self {
-        CaboTelecom { nome: String::new(), categoria: CategoriaTelecom::Outro, quantidade: 1, observacao: String::new(), padrao: false }
+        CaboTelecom {
+            nome: String::new(),
+            categoria: CategoriaTelecom::Outro,
+            quantidade: 1,
+            diametro: 0.0,
+            observacao: String::new(),
+            padrao: false,
+        }
     }
 }
 
-/// O catálogo de fábrica.
+/// O catálogo de fábrica. Diâmetros externos típicos de catálogo: confira com o fabricante do
+/// cabo usado na obra.
 pub fn cabos_padrao() -> Vec<CaboTelecom> {
     use CategoriaTelecom::*;
-    let c = |nome: &str, categoria, quantidade| CaboTelecom { nome: nome.into(), categoria, quantidade, observacao: String::new(), padrao: true };
+    let c = |nome: &str, categoria, quantidade, diametro| CaboTelecom {
+        nome: nome.into(),
+        categoria,
+        quantidade,
+        diametro,
+        observacao: String::new(),
+        padrao: true,
+    };
     vec![
-        c("UTP Cat 5", Utp, 4),
-        c("UTP Cat 6", Utp, 4),
-        c("Fibra óptica N2", Fibra, 2),
-        c("Fibra óptica N4", Fibra, 4),
-        c("Fibra óptica N12", Fibra, 12),
-        c("CCI 1P", Cci, 1),
-        c("CCI 2P", Cci, 2),
-        c("CCI 3P", Cci, 3),
-        c("CCI 4P", Cci, 4),
-        c("CI 10P", Ci, 10),
-        c("CI 20P", Ci, 20),
-        c("Coaxial RG 59", Coaxial, 1),
+        c("UTP Cat 5", Utp, 4, 5.0),
+        c("UTP Cat 6", Utp, 4, 6.0),
+        c("Fibra óptica N2", Fibra, 2, 3.0),
+        c("Fibra óptica N4", Fibra, 4, 5.0),
+        c("Fibra óptica N12", Fibra, 12, 6.5),
+        c("CCI 1P", Cci, 1, 3.0),
+        c("CCI 2P", Cci, 2, 3.5),
+        c("CCI 3P", Cci, 3, 4.0),
+        c("CCI 4P", Cci, 4, 4.5),
+        c("CI 10P", Ci, 10, 7.5),
+        c("CI 20P", Ci, 20, 9.5),
+        c("Coaxial RG 59", Coaxial, 1, 6.1),
     ]
+}
+
+/// Diâmetro externo de um condutor isolado (mm), por seção e isolação.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct DiametroCondutor {
+    /// Seção (mm²).
+    pub secao: f64,
+    /// Cabo de PVC 450/750 V.
+    pub pvc: f64,
+    /// Cabo de EPR ou XLPE 0,6/1 kV.
+    pub epr_xlpe: f64,
+}
+
+impl Default for DiametroCondutor {
+    fn default() -> Self {
+        DiametroCondutor { secao: 0.0, pvc: 0.0, epr_xlpe: 0.0 }
+    }
+}
+
+/// Diâmetros externos típicos de catálogo (condutor unipolar de cobre): confira com o fabricante.
+pub fn diametros_padrao() -> Vec<DiametroCondutor> {
+    [
+        (1.5, 3.0, 5.6),
+        (2.5, 3.6, 6.0),
+        (4.0, 4.2, 6.6),
+        (6.0, 4.8, 7.2),
+        (10.0, 6.1, 8.2),
+        (16.0, 7.2, 9.3),
+        (25.0, 8.9, 11.0),
+        (35.0, 10.2, 12.2),
+        (50.0, 12.0, 14.0),
+        (70.0, 13.8, 15.9),
+        (95.0, 15.9, 18.1),
+        (120.0, 17.6, 19.9),
+    ]
+    .into_iter()
+    .map(|(secao, pvc, epr_xlpe)| DiametroCondutor { secao, pvc, epr_xlpe })
+    .collect()
+}
+
+/// Um tamanho de eletroduto do tipo usado no projeto.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct TamanhoEletroduto {
+    /// Diâmetro nominal (mm), o que vai escrito no desenho.
+    pub nominal: f64,
+    /// Referência em polegadas ("1/2\"", "3/4\""...).
+    pub polegadas: String,
+    /// Diâmetro interno (mm), para a ocupação.
+    pub interno: f64,
+}
+
+impl Default for TamanhoEletroduto {
+    fn default() -> Self {
+        TamanhoEletroduto { nominal: 0.0, polegadas: String::new(), interno: 0.0 }
+    }
+}
+
+/// Eletroduto de PVC rígido roscável, linha média: diâmetros internos típicos de catálogo.
+/// Confira com o fabricante.
+pub fn eletrodutos_padrao() -> Vec<TamanhoEletroduto> {
+    [
+        (20.0, "1/2\"", 16.4),
+        (25.0, "3/4\"", 21.3),
+        (32.0, "1\"", 27.5),
+        (40.0, "1 1/4\"", 36.1),
+        (50.0, "1 1/2\"", 41.4),
+        (60.0, "2\"", 52.8),
+        (75.0, "2 1/2\"", 67.1),
+        (85.0, "3\"", 79.6),
+    ]
+    .into_iter()
+    .map(|(nominal, pol, interno)| TamanhoEletroduto { nominal, polegadas: pol.into(), interno })
+    .collect()
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -288,6 +380,16 @@ pub struct Setup {
     /// Distância máxima (m) entre um ponto e o eletroduto que chega nele.
     pub raio_captura: f64,
     pub cabos_telecom: Vec<CaboTelecom>,
+    /// Isolação padrão dos condutores (cada quadro pode trocar em Rotear fiação).
+    pub isolacao: Isolacao,
+    /// Diâmetros externos dos condutores, por seção.
+    pub diametros_condutor: Vec<DiametroCondutor>,
+    /// Nome do tipo de eletroduto do projeto.
+    pub tipo_eletroduto: String,
+    /// Tamanhos do tipo de eletroduto, do menor ao maior.
+    pub eletrodutos: Vec<TamanhoEletroduto>,
+    /// Menor diâmetro nominal usado (mm).
+    pub eletroduto_minimo: f64,
 }
 
 impl Default for Setup {
@@ -305,43 +407,70 @@ impl Default for Setup {
             camadas_piso: "*PISO*".into(),
             raio_captura: 0.30,
             cabos_telecom: cabos_padrao(),
+            isolacao: Isolacao::Pvc,
+            diametros_condutor: diametros_padrao(),
+            tipo_eletroduto: "PVC rígido roscável, linha média".into(),
+            eletrodutos: eletrodutos_padrao(),
+            eletroduto_minimo: 20.0,
         }
     }
 }
 
-/// Tabela 40, isolação PVC, temperatura ambiente (não no solo): (°C, fator).
-const FCT_PVC: [(f64, f64); 11] = [
-    (10.0, 1.22),
-    (15.0, 1.17),
-    (20.0, 1.12),
-    (25.0, 1.06),
-    (30.0, 1.00),
-    (35.0, 0.94),
-    (40.0, 0.87),
-    (45.0, 0.79),
-    (50.0, 0.71),
-    (55.0, 0.61),
-    (60.0, 0.50),
-];
+/// Ocupação máxima da seção interna do eletroduto (NBR 5410, 6.2.11.1.6): 53 % com um condutor
+/// ou cabo, 31 % com dois, 40 % com três ou mais.
+pub fn ocupacao_maxima(condutores: usize) -> f64 {
+    match condutores {
+        0 | 1 => 0.53,
+        2 => 0.31,
+        _ => 0.40,
+    }
+}
 
 impl Setup {
-    /// Fator de correção de temperatura (tabela 40, PVC). Entre duas linhas da tabela vale a
-    /// temperatura de cima, que é o lado seguro.
+    /// Fator de correção de temperatura (tabela 40) da isolação padrão.
     pub fn fct(&self) -> f64 {
-        let t = self.temperatura_ambiente;
-        FCT_PVC.iter().find(|(limite, _)| t <= *limite + 1e-9).map_or(FCT_PVC[FCT_PVC.len() - 1].1, |(_, f)| *f)
+        self.isolacao.fct(self.temperatura_ambiente)
     }
 
-    /// Os parâmetros do dimensionamento. O FCA de cada circuito vem do roteamento.
+    /// Os parâmetros do dimensionamento com a isolação padrão. O FCA de cada circuito vem do
+    /// roteamento.
     pub fn config(&self) -> Config {
+        self.config_com(self.isolacao)
+    }
+
+    /// Os parâmetros do dimensionamento com outra isolação (a de um quadro).
+    pub fn config_com(&self, isolacao: Isolacao) -> Config {
         Config {
             tensao_fn: self.sistema.tensao_fn(),
             tensao_ff: self.sistema.tensao_ff().unwrap_or(self.sistema.tensao_fn()),
-            fct: self.fct(),
+            fct: isolacao.fct(self.temperatura_ambiente),
             fca: 1.0,
             fases_padrao: self.sistema.fases(),
             queda_admissivel: self.queda_admissivel,
+            isolacao,
         }
+    }
+
+    /// Diâmetro externo (mm) de um condutor da seção e isolação dadas. `None`: seção fora da
+    /// tabela das configurações.
+    pub fn diametro_condutor(&self, secao: f64, isolacao: Isolacao) -> Option<f64> {
+        let d = self.diametros_condutor.iter().find(|d| (d.secao - secao).abs() < 1e-6)?;
+        let v = if isolacao == Isolacao::Pvc { d.pvc } else { d.epr_xlpe };
+        (v > 0.0).then_some(v)
+    }
+
+    /// O menor eletroduto (a partir do mínimo) que comporta condutores com estes diâmetros
+    /// externos (mm), com a ocupação máxima da NBR 5410. Devolve o tamanho e a ocupação (0-1).
+    pub fn eletroduto_para(&self, diametros: &[f64]) -> Option<(TamanhoEletroduto, f64)> {
+        let area = |d: f64| std::f64::consts::PI * d * d / 4.0;
+        let ocupada: f64 = diametros.iter().map(|d| area(*d)).sum();
+        let limite = ocupacao_maxima(diametros.len());
+        self.eletrodutos
+            .iter()
+            .filter(|e| e.nominal + 1e-9 >= self.eletroduto_minimo && e.interno > 0.0)
+            .map(|e| (e, ocupada / area(e.interno)))
+            .find(|(_, oc)| *oc <= limite + 1e-9)
+            .map(|(e, oc)| (e.clone(), oc))
     }
 
     /// A seção não é escrita nas indicações.
@@ -360,9 +489,23 @@ impl Setup {
         self.secoes_omitidas.sort_by(f64::total_cmp);
         self.secoes_omitidas.dedup_by(|a, b| (*a - *b).abs() < 1e-6);
         for c in cabos_padrao().into_iter().rev() {
-            if !self.cabos_telecom.iter().any(|x| x.nome.eq_ignore_ascii_case(&c.nome)) {
-                self.cabos_telecom.insert(0, c);
+            match self.cabos_telecom.iter_mut().find(|x| x.nome.eq_ignore_ascii_case(&c.nome)) {
+                // Preferências antigas não tinham diâmetro.
+                Some(x) if x.diametro <= 0.0 => x.diametro = c.diametro,
+                Some(_) => {}
+                None => self.cabos_telecom.insert(0, c),
             }
+        }
+        if self.diametros_condutor.is_empty() {
+            self.diametros_condutor = diametros_padrao();
+        }
+        self.diametros_condutor.sort_by(|a, b| a.secao.total_cmp(&b.secao));
+        if self.eletrodutos.is_empty() {
+            self.eletrodutos = eletrodutos_padrao();
+        }
+        self.eletrodutos.sort_by(|a, b| a.nominal.total_cmp(&b.nominal));
+        if self.tipo_eletroduto.trim().is_empty() {
+            self.tipo_eletroduto = Setup::default().tipo_eletroduto;
         }
     }
 
@@ -374,6 +517,9 @@ impl Setup {
         }
         if self.cabos_telecom.iter().any(|c| c.nome.eq_ignore_ascii_case(&cabo.nome)) {
             return Err(format!("já existe um cabo \"{}\" no catálogo", cabo.nome));
+        }
+        if !(cabo.diametro.is_finite() && cabo.diametro > 0.0) {
+            return Err("informe o diâmetro externo do cabo (mm): ele entra no cálculo de ocupação dos eletrodutos".into());
         }
         cabo.padrao = false;
         cabo.quantidade = cabo.quantidade.max(1);

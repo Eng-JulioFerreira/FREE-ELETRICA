@@ -41,6 +41,21 @@ pub fn specs() -> Vec<CommandSpec> {
             .noundo(),
         CommandSpec::new("eletrica.sobrescrever", "Override Circuit", run_sobrescrever)
             .params("{quadro?: hex | TAG, circuito, secao?: mm², disjuntor?: A} (no value: back to the automatic choice) → {quadro, circuito}"),
+        CommandSpec::new("eletrica.quadro", "Board Settings", run_quadro)
+            .params("{quadro?: hex | TAG, isolacao?: \"PVC\" | \"EPR\" | \"XLPE\" | null (null: back to the settings' default)} → {quadro, isolacao}"),
+        CommandSpec::new("eletrica.cargas", "Load Schedule", run_cargas)
+            .params("{quadro?: hex | TAG} → [{id, descricao, circuito}] (circuits with points and the ones created empty)")
+            .noundo(),
+        CommandSpec::new("eletrica.circuito.criar", "New Circuit", run_criar)
+            .params("{quadro?: hex | TAG, circuito?: string (default: the next free number), descricao?} → {quadro, circuito}"),
+        CommandSpec::new("eletrica.circuito.descrever", "Describe Circuit", run_descrever).params("{quadro?: hex | TAG, circuito, descricao} → {quadro, circuito}"),
+        CommandSpec::new("eletrica.circuito.excluir", "Delete Circuit", run_excluir)
+            .params("{quadro?: hex | TAG, circuito} (its points lose the circuit) → {quadro, circuito, pontos}"),
+        CommandSpec::new("eletrica.circuito.juntar", "Merge Circuits", run_juntar)
+            .params("{quadro?: hex | TAG, de, para} (the points of `de` go to `para`) → {quadro, de, para, pontos}"),
+        CommandSpec::new("eletrica.circuito.alvo", "Circuit Target", run_alvo)
+            .params("{quadro?: hex | TAG, circuito} → the next ELECIRCUITO goes straight to picking points for this circuit")
+            .noundo(),
         CommandSpec::new("eletrica.setup", "Electrical Settings", run_setup)
             .params("{} reads; {sistema?, temperaturaAmbiente?, peDireito?, quedaAdmissivel?, ...} writes → the settings")
             .enabled(always)
@@ -90,6 +105,80 @@ fn run_sobrescrever(s: &mut Session, p: &Value) -> Result<Value> {
     }
     ele::editar::definir_sobrescrita(s.doc_mut()?, q, &circuito, num("secao"), num("disjuntor")).map_err(erro)?;
     Ok(json!({ "quadro": q.hex(), "circuito": circuito }))
+}
+
+/// Um texto obrigatório (aceita número: `"circuito": 3`).
+fn texto(cmd: &str, p: &Value, k: &str) -> Result<String> {
+    p.get(k)
+        .and_then(|v| v.as_str().map(str::to_string).or_else(|| v.as_u64().map(|n| n.to_string())))
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+        .ok_or_else(|| bad(cmd, format!("`{k}` is required")))
+}
+
+fn run_quadro(s: &mut Session, p: &Value) -> Result<Value> {
+    let q = achar_quadro(&analise(s)?, p.get("quadro"))?;
+    let isolacao = match p.get("isolacao") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(
+            v.as_str()
+                .and_then(ele::nbr5410::Isolacao::de_codigo)
+                .ok_or_else(|| bad("eletrica.quadro", "`isolacao` must be \"PVC\", \"EPR\" or \"XLPE\""))?,
+        ),
+    };
+    ele::editar::definir_isolacao(s.doc_mut()?, q, isolacao).map_err(erro)?;
+    Ok(json!({ "quadro": q.hex(), "isolacao": isolacao.map(|i| i.codigo()) }))
+}
+
+fn run_cargas(s: &mut Session, p: &Value) -> Result<Value> {
+    let a = analise(s)?;
+    let q = achar_quadro(&a, p.get("quadro"))?;
+    json_de(&ele::quadro::circuitos_do_quadro(&a, q))
+}
+
+fn run_criar(s: &mut Session, p: &Value) -> Result<Value> {
+    let a = analise(s)?;
+    let q = achar_quadro(&a, p.get("quadro"))?;
+    let id = match p.get("circuito") {
+        None | Some(Value::Null) => ele::circuito::proximo_circuito(&a.pontos, q),
+        _ => texto("eletrica.circuito.criar", p, "circuito")?,
+    };
+    if ele::quadro::circuitos_do_quadro(&a, q).iter().any(|c| c.id.eq_ignore_ascii_case(&id)) {
+        return Err(bad("eletrica.circuito.criar", format!("circuit {id} already exists on this board")));
+    }
+    let descricao = p.get("descricao").and_then(Value::as_str).unwrap_or("");
+    ele::editar::definir_descricao(s.doc_mut()?, q, &id, Some(descricao)).map_err(erro)?;
+    Ok(json!({ "quadro": q.hex(), "circuito": id }))
+}
+
+fn run_descrever(s: &mut Session, p: &Value) -> Result<Value> {
+    let q = achar_quadro(&analise(s)?, p.get("quadro"))?;
+    let id = texto("eletrica.circuito.descrever", p, "circuito")?;
+    let descricao = p.get("descricao").and_then(Value::as_str).unwrap_or("");
+    ele::editar::definir_descricao(s.doc_mut()?, q, &id, Some(descricao)).map_err(erro)?;
+    Ok(json!({ "quadro": q.hex(), "circuito": id }))
+}
+
+fn run_excluir(s: &mut Session, p: &Value) -> Result<Value> {
+    let q = achar_quadro(&analise(s)?, p.get("quadro"))?;
+    let id = texto("eletrica.circuito.excluir", p, "circuito")?;
+    let n = ele::editar::excluir_circuito(s.doc_mut()?, q, &id).map_err(erro)?;
+    Ok(json!({ "quadro": q.hex(), "circuito": id, "pontos": n }))
+}
+
+fn run_juntar(s: &mut Session, p: &Value) -> Result<Value> {
+    let q = achar_quadro(&analise(s)?, p.get("quadro"))?;
+    let de = texto("eletrica.circuito.juntar", p, "de")?;
+    let para = texto("eletrica.circuito.juntar", p, "para")?;
+    let n = ele::editar::juntar_circuitos(s.doc_mut()?, q, &de, &para).map_err(erro)?;
+    Ok(json!({ "quadro": q.hex(), "de": de, "para": para, "pontos": n }))
+}
+
+fn run_alvo(s: &mut Session, p: &Value) -> Result<Value> {
+    let q = achar_quadro(&analise(s)?, p.get("quadro"))?;
+    let id = texto("eletrica.circuito.alvo", p, "circuito")?;
+    ele::circuito::definir_alvo(Some((q, id.clone())));
+    Ok(json!({ "quadro": q.hex(), "circuito": id }))
 }
 
 fn run_setup(_s: &mut Session, p: &Value) -> Result<Value> {
@@ -249,6 +338,14 @@ impl Interactive for CircuitoM {
     }
     fn begin(&mut self, s: &mut Session) -> Result<Step> {
         s.set_selection(Vec::new());
+        // Escolhido antes (eletrica.circuito.alvo, o "adicionar pontos" do quadro de cargas):
+        // vai direto à seleção dos pontos.
+        if let Some((q, c)) = ele::circuito::tomar_alvo()
+            && let Some(p) = quadro_valido(s, q)?
+        {
+            self.quadro = Some((q, p.rotulo()));
+            self.circuito = Some(c);
+        }
         Ok(Step::Continue)
     }
     fn prompt(&self, _s: &Session) -> Prompt {

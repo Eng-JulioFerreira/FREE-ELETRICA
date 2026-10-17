@@ -143,3 +143,54 @@ fn comandos_eletricos_sem_quadro_dao_erro_e_nao_travam() {
     assert!(s.execute("eletrica.setup", &json!({ "sistema": 42 })).is_err());
     assert!(s.execute("eletrica.analisar", &json!({})).unwrap()["pontos"].as_array().unwrap().is_empty());
 }
+
+#[test]
+fn quadro_de_cargas_e_isolacao_por_comandos() {
+    let mut s = Session::new();
+    let (d, [qd, luz, _int, tug]) = planta();
+    s.open_drawing(d, "Planta", None);
+    s.execute("elecircuito", &json!({ "quadro": qd.hex(), "pontos": [luz.hex()] })).unwrap();
+    s.execute("elecircuito", &json!({ "quadro": qd.hex(), "pontos": [tug.hex()] })).unwrap();
+
+    // Criar um circuito vazio com descrição; o próximo número livre já conta com ele.
+    let r = s.execute("eletrica.circuito.criar", &json!({ "descricao": "Chuveiro" })).unwrap();
+    assert_eq!(r["circuito"], "3");
+    assert!(s.execute("eletrica.circuito.criar", &json!({ "circuito": "3" })).is_err(), "já existe");
+    s.execute("eletrica.circuito.descrever", &json!({ "circuito": 2, "descricao": "TUG" })).unwrap();
+    let cargas = s.execute("eletrica.cargas", &json!({})).unwrap();
+    let ids: Vec<&str> = cargas.as_array().unwrap().iter().map(|c| c["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, ["1", "2", "3"]);
+    assert_eq!(cargas[2]["descricao"], "Chuveiro");
+    assert!(cargas[2]["circuito"].is_null());
+
+    // Adicionar pontos a um circuito existente: o alvo leva o ELECIRCUITO direto aos pontos.
+    s.execute("eletrica.circuito.alvo", &json!({ "circuito": "3" })).unwrap();
+    s.start("elecircuito").unwrap();
+    s.input(Input::Pick(vec![tug])).unwrap();
+    s.input(Input::Enter).unwrap();
+    assert_eq!(circuito(&s, tug).as_deref(), Some("3"));
+
+    // Juntar o 3 no 1 e excluir o 1.
+    let r = s.execute("eletrica.circuito.juntar", &json!({ "de": "3", "para": "1" })).unwrap();
+    assert_eq!(r["pontos"], 1);
+    assert_eq!(circuito(&s, tug).as_deref(), Some("1"));
+    let r = s.execute("eletrica.circuito.excluir", &json!({ "circuito": "1" })).unwrap();
+    assert_eq!(r["pontos"], 2);
+    assert_eq!(circuito(&s, tug), None);
+    s.undo().unwrap();
+    assert_eq!(circuito(&s, tug).as_deref(), Some("1"));
+
+    // Isolação do quadro: aparece no roteamento; inválida dá erro; null volta ao padrão.
+    s.execute("eletrica.quadro", &json!({ "isolacao": "XLPE" })).unwrap();
+    assert_eq!(s.execute("eletrica.rotear", &json!({})).unwrap()["isolacao"], "xlpe");
+    assert!(s.execute("eletrica.quadro", &json!({ "isolacao": "ouro" })).is_err());
+    s.execute("eletrica.quadro", &json!({ "isolacao": null })).unwrap();
+    assert_eq!(s.execute("eletrica.rotear", &json!({})).unwrap()["isolacao"], "pvc");
+
+    // A fiação dimensiona o eletroduto de cada trecho.
+    let r = s.execute("elefiacao", &json!({})).unwrap();
+    assert!(r["quadros"][0]["marcas"].as_u64().unwrap() > 0);
+    let textos: Vec<String> =
+        s.doc().unwrap().model.iter().filter_map(|e| if let EntityKind::Text(t) = &e.kind { Some(t.value.clone()) } else { None }).collect();
+    assert!(textos.iter().any(|t| t == "%%c20"), "{textos:?}");
+}

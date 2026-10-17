@@ -24,12 +24,13 @@ oferecer.
 
 | Ferramenta | Comando | O quê |
 | :--- | :--- | :--- |
-| Configurações | `ELECONFIG` | Setup do projeto: sistema (380/220 V padrão), pé-direito, temperatura (FCT), queda admissível, cores das fases, seções omitidas, camadas de eletroduto de teto e piso, catálogo de cabos de telecom. |
+| Configurações | `ELECONFIG` | Setup do projeto: sistema (380/220 V padrão), pé-direito, temperatura (FCT), isolação padrão (PVC, EPR ou XLPE), queda admissível, cores das fases, seções omitidas, diâmetros externos dos condutores, tamanhos de eletroduto, camadas de eletroduto de teto e piso, catálogo de cabos de telecom com diâmetro. |
+| Quadro de cargas | `ELECARGAS` | Circuitos de um quadro: criar, descrever, adicionar pontos, juntar em outro circuito, excluir; isolação do quadro. |
 | Criar circuito | `ELECIRCUITO` | Clique no quadro, aceite o número do circuito e clique nos pontos. |
 | Comandos e luminárias | `ELECOMANDO` | Clique no interruptor e nas luminárias que ele comanda. |
 | Conferir pontos e circuitos | `ELECONFERIR` | Pontos, circuitos e atributos que faltam. |
-| Rotear fiação | `ELEROTEAR` | Rota pelos eletrodutos, FCA por agrupamento, queda de tensão, seção e disjuntor pré-selecionados (com sobrescrita), fases, resumo técnico. |
-| Ajustar fiação | `ELEFIACAO` | Desenha as marcas de fase, neutro, retorno e proteção, com circuito e seção, sobre cada trecho de eletroduto. |
+| Rotear fiação | `ELEROTEAR` | Rota pelos eletrodutos, isolação do quadro (PVC, EPR, XLPE), FCA por agrupamento, queda de tensão, seção e disjuntor pré-selecionados (com sobrescrita), fases, resumo técnico. |
+| Ajustar fiação | `ELEFIACAO` | Desenha as marcas de fase, neutro, retorno e proteção, com circuito, seção e diâmetro do eletroduto (pela taxa de ocupação), sobre cada trecho. |
 
 Tudo também responde em JSON pelo canal de controle e pelo `cadcraft-cli`:
 `eletrica.analisar`, `eletrica.rotear`, `eletrica.sobrescrever`, `eletrica.setup`,

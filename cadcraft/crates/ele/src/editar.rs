@@ -5,9 +5,84 @@
 
 use cadcraft_doc::{Drawing, EntityKind, Handle};
 
+use crate::nbr5410::Isolacao;
 use crate::ponto::{TAGS_CIRCUITO, TAGS_COMANDO, TAGS_QUADRO, ler_ponto};
-use crate::quadro::{CHAVE_DISJUNTOR, CHAVE_SECAO};
+use crate::quadro::{CHAVE_DESCRICAO, CHAVE_DISJUNTOR, CHAVE_ISOLACAO, CHAVE_SECAO};
 use crate::xdata;
+
+/// Grava (ou apaga) uma chave do XDATA do CRAFT ELE num bloco.
+fn gravar_xdata(doc: &mut Drawing, h: Handle, chave: &str, valor: Option<&str>) -> Result<(), String> {
+    let mut e = (**doc.model.get(h).ok_or("objeto não encontrado")?).clone();
+    if !matches!(e.kind, EntityKind::Insert(_)) {
+        return Err("o objeto não é um bloco".into());
+    }
+    xdata::gravar(&mut e.common.xdata, chave, valor);
+    doc.model.replace(e);
+    Ok(())
+}
+
+/// Os pontos do circuito `circuito` do quadro `quadro`.
+fn pontos_do_circuito(doc: &Drawing, quadro: Handle, circuito: &str) -> Vec<Handle> {
+    crate::analisar(doc)
+        .pontos
+        .iter()
+        .filter(|p| p.quadro == Some(quadro) && p.circuito.as_deref().is_some_and(|c| c.eq_ignore_ascii_case(circuito.trim())))
+        .map(|p| p.handle)
+        .collect()
+}
+
+/// Apaga do quadro as escolhas e a descrição de um circuito.
+fn esquecer_circuito(doc: &mut Drawing, quadro: Handle, circuito: &str) -> Result<(), String> {
+    let id = circuito.trim().to_uppercase();
+    for prefixo in [CHAVE_SECAO, CHAVE_DISJUNTOR, CHAVE_DESCRICAO] {
+        gravar_xdata(doc, quadro, &format!("{prefixo}{id}"), None)?;
+    }
+    Ok(())
+}
+
+/// Isolação dos condutores do quadro; `None` volta à das configurações.
+pub fn definir_isolacao(doc: &mut Drawing, quadro: Handle, isolacao: Option<Isolacao>) -> Result<(), String> {
+    gravar_xdata(doc, quadro, CHAVE_ISOLACAO, isolacao.map(Isolacao::codigo))
+}
+
+/// Descrição do circuito no quadro de cargas (`None` apaga). Um circuito descrito existe no
+/// quadro mesmo sem pontos.
+pub fn definir_descricao(doc: &mut Drawing, quadro: Handle, circuito: &str, descricao: Option<&str>) -> Result<(), String> {
+    let id = circuito.trim().to_uppercase();
+    if id.is_empty() {
+        return Err("informe o circuito".into());
+    }
+    gravar_xdata(doc, quadro, &format!("{CHAVE_DESCRICAO}{id}"), descricao)
+}
+
+/// Exclui o circuito do quadro: os pontos dele ficam sem circuito e sem quadro, e as escolhas e a
+/// descrição dele somem. Devolve quantos pontos foram liberados.
+pub fn excluir_circuito(doc: &mut Drawing, quadro: Handle, circuito: &str) -> Result<usize, String> {
+    let pontos = pontos_do_circuito(doc, quadro, circuito);
+    for h in &pontos {
+        definir(doc, *h, TAGS_CIRCUITO, None)?;
+        definir(doc, *h, TAGS_QUADRO, None)?;
+    }
+    esquecer_circuito(doc, quadro, circuito)?;
+    Ok(pontos.len())
+}
+
+/// Junta o circuito `de` no circuito `para` do mesmo quadro: os pontos de `de` passam para `para`
+/// e as escolhas e a descrição de `de` somem. Devolve quantos pontos mudaram.
+pub fn juntar_circuitos(doc: &mut Drawing, quadro: Handle, de: &str, para: &str) -> Result<usize, String> {
+    if de.trim().eq_ignore_ascii_case(para.trim()) {
+        return Err("escolha dois circuitos diferentes".into());
+    }
+    if para.trim().is_empty() {
+        return Err("informe o circuito de destino".into());
+    }
+    let pontos = pontos_do_circuito(doc, quadro, de);
+    for h in &pontos {
+        atribuir_circuito(doc, *h, quadro, para.trim())?;
+    }
+    esquecer_circuito(doc, quadro, de)?;
+    Ok(pontos.len())
+}
 
 /// Grava (`Some`) ou limpa (`None`) o valor de `tags` no bloco `h`. A primeira tag é a chave
 /// do XDATA.

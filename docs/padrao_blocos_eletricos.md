@@ -43,13 +43,27 @@ usados num desenho, use o comando `PURGE` (ou `PU`).
 
 ### Marcas de fiação (Ajustar fiação)
 
-`ELEFIACAO` desenha, em cada trecho de eletroduto, uma marca por condutor atravessando o trecho,
-agrupadas por circuito: o número do circuito (e a seção, quando não omitida nas Configurações)
-embaixo do grupo e a letra de cada retorno em cima. As marcas são os blocos `FIO-FASE`,
-`FIO-NEUTRO` (com círculo), `FIO-RETORNO` (com bandeira) e `FIO-PROTECAO` (com traço cruzado),
-na camada `ELE-FIACAO`. Se o desenho não tem esses blocos, eles são criados com esse desenho
+`ELEFIACAO` desenha, em cada trecho de eletroduto, uma marca por condutor, perpendicular ao
+trecho e agrupadas por circuito:
+
+- em cima, o número do circuito sobre a primeira marca e a letra sobre cada retorno (lado a
+  lado leem `1b`);
+- embaixo do grupo, a seção (`#1,5`), quando não omitida nas Configurações;
+- na linha de baixo, centrado sob toda a simbologia, o diâmetro do eletroduto do trecho
+  (`Ø20`).
+
+As marcas são os blocos `FIACAO-FASE` (traço com bico, como um "1"), `FIACAO-NEUTRO` (traço
+curto), `FIACAO-RETORNO` (traço com barra para a esquerda, como um "7") e `FIACAO-PROTECAO`
+(traço com barra no topo, como um "T"), na camada `ELE-FIACAO` em cor 7 (preto no fundo
+claro, branco no escuro). Se o desenho não tem esses blocos, eles são criados com esse desenho
 padrão; para usar outro símbolo, redesenhe o bloco no seu template e Ajustar fiação passa a
 usá-lo. Rodar de novo apaga e refaz as marcas do quadro.
+
+O diâmetro do eletroduto é o menor tamanho, a partir do mínimo das Configurações, cuja área
+interna comporta os condutores do trecho: ocupação máxima de 53 % com um condutor, 31 % com
+dois e 40 % com três ou mais (NBR 5410, 6.2.11.1.6). Os diâmetros externos dos condutores
+(por isolação) e os internos dos eletrodutos ficam nas abas Condutores e Eletrodutos das
+Configurações. Os cabos de telecom têm diâmetro externo obrigatório no cadastro.
 
 Condutores por trecho: fase do quadro às tomadas, interruptores e luminárias sem interruptor;
 neutro e proteção do quadro às cargas (sem neutro em circuito de duas fases); retorno de cada
@@ -73,8 +87,15 @@ só quadro no desenho, todo ponto é dele sem precisar de `QUADRO`.
 ---
 
 ### C. Quadros de Distribuição (`QD`)
-Ponto de origem e alimentação dos circuitos terminais. As escolhas feitas à mão na tabela de
-Rotear fiação (seção e disjuntor de um circuito) ficam no XDATA do bloco do quadro.
+Ponto de origem e alimentação dos circuitos terminais. Ficam no XDATA do bloco do quadro
+(aplicativo `CRAFTELE`):
+
+- as escolhas feitas à mão na tabela de Rotear fiação (`SECAO.<circuito>` e
+  `DISJ.<circuito>`);
+- as descrições do Quadro de cargas (`DESC.<circuito>`), que também guardam os circuitos
+  criados ainda sem pontos;
+- a isolação dos condutores do quadro (`ISOLACAO` = `PVC`, `EPR` ou `XLPE`); sem ela, vale a
+  isolação padrão das Configurações.
 
 | Atributo | Descrição | Exemplos Válidos |
 | :--- | :--- | :--- |

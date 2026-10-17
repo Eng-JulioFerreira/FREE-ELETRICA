@@ -3,15 +3,15 @@
 //! Dimensionamento de circuitos terminais pela NBR 5410.
 //!
 //! O que está aqui: corrente de projeto, seção mínima (tabela 47), capacidade de condução
-//! (tabela 36, cobre, PVC 70 °C, método de referência B1), fatores de correção de temperatura
-//! (tabela 40, nas configurações) e de agrupamento (tabela 42, pelo roteamento), queda de
-//! tensão pelo momento elétrico (6.2.7) e a escolha do disjuntor com Ib ≤ In ≤ Iz (5.3.4.1).
+//! (cobre, método de referência B1: tabela 36 para PVC 70 °C, tabela 37 para EPR e XLPE 90 °C),
+//! fatores de correção de temperatura (tabela 40, por isolação) e de agrupamento (tabela 42,
+//! pelo roteamento), queda de tensão pelo momento elétrico (6.2.7) e a escolha do disjuntor com
+//! Ib ≤ In ≤ Iz (5.3.4.1).
 //!
-//! Ainda não: outros métodos de instalação e isolações, seções acima de 120 mm², DR e
-//! coordenação com curto-circuito. Os valores das tabelas devem ser conferidos contra a norma
-//! vigente.
+//! Ainda não: outros métodos de instalação, seções acima de 120 mm², DR e coordenação com
+//! curto-circuito. Os valores das tabelas devem ser conferidos contra a norma vigente.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::circuito::{Circuito, Natureza};
 
@@ -19,15 +19,86 @@ use crate::circuito::{Circuito, Natureza};
 pub const SECOES: [f64; 12] = [1.5, 2.5, 4.0, 6.0, 10.0, 16.0, 25.0, 35.0, 50.0, 70.0, 95.0, 120.0];
 
 /// Tabela 36, método B1, cobre, PVC, 30 °C: dois condutores carregados (A).
-const IZ_B1_DOIS: [f64; 12] = [17.5, 24.0, 32.0, 41.0, 57.0, 76.0, 101.0, 125.0, 151.0, 192.0, 232.0, 269.0];
+const IZ_PVC_DOIS: [f64; 12] = [17.5, 24.0, 32.0, 41.0, 57.0, 76.0, 101.0, 125.0, 151.0, 192.0, 232.0, 269.0];
 /// Tabela 36, método B1, cobre, PVC, 30 °C: três condutores carregados (A).
-const IZ_B1_TRES: [f64; 12] = [15.5, 21.0, 28.0, 36.0, 50.0, 68.0, 89.0, 110.0, 134.0, 171.0, 207.0, 239.0];
+const IZ_PVC_TRES: [f64; 12] = [15.5, 21.0, 28.0, 36.0, 50.0, 68.0, 89.0, 110.0, 134.0, 171.0, 207.0, 239.0];
+/// Tabela 37, método B1, cobre, EPR ou XLPE, 30 °C: dois condutores carregados (A).
+const IZ_EPR_DOIS: [f64; 12] = [23.0, 31.0, 42.0, 54.0, 75.0, 100.0, 133.0, 164.0, 198.0, 253.0, 306.0, 354.0];
+/// Tabela 37, método B1, cobre, EPR ou XLPE, 30 °C: três condutores carregados (A).
+const IZ_EPR_TRES: [f64; 12] = [20.0, 28.0, 37.0, 48.0, 66.0, 88.0, 117.0, 144.0, 175.0, 222.0, 269.0, 312.0];
+
+/// Tabela 40, temperatura ambiente (não no solo): (°C, fator PVC, fator EPR/XLPE).
+const FCT_AMBIENTE: [(f64, f64, f64); 11] = [
+    (10.0, 1.22, 1.15),
+    (15.0, 1.17, 1.12),
+    (20.0, 1.12, 1.08),
+    (25.0, 1.06, 1.04),
+    (30.0, 1.00, 1.00),
+    (35.0, 0.94, 0.96),
+    (40.0, 0.87, 0.91),
+    (45.0, 0.79, 0.87),
+    (50.0, 0.71, 0.82),
+    (55.0, 0.61, 0.76),
+    (60.0, 0.50, 0.71),
+];
 
 /// Correntes nominais de disjuntores termomagnéticos (A).
 pub const DISJUNTORES: [f64; 12] = [6.0, 10.0, 16.0, 20.0, 25.0, 32.0, 40.0, 50.0, 63.0, 80.0, 100.0, 125.0];
 
 /// Resistividade do cobre a 70 °C (temperatura máxima do PVC em serviço), Ω·mm²/m.
 pub const RESISTIVIDADE_COBRE_70C: f64 = 0.0206;
+/// Resistividade do cobre a 90 °C (temperatura máxima do EPR e do XLPE em serviço), Ω·mm²/m.
+pub const RESISTIVIDADE_COBRE_90C: f64 = 0.0219;
+
+/// Isolação dos condutores.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Isolacao {
+    /// PVC 70 °C (cabos de 450/750 V).
+    #[default]
+    Pvc,
+    /// EPR 90 °C (cabos de 0,6/1 kV).
+    Epr,
+    /// XLPE 90 °C (cabos de 0,6/1 kV).
+    Xlpe,
+}
+
+impl Isolacao {
+    pub const TODAS: [Isolacao; 3] = [Self::Pvc, Self::Epr, Self::Xlpe];
+
+    pub fn nome(self) -> &'static str {
+        match self {
+            Self::Pvc => "PVC 70 °C",
+            Self::Epr => "EPR 90 °C",
+            Self::Xlpe => "XLPE 90 °C",
+        }
+    }
+
+    /// O código curto ("PVC", "EPR", "XLPE"), como fica gravado no quadro.
+    pub fn codigo(self) -> &'static str {
+        match self {
+            Self::Pvc => "PVC",
+            Self::Epr => "EPR",
+            Self::Xlpe => "XLPE",
+        }
+    }
+
+    pub fn de_codigo(t: &str) -> Option<Self> {
+        Self::TODAS.into_iter().find(|i| i.codigo().eq_ignore_ascii_case(t.trim()))
+    }
+
+    /// Resistividade do cobre na temperatura máxima de serviço da isolação (Ω·mm²/m).
+    pub fn resistividade(self) -> f64 {
+        if self == Self::Pvc { RESISTIVIDADE_COBRE_70C } else { RESISTIVIDADE_COBRE_90C }
+    }
+
+    /// Fator de correção de temperatura (tabela 40). Entre duas linhas da tabela vale a
+    /// temperatura de cima, que é o lado seguro.
+    pub fn fct(self, temperatura: f64) -> f64 {
+        let fator = |l: &(f64, f64, f64)| if self == Self::Pvc { l.1 } else { l.2 };
+        FCT_AMBIENTE.iter().find(|l| temperatura <= l.0 + 1e-9).or(FCT_AMBIENTE.last()).map_or(1.0, fator)
+    }
+}
 
 /// Tabela 42, condutores agrupados em feixe ou num mesmo eletroduto: (circuitos, fator).
 const FCA_AGRUPAMENTO: [(usize, f64); 12] =
@@ -48,11 +119,13 @@ pub struct Config {
     pub fases_padrao: u8,
     /// Queda de tensão admissível no circuito terminal (%).
     pub queda_admissivel: f64,
+    /// Isolação dos condutores: escolhe a tabela de capacidade e a resistividade.
+    pub isolacao: Isolacao,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Config { tensao_fn: 127.0, tensao_ff: 220.0, fct: 1.0, fca: 1.0, fases_padrao: 2, queda_admissivel: 4.0 }
+        Config { tensao_fn: 127.0, tensao_ff: 220.0, fct: 1.0, fca: 1.0, fases_padrao: 2, queda_admissivel: 4.0, isolacao: Isolacao::Pvc }
     }
 }
 
@@ -80,9 +153,15 @@ pub fn condutores_total(fases: u8) -> u8 {
     if fases >= 3 { 5 } else { 3 }
 }
 
-/// Capacidade de condução da tabela 36 (B1) para a seção de índice `i`.
-pub fn capacidade(i: usize, carregados: u8) -> f64 {
-    if carregados >= 3 { IZ_B1_TRES[i] } else { IZ_B1_DOIS[i] }
+/// Capacidade de condução (tabela 36 ou 37, B1) da seção de índice `i` em [`SECOES`].
+pub fn capacidade(i: usize, carregados: u8, isolacao: Isolacao) -> Option<f64> {
+    let tabela = match (isolacao, carregados >= 3) {
+        (Isolacao::Pvc, false) => &IZ_PVC_DOIS,
+        (Isolacao::Pvc, true) => &IZ_PVC_TRES,
+        (_, false) => &IZ_EPR_DOIS,
+        (_, true) => &IZ_EPR_TRES,
+    };
+    tabela.get(i).copied()
 }
 
 pub fn indice_secao(secao: f64) -> Option<usize> {
@@ -105,13 +184,14 @@ pub fn tensao_circuito(c: &Circuito, cfg: &Config) -> (f64, bool) {
 }
 
 /// Queda de tensão (%) para o momento elétrico `momento` (soma de corrente × comprimento, A·m)
-/// na seção `secao`: 2ρ·M/S em circuitos de uma ou duas fases, √3ρ·M/S em trifásicos.
-pub fn queda_percentual(momento: f64, secao: f64, tensao: f64, fases: u8) -> f64 {
+/// na seção `secao`: 2ρ·M/S em circuitos de uma ou duas fases, √3ρ·M/S em trifásicos, com ρ do
+/// cobre na temperatura de serviço da isolação.
+pub fn queda_percentual(momento: f64, secao: f64, tensao: f64, fases: u8, isolacao: Isolacao) -> f64 {
     if secao <= 0.0 || tensao <= 0.0 {
         return 0.0;
     }
     let k = if fases >= 3 { 3f64.sqrt() } else { 2.0 };
-    k * RESISTIVIDADE_COBRE_70C * momento / secao / tensao * 100.0
+    k * isolacao.resistividade() * momento / secao / tensao * 100.0
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -150,13 +230,13 @@ pub fn dimensionar_com(c: &Circuito, cfg: &Config, momento: Option<f64>) -> Dime
     let fator = cfg.fct * cfg.fca;
     let minima = secao_minima(c.natureza);
     for (i, secao) in SECOES.iter().copied().enumerate().filter(|(_, s)| *s >= minima) {
-        let iz = capacidade(i, carregados) * fator;
+        let Some(iz) = capacidade(i, carregados, cfg.isolacao).map(|v| v * fator) else { continue };
         if iz < ib {
             continue;
         }
         // Ib ≤ In ≤ Iz; se nenhum disjuntor cabe nesta seção, a próxima seção resolve.
         let Some(disjuntor) = DISJUNTORES.iter().copied().find(|d| *d >= ib && *d <= iz) else { continue };
-        let queda = momento.map(|m| queda_percentual(m, secao, tensao, c.fases));
+        let queda = momento.map(|m| queda_percentual(m, secao, tensao, c.fases, cfg.isolacao));
         if queda.is_some_and(|q| q > cfg.queda_admissivel) {
             continue;
         }
@@ -172,8 +252,8 @@ pub fn verificar(c: &Circuito, cfg: &Config, momento: Option<f64>, secao: f64, d
     let mut avisos = Vec::new();
     let (tensao, _) = tensao_circuito(c, cfg);
     let ib = corrente_projeto(c.potencia, tensao, c.fases);
-    let iz = indice_secao(secao).map(|i| capacidade(i, condutores_carregados(c.fases)) * cfg.fct * cfg.fca);
-    let queda = momento.map(|m| queda_percentual(m, secao, tensao, c.fases));
+    let iz = indice_secao(secao).and_then(|i| capacidade(i, condutores_carregados(c.fases), cfg.isolacao)).map(|v| v * cfg.fct * cfg.fca);
+    let queda = momento.map(|m| queda_percentual(m, secao, tensao, c.fases, cfg.isolacao));
     if secao < secao_minima(c.natureza) {
         avisos.push(format!("seção abaixo da mínima da tabela 47 ({} mm²)", secao_minima(c.natureza)));
     }

@@ -22,6 +22,60 @@ pub const NOMES_FASES: [&str; 3] = ["A", "B", "C"];
 /// `DISJ.<circuito>`.
 pub const CHAVE_SECAO: &str = "SECAO.";
 pub const CHAVE_DISJUNTOR: &str = "DISJ.";
+/// Descrição de um circuito no quadro de cargas: `DESC.<circuito>`. Um circuito descrito
+/// existe no quadro mesmo sem pontos (criado no quadro de cargas).
+pub const CHAVE_DESCRICAO: &str = "DESC.";
+/// Isolação dos condutores do quadro (`PVC`, `EPR`, `XLPE`); sem ela vale a das configurações.
+pub const CHAVE_ISOLACAO: &str = "ISOLACAO";
+
+/// A isolação do quadro: a gravada nele ou a padrão das configurações.
+pub fn isolacao_do_quadro(quadro: &PontoEletrico, setup: &Setup) -> nbr5410::Isolacao {
+    quadro
+        .extras
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case(CHAVE_ISOLACAO))
+        .and_then(|(_, v)| nbr5410::Isolacao::de_codigo(v))
+        .unwrap_or(setup.isolacao)
+}
+
+/// As descrições de circuitos gravadas no quadro: (circuito, descrição), na ordem natural.
+pub fn descricoes(quadro: &PontoEletrico) -> Vec<(String, String)> {
+    let mut v: Vec<(String, String)> =
+        quadro.extras.iter().filter_map(|(k, d)| Some((k.to_uppercase().strip_prefix(CHAVE_DESCRICAO)?.to_string(), d.clone()))).collect();
+    v.sort_by(|a, b| crate::circuito::ordem_natural(&a.0, &b.0));
+    v
+}
+
+/// Um circuito no quadro de cargas: os que têm pontos e os criados (descritos) ainda sem pontos.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CircuitoDoQuadro {
+    pub id: String,
+    pub descricao: String,
+    pub circuito: Option<Circuito>,
+}
+
+/// Os circuitos do quadro, na ordem natural.
+pub fn circuitos_do_quadro(analise: &Analise, quadro: Handle) -> Vec<CircuitoDoQuadro> {
+    let descr = analise.ponto(quadro).map(descricoes).unwrap_or_default();
+    let mut v: Vec<CircuitoDoQuadro> = analise
+        .circuitos
+        .iter()
+        .filter(|c| c.quadro == Some(quadro))
+        .map(|c| CircuitoDoQuadro {
+            id: c.id.clone(),
+            descricao: descr.iter().find(|(id, _)| id.eq_ignore_ascii_case(&c.id)).map(|(_, d)| d.clone()).unwrap_or_default(),
+            circuito: Some(c.clone()),
+        })
+        .collect();
+    for (id, d) in descr {
+        if !v.iter().any(|c| c.id.eq_ignore_ascii_case(&id)) {
+            v.push(CircuitoDoQuadro { id, descricao: d, circuito: None });
+        }
+    }
+    v.sort_by(|a, b| crate::circuito::ordem_natural(&a.id, &b.id));
+    v
+}
 
 /// O que o projetista escolheu à mão para um circuito.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
@@ -50,6 +104,8 @@ pub fn sobrescritas(quadro: &PontoEletrico) -> HashMap<String, Sobrescrita> {
 #[serde(rename_all = "camelCase")]
 pub struct Linha {
     pub circuito: Circuito,
+    /// Descrição do circuito no quadro de cargas.
+    pub descricao: String,
     /// Fases do quadro que o circuito usa: índices em [`NOMES_FASES`].
     pub fases: Vec<usize>,
     pub fct: f64,
@@ -86,6 +142,8 @@ pub struct ResumoQuadro {
     #[serde(serialize_with = "hex")]
     pub quadro: Handle,
     pub tag: String,
+    /// Isolação dos condutores do quadro.
+    pub isolacao: nbr5410::Isolacao,
     /// Fases disponíveis no quadro.
     pub fases_quadro: u8,
     pub linhas: Vec<Linha>,
@@ -132,7 +190,9 @@ pub fn rotear(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle) -
     let mut avisos = Vec::new();
     let (metros, aviso_unidade) = setup.unidade.metros(doc.header.i64("INSUNITS", 0));
     avisos.extend(aviso_unidade);
-    let cfg_base = setup.config();
+    let isolacao = isolacao_do_quadro(q, setup);
+    let cfg_base = setup.config_com(isolacao);
+    let descr = descricoes(q);
     let fases_quadro = q.fases.unwrap_or(cfg_base.fases_padrao).clamp(1, 3);
     let circuitos: Vec<&Circuito> = analise.circuitos.iter().filter(|c| c.quadro == Some(quadro)).collect();
 
@@ -168,7 +228,7 @@ pub fn rotear(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle) -
         .iter()
         .zip(&rotas)
         .map(|(c, r)| {
-            let agrupados = r.arestas.iter().map(|e| por_aresta[e]).max().unwrap_or(1).max(1);
+            let agrupados = r.arestas.iter().filter_map(|e| por_aresta.get(e).copied()).max().unwrap_or(1).max(1);
             let cfg = nbr5410::Config { fca: nbr5410::fca_agrupamento(agrupados), ..cfg_base.clone() };
             let automatico = nbr5410::dimensionar_com(c, &cfg, r.momento);
             let sobrescrita = manuais.get(&c.id.to_uppercase()).copied().unwrap_or_default();
@@ -179,6 +239,7 @@ pub fn rotear(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle) -
             let condutores = nbr5410::condutores_total(c.fases);
             Linha {
                 circuito: (*c).clone(),
+                descricao: descr.iter().find(|(id, _)| id.eq_ignore_ascii_case(&c.id)).map(|(_, d)| d.clone()).unwrap_or_default(),
                 fases: Vec::new(),
                 fct: cfg.fct,
                 fca: cfg.fca,
@@ -237,6 +298,7 @@ pub fn rotear(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle) -
     Ok(ResumoQuadro {
         quadro,
         tag: q.rotulo(),
+        isolacao,
         fases_quadro,
         potencia_total: linhas.iter().map(|l| l.circuito.potencia).sum(),
         linhas,

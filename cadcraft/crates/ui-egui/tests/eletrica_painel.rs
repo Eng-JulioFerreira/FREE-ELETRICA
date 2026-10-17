@@ -111,7 +111,7 @@ fn paleta_ferramentas_e_fluxo_completo() {
     // Digitado, abre a paleta acima das Tool Sets, com altura fixa.
     assert!(app.cmdline("ELETRICA").is_none());
     let local = app.ui.docking.layout.location(&Panel::Eletrica).unwrap();
-    assert_eq!(local.size, Some(craft_ui::layout::SplitSize::FixedFirst(250.0)));
+    assert_eq!(local.size, Some(craft_ui::layout::SplitSize::FixedFirst(330.0)));
     assert_eq!(local.anchor, Some(Panel::ToolSets));
 
     let (qd, luz, int) = handles(app);
@@ -166,31 +166,62 @@ fn paleta_ferramentas_e_fluxo_completo() {
 
     h.run_steps(4);
     // A paleta só tem ferramentas.
-    for f in ["Configurações...", "Criar circuito", "Comandos e luminárias", "Conferir pontos e circuitos...", "Rotear fiação...", "Ajustar fiação"]
-    {
+    for f in [
+        "Configurações...",
+        "Quadro de cargas...",
+        "Criar circuito",
+        "Comandos e luminárias",
+        "Conferir pontos e circuitos...",
+        "Rotear fiação...",
+        "Ajustar fiação",
+    ] {
         h.get_by_label(f);
     }
     assert!(h.query_by_label("Pontos elétricos").is_none());
 
-    // Configurações: a aba de telecom com o catálogo e o cadastro.
+    // Configurações: isolação e diâmetros dos condutores, eletrodutos, e o catálogo de telecom
+    // com o diâmetro do cabo novo.
     h.get_by_label("Configurações...").click();
     h.run_steps(3);
     h.get_by_label("Sistema de distribuição");
+    h.get_by_label("Condutores").click();
+    h.run_steps(3);
+    h.get_by_label("Isolação padrão");
+    h.get_by_label("Diâmetro externo dos condutores");
+    h.get_by_label("Eletrodutos").click();
+    h.run_steps(3);
+    h.get_by_label("Diâmetro mínimo");
     h.get_by_label("Telecom").click();
     h.run_steps(3);
     h.get_by_label("Fibra óptica N12");
     h.get_by_label("Cadastrar novo cabo");
+    h.get_by_label("Diâmetro externo");
     h.get_by_label("Cancelar").click();
     h.run_steps(3);
     assert!(h.query_by_label("Cadastrar novo cabo").is_none());
 
-    // Rotear fiação: escolher o quadro e rotear mostra a tabela de resumo.
+    // Quadro de cargas: os circuitos do quadro, e Novo circuito cria o próximo número (4) vazio.
+    h.get_by_label("Quadro de cargas...").click();
+    h.run_steps(3);
+    h.get_by_label("Potência (VA)");
+    h.get_by_label("Novo circuito").click();
+    h.run_steps(3);
+    let cargas = h.state_mut().run("eletrica.cargas", json!({})).unwrap();
+    assert!(cargas.as_array().unwrap().iter().any(|c| c["id"] == "4" && c["circuito"].is_null()), "{cargas}");
+    h.get_by_label("vazio");
+    h.state_mut().session.undo().unwrap();
+    h.run_steps(3);
+
+    // Rotear fiação: escolher o quadro e rotear mostra a tabela de resumo, sem cores por fase.
     h.get_by_label("Rotear fiação...").click();
     h.run_steps(3);
     assert!(h.query_by_label("Resumo da fiação: QD-01").is_none());
+    // A isolação do quadro aparece nas duas janelas (Quadro de cargas continua aberta).
+    assert_eq!(h.query_all_by_label("Isolação").count(), 2);
     h.get_by_label("Rotear").click();
     h.run_steps(3);
     h.get_by_label("Resumo da fiação: QD-01");
-    h.get_by_label("ΔV (%)");
+    h.get_by_label("Queda (%)");
+    h.get_by_label("Situação");
     h.get_by_label("Copiar resumo");
 }

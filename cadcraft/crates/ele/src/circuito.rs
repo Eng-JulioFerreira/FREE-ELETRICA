@@ -88,11 +88,38 @@ pub fn proxima_letra(pontos: &[PontoEletrico], quadro: Option<Handle>, circuito:
     ('a'..='z').map(|l| l.to_string()).find(|l| !usadas.contains(l)).unwrap_or_else(|| "a".into())
 }
 
+/// Quadro e circuito já escolhidos para o próximo ELECIRCUITO (o quadro de cargas usa para
+/// "adicionar pontos" sem perguntar de novo). Consumido pelo comando.
+static ALVO: std::sync::Mutex<Option<(Handle, String)>> = std::sync::Mutex::new(None);
+
+/// Escolhe (ou limpa) o quadro e o circuito do próximo ELECIRCUITO.
+pub fn definir_alvo(alvo: Option<(Handle, String)>) {
+    match ALVO.lock() {
+        Ok(mut g) => *g = alvo,
+        Err(e) => *e.into_inner() = alvo,
+    }
+}
+
+/// Toma o alvo escolhido (e o limpa).
+pub fn tomar_alvo() -> Option<(Handle, String)> {
+    match ALVO.lock() {
+        Ok(mut g) => g.take(),
+        Err(e) => e.into_inner().take(),
+    }
+}
+
 /// O próximo número de circuito livre no quadro: o maior número usado mais um.
 pub fn proximo_circuito(pontos: &[PontoEletrico], quadro: Handle) -> String {
-    let maior =
-        pontos.iter().filter(|p| p.quadro == Some(quadro)).filter_map(|p| p.circuito.as_deref()?.trim().parse::<u32>().ok()).max().unwrap_or(0);
-    (maior + 1).to_string()
+    let dos_pontos = pontos.iter().filter(|p| p.quadro == Some(quadro)).filter_map(|p| p.circuito.as_deref()?.trim().parse::<u32>().ok());
+    // Os criados no quadro de cargas (descritos), mesmo sem pontos.
+    let criados: Vec<u32> = pontos
+        .iter()
+        .filter(|p| p.handle == quadro)
+        .flat_map(crate::quadro::descricoes)
+        .filter_map(|(id, _)| id.trim().parse::<u32>().ok())
+        .collect();
+    let maior = dos_pontos.chain(criados).max().unwrap_or(0);
+    maior.saturating_add(1).to_string()
 }
 
 fn montar(id: &str, membros: &[&PontoEletrico]) -> Circuito {
@@ -137,7 +164,7 @@ fn montar(id: &str, membros: &[&PontoEletrico]) -> Circuito {
 }
 
 /// Números pelo valor, depois o resto em ordem alfabética.
-fn ordem_natural(a: &str, b: &str) -> std::cmp::Ordering {
+pub fn ordem_natural(a: &str, b: &str) -> std::cmp::Ordering {
     match (a.trim().parse::<u32>(), b.trim().parse::<u32>()) {
         (Ok(x), Ok(y)) => x.cmp(&y),
         (Ok(_), Err(_)) => std::cmp::Ordering::Less,

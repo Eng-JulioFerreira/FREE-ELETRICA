@@ -266,8 +266,8 @@ fn queda_de_tensao_aumenta_a_secao() {
     let a = analisar(&planta());
     let tug = &a.circuitos[1];
     // 9,45 A a uns 40 m: momento 378 A·m. Em 2,5 mm² a queda passa de 4 %; em 4 mm² não.
-    assert!(nbr5410::queda_percentual(378.0, 2.5, 127.0, 1) > 4.0);
-    assert!(nbr5410::queda_percentual(378.0, 4.0, 127.0, 1) < 4.0);
+    assert!(nbr5410::queda_percentual(378.0, 2.5, 127.0, 1, nbr5410::Isolacao::Pvc) > 4.0);
+    assert!(nbr5410::queda_percentual(378.0, 4.0, 127.0, 1, nbr5410::Isolacao::Pvc) < 4.0);
     let d = nbr5410::dimensionar_com(tug, &Config::default(), Some(378.0));
     assert_eq!((d.secao, d.disjuntor), (Some(4.0), Some(10.0)));
     assert!(d.queda.unwrap() < 4.0);
@@ -317,7 +317,7 @@ fn catalogo_de_telecom() {
     let mut s = Setup::default();
     assert_eq!(s.cabos_telecom.len(), 12);
     assert!(s.cabos_telecom.iter().any(|c| c.nome == "Fibra óptica N12" && c.quantidade == 12));
-    let novo = CaboTelecom { nome: " UTP Cat 6A ".into(), categoria: CategoriaTelecom::Utp, quantidade: 4, ..CaboTelecom::default() };
+    let novo = CaboTelecom { nome: " UTP Cat 6A ".into(), categoria: CategoriaTelecom::Utp, quantidade: 4, diametro: 7.5, ..CaboTelecom::default() };
     s.cadastrar_cabo(novo.clone()).unwrap();
     assert!(s.cadastrar_cabo(novo).is_err(), "nome repetido");
     assert!(s.cadastrar_cabo(CaboTelecom::default()).is_err(), "sem nome");
@@ -369,7 +369,7 @@ fn rotear_quadro_calcula_comprimento_queda_e_fca() {
     // Circuito 1, até a luz 2: 8 m + 1,30 = 9,30 m.
     assert!(perto(c1.comprimento.unwrap(), 9.3, 1e-9));
     // Momento até a luz 2: 2,047 A × 4 m + 1,26 A × 4 m + 2,047 A × 1,30 m = 15,89 A·m.
-    let q1 = nbr5410::queda_percentual(15.89, 1.5, 127.0, 1);
+    let q1 = nbr5410::queda_percentual(15.89, 1.5, 127.0, 1, nbr5410::Isolacao::Pvc);
     assert!(perto(c1.escolha.queda.unwrap(), q1, 0.001), "{:?} vs {q1}", c1.escolha.queda);
     // Os circuitos 1 e 2 dividem o trecho do quadro até (2,0): FCA 0,80 nos dois.
     assert_eq!((c1.agrupados, c1.fca), (2, 0.8));
@@ -537,7 +537,7 @@ fn fiacao_por_trecho() {
     let c3 = circ(trecho(&f, (0.0, 0.0), (0.0, -5.0)), "3");
     assert_eq!((c3.fases, c3.neutro, c3.protecao), (2, false, true));
     let n = fiacao::contagem(&f);
-    assert_eq!((n["FIO-FASE"], n["FIO-NEUTRO"], n["FIO-RETORNO"], n["FIO-PROTECAO"]), (7, 5, 2, 6));
+    assert_eq!((n["FIACAO-FASE"], n["FIACAO-NEUTRO"], n["FIACAO-RETORNO"], n["FIACAO-PROTECAO"]), (7, 5, 2, 6));
 }
 
 #[test]
@@ -546,19 +546,36 @@ fn ajustar_fiacao_desenha_e_refaz() {
     let qd = quadro(&d);
     let setup = Setup::default();
     let f = fiacao::calcular(&d, &analisar(&d), &setup, qd).unwrap();
-    // 20 marcas, 2 letras de retorno e 7 rótulos de circuito.
-    assert_eq!(fiacao::aplicar(&mut d, &f, &setup).unwrap(), 29);
+    // 20 marcas; em cima, 7 números de circuito e 2 letras de retorno; embaixo, 7 seções e 6 diâmetros.
+    assert_eq!(fiacao::aplicar(&mut d, &f, &setup).unwrap(), 42);
     for tipo in fiacao::TipoCondutor::TODOS {
         assert!(d.blocks.contains_key(tipo.bloco()), "{}", tipo.bloco());
     }
     assert!(d.layer(fiacao::CAMADA).is_some());
-    assert_eq!(fiacao::gerados(&d, qd).len(), 29);
+    assert_eq!(fiacao::gerados(&d, qd).len(), 42);
     let textos: Vec<String> = d.model.iter().filter_map(|e| if let EntityKind::Text(t) = &e.kind { Some(t.value.clone()) } else { None }).collect();
-    assert!(textos.contains(&"2 #2,5".to_string()) && textos.contains(&"3 #4".to_string()) && textos.contains(&"a".to_string()), "{textos:?}");
+    assert!(
+        textos.contains(&"#2,5".to_string())
+            && textos.contains(&"#4".to_string())
+            && textos.contains(&"a".to_string())
+            && textos.iter().filter(|t| *t == "%%c20").count() == 6,
+        "{textos:?}"
+    );
+    // No trecho horizontal (4,0)-(8,0): o diâmetro fica numa linha própria, abaixo das seções.
+    let no_trecho: Vec<(String, f64)> = d
+        .model
+        .iter()
+        .filter_map(|e| if let EntityKind::Text(t) = &e.kind { Some((t.value.clone(), t.insert.x, t.insert.y)) } else { None })
+        .filter(|(_, x, y)| *x > 4.0 && *x < 8.0 && y.abs() < 0.5)
+        .map(|(v, _, y)| (v, y))
+        .collect();
+    let y_diametro = no_trecho.iter().find(|(v, _)| v.starts_with("%%c")).map(|(_, y)| *y).expect("diâmetro no trecho");
+    let secoes: Vec<f64> = no_trecho.iter().filter(|(v, _)| v.starts_with('#')).map(|(_, y)| *y).collect();
+    assert!(!secoes.is_empty() && secoes.iter().all(|y| y - y_diametro >= 0.05), "{no_trecho:?}");
     // Rodar de novo não duplica: apaga e refaz.
     let f = fiacao::calcular(&d, &analisar(&d), &setup, qd).unwrap();
-    assert_eq!(fiacao::aplicar(&mut d, &f, &setup).unwrap(), 29);
-    assert_eq!(fiacao::gerados(&d, qd).len(), 29);
+    assert_eq!(fiacao::aplicar(&mut d, &f, &setup).unwrap(), 42);
+    assert_eq!(fiacao::gerados(&d, qd).len(), 42);
     // As marcas não viram pontos elétricos nem eletrodutos.
     assert_eq!(analisar(&d).pontos.len(), 8);
     // Seção omitida sai do rótulo.
@@ -566,19 +583,19 @@ fn ajustar_fiacao_desenha_e_refaz() {
     fiacao::aplicar(&mut d, &f, &omite).unwrap();
     let textos: Vec<String> = d.model.iter().filter_map(|e| if let EntityKind::Text(t) = &e.kind { Some(t.value.clone()) } else { None }).collect();
     assert!(textos.contains(&"2".to_string()) && !textos.iter().any(|t| t.contains("#2,5")), "{textos:?}");
-    assert_eq!(fiacao::limpar(&mut d, qd), 29);
+    assert_eq!(fiacao::limpar(&mut d, qd), 40);
     assert!(fiacao::gerados(&d, qd).is_empty());
 }
 
 #[test]
 fn bloco_de_marca_do_projetista_e_mantido() {
     let mut d = planta();
-    let mut proprio = Block::new("FIO-FASE");
+    let mut proprio = Block::new("FIACAO-FASE");
     proprio.entities.push(Entity::new(Handle(990), EntityKind::Circle(Circle { center: Vec3::ZERO, radius: 0.02 })));
-    d.blocks.insert("FIO-FASE".into(), Arc::new(proprio));
+    d.blocks.insert("FIACAO-FASE".into(), Arc::new(proprio));
     fiacao::garantir_blocos(&mut d, 1.0);
-    assert_eq!(d.blocks["FIO-FASE"].entities.len(), 1);
-    assert_eq!(d.blocks["FIO-NEUTRO"].entities.len(), 2);
+    assert_eq!(d.blocks["FIACAO-FASE"].entities.len(), 1);
+    assert_eq!(d.blocks["FIACAO-NEUTRO"].entities.len(), 1);
 }
 
 #[test]
@@ -597,4 +614,126 @@ fn setup_global_le_e_grava_por_json() {
     assert_eq!(setup::atual().pe_direito, 3.1);
     assert!(setup::json(&serde_json::json!({ "sistema": "inexistente" })).is_err());
     setup::definir(antes);
+}
+
+// ------------------------------------------------------------------ isolação, ocupação, quadro de cargas
+
+#[test]
+fn isolacao_muda_capacidade_fct_e_resistividade() {
+    use nbr5410::Isolacao;
+    // Tabela 37 (EPR/XLPE, B1): 2,5 mm² com dois carregados conduz 31 A; tabela 36 (PVC): 24 A.
+    assert_eq!(nbr5410::capacidade(1, 2, Isolacao::Xlpe), Some(31.0));
+    assert_eq!(nbr5410::capacidade(1, 2, Isolacao::Pvc), Some(24.0));
+    assert_eq!(nbr5410::capacidade(99, 2, Isolacao::Pvc), None);
+    // Tabela 40 a 40 °C: PVC 0,87, EPR/XLPE 0,91.
+    assert_eq!(Isolacao::Pvc.fct(40.0), 0.87);
+    assert_eq!(Isolacao::Epr.fct(40.0), 0.91);
+    assert!(nbr5410::queda_percentual(100.0, 2.5, 220.0, 1, Isolacao::Xlpe) > nbr5410::queda_percentual(100.0, 2.5, 220.0, 1, Isolacao::Pvc));
+    assert_eq!(Isolacao::de_codigo("xlpe"), Some(Isolacao::Xlpe));
+    assert_eq!(Isolacao::de_codigo("borracha"), None);
+}
+
+#[test]
+fn isolacao_do_quadro_no_roteamento() {
+    let mut d = planta();
+    let qd = quadro(&d);
+    // PVC: o chuveiro (24,5 A) vai a 4 mm². XLPE: 2,5 mm² conduz 31 A e basta, com 25 A.
+    let r = rotear_quadro(&d, &analisar(&d), &Setup::default(), qd).unwrap();
+    assert_eq!((r.isolacao, r.linhas[2].escolha.secao), (nbr5410::Isolacao::Pvc, Some(4.0)));
+    editar::definir_isolacao(&mut d, qd, Some(nbr5410::Isolacao::Xlpe)).unwrap();
+    let r = rotear_quadro(&d, &analisar(&d), &Setup::default(), qd).unwrap();
+    assert_eq!(r.isolacao, nbr5410::Isolacao::Xlpe);
+    assert_eq!((r.linhas[2].escolha.secao, r.linhas[2].escolha.disjuntor), (Some(2.5), Some(25.0)));
+    editar::definir_isolacao(&mut d, qd, None).unwrap();
+    assert_eq!(rotear_quadro(&d, &analisar(&d), &Setup::default(), qd).unwrap().isolacao, nbr5410::Isolacao::Pvc);
+}
+
+#[test]
+fn ocupacao_do_eletroduto() {
+    let s = Setup::default();
+    assert_eq!(setup::ocupacao_maxima(1), 0.53);
+    assert_eq!(setup::ocupacao_maxima(2), 0.31);
+    assert_eq!(setup::ocupacao_maxima(7), 0.40);
+    assert_eq!(s.diametro_condutor(6.0, nbr5410::Isolacao::Pvc), Some(4.8));
+    assert_eq!(s.diametro_condutor(6.0, nbr5410::Isolacao::Epr), Some(7.2));
+    assert_eq!(s.diametro_condutor(7.0, nbr5410::Isolacao::Pvc), None);
+    // Dez condutores de 6 mm² (4,8 mm): 181 mm². A 40 %, o de 25 (21,3 mm, 142 mm² úteis) não
+    // comporta; o de 32 (27,5 mm, 238 mm² úteis) sim.
+    let (e, oc) = s.eletroduto_para(&[4.8; 10]).unwrap();
+    assert_eq!(e.nominal, 32.0);
+    assert!(oc <= 0.40 && oc > 0.30, "{oc}");
+    // Poucos condutores: o mínimo do projeto (20).
+    assert_eq!(s.eletroduto_para(&[3.0, 3.0, 3.0]).unwrap().0.nominal, 20.0);
+    let minimo_25 = Setup { eletroduto_minimo: 25.0, ..Setup::default() };
+    assert_eq!(minimo_25.eletroduto_para(&[3.0]).unwrap().0.nominal, 25.0);
+    // Nada comporta.
+    assert!(s.eletroduto_para(&[20.0; 30]).is_none());
+}
+
+#[test]
+fn fiacao_dimensiona_o_eletroduto_de_cada_trecho() {
+    let d = planta();
+    let f = fiacao::calcular(&d, &analisar(&d), &Setup::default(), quadro(&d)).unwrap();
+    let t = trecho(&f, (0.0, 0.0), (2.0, 0.0));
+    // 3 × 1,5 mm² (3,0 mm) e 3 × 2,5 mm² (3,6 mm): 51,7 mm², cabe no de 20 (84 mm² úteis).
+    assert_eq!(t.condutores(), 6);
+    assert_eq!(t.eletroduto.as_ref().map(|e| e.nominal), Some(20.0));
+    assert!((t.ocupacao.unwrap() - 51.75 / 211.24).abs() < 0.01, "{:?}", t.ocupacao);
+    // Sem diâmetro na tabela: avisa e não escolhe.
+    let sem = Setup { diametros_condutor: vec![setup::DiametroCondutor { secao: 1.5, pvc: 3.0, epr_xlpe: 5.6 }], ..Setup::default() };
+    let f = fiacao::calcular(&d, &analisar(&d), &sem, quadro(&d)).unwrap();
+    assert!(trecho(&f, (0.0, 0.0), (2.0, 0.0)).eletroduto.is_none());
+    assert!(f.avisos.iter().any(|w| w.contains("diâmetro externo")), "{:?}", f.avisos);
+}
+
+#[test]
+fn cabo_de_telecom_exige_diametro() {
+    let mut s = Setup::default();
+    assert!(s.cabos_telecom.iter().all(|c| c.diametro > 0.0));
+    let sem = CaboTelecom { nome: "UTP Cat 6A".into(), categoria: CategoriaTelecom::Utp, quantidade: 4, ..CaboTelecom::default() };
+    assert!(s.cadastrar_cabo(sem.clone()).unwrap_err().contains("diâmetro"));
+    s.cadastrar_cabo(CaboTelecom { diametro: 7.5, ..sem }).unwrap();
+    // Preferências antigas (sem diâmetro) recebem o de fábrica.
+    let mut velho = Setup::default();
+    velho.cabos_telecom.iter_mut().for_each(|c| c.diametro = 0.0);
+    velho.normalizar();
+    assert!(velho.cabos_telecom.iter().all(|c| c.diametro > 0.0));
+}
+
+#[test]
+fn quadro_de_cargas_cria_descreve_junta_e_exclui() {
+    let mut d = planta();
+    let qd = quadro(&d);
+    // Criar: um circuito descrito existe sem pontos e conta no próximo número.
+    editar::definir_descricao(&mut d, qd, "4", Some("Tomadas da cozinha")).unwrap();
+    let a = analisar(&d);
+    let lista = quadro::circuitos_do_quadro(&a, qd);
+    assert_eq!(lista.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(), ["1", "2", "3", "4"]);
+    assert!(lista[3].circuito.is_none() && lista[3].descricao == "Tomadas da cozinha");
+    assert_eq!(circuito::proximo_circuito(&a.pontos, qd), "5");
+    // Descrição aparece no roteamento.
+    editar::definir_descricao(&mut d, qd, "2", Some("TUG sala")).unwrap();
+    let r = rotear_quadro(&d, &analisar(&d), &Setup::default(), qd).unwrap();
+    assert_eq!(r.linhas[1].descricao, "TUG sala");
+    // Juntar o 2 no 4: os pontos do 2 passam para o 4; o 2 some com a descrição e as escolhas.
+    editar::definir_sobrescrita(&mut d, qd, "2", None, Some(16.0)).unwrap();
+    assert_eq!(editar::juntar_circuitos(&mut d, qd, "2", "4").unwrap(), 2);
+    let a = analisar(&d);
+    let lista = quadro::circuitos_do_quadro(&a, qd);
+    assert_eq!(lista.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(), ["1", "3", "4"]);
+    assert_eq!(lista[2].circuito.as_ref().map(|c| c.potencia), Some(1200.0));
+    assert!(quadro::sobrescritas(a.ponto(qd).unwrap()).is_empty());
+    assert!(editar::juntar_circuitos(&mut d, qd, "4", "4").is_err());
+    // Excluir o 4: os pontos ficam sem circuito.
+    assert_eq!(editar::excluir_circuito(&mut d, qd, "4").unwrap(), 2);
+    let a = analisar(&d);
+    assert_eq!(quadro::circuitos_do_quadro(&a, qd).len(), 2);
+    assert_eq!(a.pontos.iter().filter(|p| p.tipo == TipoPonto::Tomada && p.circuito.is_none()).count(), 2);
+}
+
+#[test]
+fn alvo_do_proximo_elecircuito() {
+    circuito::definir_alvo(Some((Handle(5), "3".into())));
+    assert_eq!(circuito::tomar_alvo(), Some((Handle(5), "3".into())));
+    assert_eq!(circuito::tomar_alvo(), None);
 }

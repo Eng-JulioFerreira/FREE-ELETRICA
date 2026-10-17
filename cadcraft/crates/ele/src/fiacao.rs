@@ -9,26 +9,31 @@
 //! - proteção: do quadro às cargas;
 //! - retorno: de cada interruptor às luminárias com a letra dele (`COMANDO`), uma por letra.
 //!
-//! As marcas são blocos (`FIO-FASE`, `FIO-NEUTRO`, `FIO-RETORNO`, `FIO-PROTECAO`) inseridos
-//! atravessando o trecho, com o número do circuito (e a seção, quando não omitida) embaixo e as
-//! letras dos retornos em cima. Os blocos são criados com um desenho padrão quando o desenho
-//! ainda não os tem; o projetista pode redesenhá-los, e Ajustar fiação usa os dele. Tudo o que é
-//! gerado fica na camada `ELE-FIACAO` com o XDATA `FIACAO=<handle do quadro>`, e Ajustar fiação
-//! apaga e refaz as marcas daquele quadro.
+//! As marcas são blocos (`FIACAO-FASE`, `FIACAO-NEUTRO`, `FIACAO-RETORNO`, `FIACAO-PROTECAO`)
+//! perpendiculares ao trecho, agrupadas por circuito: o número do circuito em cima do grupo, a
+//! letra de cada retorno em cima do retorno, a seção (quando não omitida) embaixo do grupo e o
+//! diâmetro do eletroduto do trecho embaixo, no fim. O eletroduto é o menor do tipo do projeto
+//! que comporta os condutores do trecho com a ocupação máxima da NBR 5410 (6.2.11.1.6).
+//!
+//! Os blocos são criados com um desenho padrão quando o desenho ainda não os tem; o projetista
+//! pode redesenhá-los, e Ajustar fiação usa os dele. Tudo o que é gerado fica na camada
+//! `ELE-FIACAO` (cor 7: branco no fundo escuro, preto na impressão) com o XDATA
+//! `FIACAO=<handle do quadro>`, e Ajustar fiação apaga e refaz as marcas daquele quadro.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
 use cadcraft_doc::color::Color;
 use cadcraft_doc::geom::Vec3;
-use cadcraft_doc::{Block, Circle, Common, Drawing, Entity, EntityKind, HAlign, Handle, Insert, Line, RawTag, Space, Text, VAlign};
+use cadcraft_doc::{Block, Common, Drawing, Entity, EntityKind, HAlign, Handle, Insert, Line, Lineweight, RawTag, Space, Text, VAlign};
 use serde::Serialize;
 
 use crate::Analise;
+use crate::nbr5410::Isolacao;
 use crate::ponto::{PontoEletrico, TipoPonto, br};
 use crate::quadro;
 use crate::rota::Rede;
-use crate::setup::Setup;
+use crate::setup::{Setup, TamanhoEletroduto};
 use crate::xdata;
 
 /// Camada das marcas de fiação.
@@ -57,10 +62,24 @@ impl TipoCondutor {
     /// O bloco da marca.
     pub fn bloco(self) -> &'static str {
         match self {
-            Self::Fase => "FIO-FASE",
-            Self::Neutro => "FIO-NEUTRO",
-            Self::Retorno => "FIO-RETORNO",
-            Self::Protecao => "FIO-PROTECAO",
+            Self::Fase => "FIACAO-FASE",
+            Self::Neutro => "FIACAO-NEUTRO",
+            Self::Retorno => "FIACAO-RETORNO",
+            Self::Protecao => "FIACAO-PROTECAO",
+        }
+    }
+
+    /// O desenho padrão da marca, em metros, com o eletroduto no eixo x: fase "1" (traço com
+    /// bico no topo), neutro "'" (traço curto acima do eletroduto), retorno "7" (traço com
+    /// bandeira no topo) e proteção "T".
+    fn tracos(self) -> Vec<((f64, f64), (f64, f64))> {
+        const H: f64 = 0.05;
+        let haste = ((0.0, -H), (0.0, H));
+        match self {
+            Self::Fase => vec![haste, ((-0.015, H - 0.015), (0.0, H))],
+            Self::Neutro => vec![((0.0, 0.01), (0.0, H))],
+            Self::Retorno => vec![haste, ((-0.025, H), (0.0, H))],
+            Self::Protecao => vec![haste, ((-0.02, H), (0.02, H))],
         }
     }
 }
@@ -108,6 +127,41 @@ pub struct Trecho {
     pub b: [f64; 2],
     pub piso: bool,
     pub circuitos: Vec<Condutores>,
+    /// O eletroduto do trecho, pela ocupação. `None`: nenhum tamanho do tipo comporta (ou falta
+    /// o diâmetro de alguma seção nas configurações).
+    pub eletroduto: Option<TamanhoEletroduto>,
+    /// Ocupação da seção interna do eletroduto escolhido (0 a 1).
+    pub ocupacao: Option<f64>,
+}
+
+impl Trecho {
+    /// Quantos condutores passam no trecho.
+    pub fn condutores(&self) -> usize {
+        self.circuitos.iter().map(|k| k.marcas().len()).sum()
+    }
+}
+
+/// Escolhe o eletroduto do trecho pela ocupação dos condutores.
+fn dimensionar_eletroduto(t: &mut Trecho, setup: &Setup, isolacao: Isolacao, avisos: &mut Vec<String>) {
+    let mut diametros = Vec::new();
+    for k in &t.circuitos {
+        let Some(secao) = k.secao else {
+            avisos.push(format!("circuito {}: sem seção, eletroduto não dimensionado", k.circuito));
+            return;
+        };
+        let Some(d) = setup.diametro_condutor(secao, isolacao) else {
+            avisos.push(format!("sem diâmetro externo para {} mm² ({}) nas configurações", br(secao), isolacao.codigo()));
+            return;
+        };
+        diametros.extend(std::iter::repeat_n(d, k.marcas().len()));
+    }
+    match setup.eletroduto_para(&diametros) {
+        Some((e, oc)) => {
+            t.eletroduto = Some(e);
+            t.ocupacao = Some(oc);
+        }
+        None => avisos.push(format!("{} condutores num trecho: nenhum eletroduto do tipo do projeto comporta", diametros.len())),
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -116,6 +170,8 @@ pub struct Fiacao {
     #[serde(serialize_with = "hex")]
     pub quadro: Handle,
     pub tag: String,
+    /// Isolação dos condutores do quadro (entra no diâmetro externo).
+    pub isolacao: Isolacao,
     pub trechos: Vec<Trecho>,
     /// Metros por unidade do desenho.
     pub metros_por_unidade: f64,
@@ -210,10 +266,16 @@ pub fn calcular(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle)
             }
             let piso = rede.elevacao.get(na).is_some_and(|z| *z < setup.pe_direito);
             let circuitos: Vec<Condutores> = circuitos.into_values().filter(|k| !k.vazio()).collect();
-            (!circuitos.is_empty()).then_some(Trecho { a, b, piso, circuitos })
+            (!circuitos.is_empty()).then_some(Trecho { a, b, piso, circuitos, eletroduto: None, ocupacao: None })
         })
-        .collect();
-    Ok(Fiacao { quadro, tag: q.rotulo(), trechos, metros_por_unidade: resumo.metros_por_unidade, avisos })
+        .collect::<Vec<_>>();
+    let mut trechos = trechos;
+    for t in &mut trechos {
+        dimensionar_eletroduto(t, setup, resumo.isolacao, &mut avisos);
+    }
+    avisos.sort();
+    avisos.dedup();
+    Ok(Fiacao { quadro, tag: q.rotulo(), isolacao: resumo.isolacao, trechos, metros_por_unidade: resumo.metros_por_unidade, avisos })
 }
 
 // ---------------------------------------------------------------- desenho
@@ -244,35 +306,29 @@ pub fn limpar(doc: &mut Drawing, quadro: Handle) -> usize {
     hs.iter().filter(|h| doc.model.remove(**h).is_some()).count()
 }
 
-/// Cria os blocos das marcas que o desenho ainda não tem (traço inclinado atravessando o
-/// eletroduto; o neutro com um círculo na ponta, o retorno com uma bandeira, a proteção com um
-/// traço cruzado). `m` = metros por unidade do desenho.
+/// Cria os blocos das marcas que o desenho ainda não tem, com o desenho padrão
+/// ([`TipoCondutor`]), e a camada `ELE-FIACAO` (cor 7, traço 0,35 mm). `m` = metros por unidade.
 pub fn garantir_blocos(doc: &mut Drawing, m: f64) {
     let u = |v: f64| v / m;
-    let linha = |a: (f64, f64), b: (f64, f64)| EntityKind::Line(Line { a: Vec3::new(u(a.0), u(a.1), 0.0), b: Vec3::new(u(b.0), u(b.1), 0.0) });
-    let traco = linha((-0.012, -0.05), (0.012, 0.05));
     for tipo in TipoCondutor::TODOS {
         if doc.blocks.contains_key(tipo.bloco()) {
             continue;
         }
-        let mut formas = vec![traco.clone()];
-        match tipo {
-            TipoCondutor::Fase => {}
-            TipoCondutor::Neutro => formas.push(EntityKind::Circle(Circle { center: Vec3::new(u(0.012), u(0.06), 0.0), radius: u(0.01) })),
-            TipoCondutor::Retorno => formas.push(linha((0.012, 0.05), (0.032, 0.035))),
-            TipoCondutor::Protecao => formas.push(linha((-0.012, 0.03), (0.024, 0.03))),
-        }
         let mut b = Block::new(tipo.bloco());
-        for k in formas {
+        for (a, c) in tipo.tracos() {
             let h = doc.new_handle();
-            b.entities.push(Entity::new(h, k));
+            let linha = Line { a: Vec3::new(u(a.0), u(a.1), 0.0), b: Vec3::new(u(c.0), u(c.1), 0.0) };
+            b.entities.push(Entity::new(h, EntityKind::Line(linha)));
         }
         doc.blocks.insert(tipo.bloco().to_string(), Arc::new(b));
     }
-    if doc.ensure_layer(CAMADA)
-        && let Some(l) = doc.layer_mut(CAMADA)
-    {
-        l.color = Color::Index(1);
+    let nova = doc.ensure_layer(CAMADA);
+    if let Some(l) = doc.layer_mut(CAMADA) {
+        // Camada nova, ou a das versões antigas (vermelha): cor 7 e traço mais grosso.
+        if nova || l.color == Color::Index(1) {
+            l.color = Color::Index(7);
+            l.lineweight = Lineweight::Mm100(35);
+        }
     }
 }
 
@@ -315,10 +371,12 @@ pub fn aplicar(doc: &mut Drawing, f: &Fiacao, setup: &Setup) -> Result<usize, St
         let largura: f64 =
             grupos.iter().map(|g| (g.len().saturating_sub(1)) as f64 * passo).sum::<f64>() + grupos.len().saturating_sub(1) as f64 * entre;
         let mut s = -largura / 2.0;
+        let acima = AFASTAMENTO_TEXTO / m;
+        let ponto = |s: f64, desvio: f64| [meio[0] + d[0] * s + n[0] * desvio, meio[1] + d[1] * s + n[1] * desvio];
         for (k, grupo) in t.circuitos.iter().zip(&grupos) {
             let inicio = s;
-            for (tipo, letra) in grupo {
-                let p = [meio[0] + d[0] * s, meio[1] + d[1] * s];
+            for (i, (tipo, letra)) in grupo.iter().enumerate() {
+                let p = ponto(s, 0.0);
                 let ins = Insert {
                     block: tipo.bloco().into(),
                     insert: Vec3::new(p[0], p[1], 0.0),
@@ -332,21 +390,34 @@ pub fn aplicar(doc: &mut Drawing, f: &Fiacao, setup: &Setup) -> Result<usize, St
                 };
                 doc.add(&Space::Model, comum(f.quadro), EntityKind::Insert(ins)).map_err(|e| e.to_string())?;
                 criadas += 1;
-                if let Some(l) = letra {
-                    let em = [p[0] + n[0] * AFASTAMENTO_TEXTO / m, p[1] + n[1] * AFASTAMENTO_TEXTO / m];
-                    doc.add(&Space::Model, comum(f.quadro), texto(l.to_string(), em, ALTURA_TEXTO / m, rot)).map_err(|e| e.to_string())?;
+                // Em cima: o número do circuito sobre a primeira marca e a letra sobre cada
+                // retorno (lado a lado leem "1b").
+                let rotulo = match (i, letra) {
+                    (0, Some(l)) => Some(format!("{}{l}", k.circuito)),
+                    (0, None) => Some(k.circuito.clone()),
+                    (_, Some(l)) => Some(l.to_string()),
+                    (_, None) => None,
+                };
+                if let Some(r) = rotulo {
+                    doc.add(&Space::Model, comum(f.quadro), texto(r, ponto(s, acima), ALTURA_TEXTO / m, rot)).map_err(|e| e.to_string())?;
                     criadas += 1;
                 }
                 s += passo;
             }
-            // Rótulo do circuito embaixo do grupo: número e seção (quando não omitida).
-            let centro = (inicio + s - passo) / 2.0;
-            let secao = k.secao.filter(|x| !setup.omitida(*x)).map(|x| format!(" #{}", br(x))).unwrap_or_default();
-            let em = [meio[0] + d[0] * centro - n[0] * AFASTAMENTO_TEXTO / m, meio[1] + d[1] * centro - n[1] * AFASTAMENTO_TEXTO / m];
-            doc.add(&Space::Model, comum(f.quadro), texto(format!("{}{secao}", k.circuito), em, ALTURA_TEXTO / m, rot)).map_err(|e| e.to_string())?;
-            criadas += 1;
+            // Embaixo do grupo: a seção, quando não omitida.
+            if let Some(x) = k.secao.filter(|x| !setup.omitida(*x)) {
+                let centro = (inicio + s - passo) / 2.0;
+                doc.add(&Space::Model, comum(f.quadro), texto(format!("#{}", br(x)), ponto(centro, -acima), ALTURA_TEXTO / m, rot))
+                    .map_err(|e| e.to_string())?;
+                criadas += 1;
+            }
             s += entre - passo;
         }
+        // Na linha de baixo, centrado sob toda a simbologia: o diâmetro do eletroduto do trecho.
+        let diametro = t.eletroduto.as_ref().map_or_else(|| "%%c?".to_string(), |e| format!("%%c{}", br(e.nominal)));
+        let abaixo = (AFASTAMENTO_TEXTO + ALTURA_TEXTO * 1.6) / m;
+        doc.add(&Space::Model, comum(f.quadro), texto(diametro, ponto(0.0, -abaixo), ALTURA_TEXTO / m, rot)).map_err(|e| e.to_string())?;
+        criadas += 1;
     }
     Ok(criadas)
 }
