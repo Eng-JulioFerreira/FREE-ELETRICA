@@ -158,7 +158,8 @@ fn le_os_pontos_e_liga_ao_unico_quadro() {
     // A luminária tem COMANDO e continua sendo carga.
     let luz = a.pontos.iter().find(|p| p.tag.as_deref() == Some("LUZ-1")).unwrap();
     assert_eq!(luz.tipo, TipoPonto::Iluminacao);
-    assert_eq!(luz.avisos(), ["sem ALTURA de instalação: considerado no teto"]);
+    // Luz sem ALTURA fica no teto sem aviso.
+    assert!(luz.avisos().is_empty(), "{:?}", luz.avisos());
     let tug = a.pontos.iter().find(|p| p.tipo == TipoPonto::Tomada).unwrap();
     assert_eq!(tug.altura, Some(0.3));
 }
@@ -436,6 +437,42 @@ fn desenho_em_milimetros_da_os_mesmos_comprimentos() {
     let r = rotear_quadro(&d, &analisar(&d), &Setup::default(), quadro(&d)).unwrap();
     assert_eq!(r.metros_por_unidade, 0.001);
     assert!(perto(r.linhas[0].comprimento.unwrap(), 3.0 + 2.5 + 1.3, 1e-9));
+}
+
+fn eletroduto_em(d: &mut Drawing, camada: &str, a: (f64, f64), b: (f64, f64)) {
+    let c = Common { layer: camada.into(), ..Default::default() };
+    d.add(&Space::Model, c, EntityKind::Line(Line { a: Vec3::new(a.0, a.1, 0.0), b: Vec3::new(b.0, b.1, 0.0) })).unwrap();
+}
+
+#[test]
+fn eletroduto_no_piso_muda_as_pernas() {
+    let mut d = metros();
+    inserir(&mut d, "QD", 0.0, 0.0, &[("TIPO_PONTO", "QUADRO"), ("ALTURA", "1,5")]);
+    inserir(&mut d, "TUG", 3.0, 0.0, &[("TIPO_PONTO", "TUG"), ("POTENCIA", "600VA"), ("TENSAO", "127V"), ("CIRCUITO", "1"), ("ALTURA", "0,3")]);
+    eletroduto_em(&mut d, "ELE-ELETRODUTO-PVC-MEDIA-PISO", (0.0, 0.0), (3.0, 0.0));
+    let r = rotear_quadro(&d, &analisar(&d), &Setup::default(), quadro(&d)).unwrap();
+    // No piso: 3 m, a tomada sobe 0,30 e o quadro desce 1,50.
+    assert!(perto(r.linhas[0].comprimento.unwrap(), 3.0 + 0.3 + 1.5, 1e-9), "{:?}", r.linhas[0].comprimento);
+}
+
+#[test]
+fn passagem_do_teto_ao_piso_soma_um_pe_direito() {
+    let mut d = metros();
+    inserir(&mut d, "QD", 0.0, 0.0, &[("TIPO_PONTO", "QUADRO"), ("ALTURA", "1,5")]);
+    inserir(&mut d, "TUG", 4.0, 0.0, &[("TIPO_PONTO", "TUG"), ("POTENCIA", "600VA"), ("TENSAO", "127V"), ("CIRCUITO", "1"), ("ALTURA", "0,3")]);
+    eletroduto_em(&mut d, "ELE-ELETRODUTO-PVC-MEDIA-TETO", (0.0, 0.0), (2.0, 0.0));
+    eletroduto_em(&mut d, "ELE-ELETRODUTO-PVC-MEDIA-PISO", (2.0, 0.0), (4.0, 0.0));
+    let a = analisar(&d);
+    let rede = rota::Rede::montar(&d, &Setup::default(), &a.pontos, 1.0);
+    // Dois trechos e a subida entre eles.
+    assert_eq!(rede.arestas.len(), 3);
+    let r = rotear_quadro(&d, &a, &Setup::default(), quadro(&d)).unwrap();
+    // Quadro no teto (1,30) + 2 m + subida 2,80 + 2 m no piso + tomada 0,30.
+    assert!(perto(r.linhas[0].comprimento.unwrap(), 1.3 + 2.0 + 2.8 + 2.0 + 0.3, 1e-9), "{:?}", r.linhas[0].comprimento);
+    // Com as camadas de piso desligadas tudo corre no teto.
+    let teto = Setup { camadas_piso: String::new(), ..Setup::default() };
+    let r = rotear_quadro(&d, &a, &teto, quadro(&d)).unwrap();
+    assert!(perto(r.linhas[0].comprimento.unwrap(), 1.3 + 4.0 + 2.5, 1e-9));
 }
 
 #[test]

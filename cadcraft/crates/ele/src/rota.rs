@@ -2,8 +2,9 @@
 //! e, dele, comprimentos (com subidas e descidas) e momentos elétricos para a queda de tensão.
 //!
 //! Premissas desta versão: os eletrodutos são linhas e polilinhas (arcos viram cordas) nas
-//! camadas das configurações e correm no teto, no pé-direito; cada ponto desce (ou sobe) do teto
-//! até a sua altura de instalação. Linhas que se cruzam sem um vértice em comum não se ligam
+//! camadas das configurações. Os de piso (camadas de piso das configurações) correm no chão, os
+//! demais no teto, no pé-direito; cada ponto desce ou sobe do eletroduto até a sua altura de
+//! instalação, e a passagem do piso ao teto num mesmo ponto soma um pé-direito. Linhas que se cruzam sem um vértice em comum não se ligam
 //! (não há caixa ali); uma ponta que encosta no meio de outro trecho liga (derivação em T).
 
 use std::cmp::Ordering;
@@ -37,12 +38,17 @@ fn em(a: P, b: P, t: f64) -> P {
 pub struct Ligacao {
     pub no: usize,
     pub distancia: f64,
+    /// Altura do eletroduto onde o ponto liga (m): o pé-direito no teto, 0 no piso.
+    pub elevacao: f64,
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct Rede {
     /// Nós, nas coordenadas do desenho.
     pub nos: Vec<P>,
+    /// Altura de cada nó (m): o pé-direito no teto, 0 no piso. No mesmo lugar, um nó de teto e
+    /// um de piso são nós diferentes, ligados por uma subida de um pé-direito.
+    pub elevacao: Vec<f64>,
     /// Arestas: (nó, nó, comprimento em m).
     pub arestas: Vec<(usize, usize, f64)>,
     adj: Vec<Vec<(usize, usize)>>,
@@ -56,24 +62,27 @@ pub struct Rede {
 impl Rede {
     /// Monta a rede com os eletrodutos do espaço do modelo e liga os pontos a ela.
     pub fn montar(doc: &Drawing, setup: &Setup, pontos: &[PontoEletrico], metros: f64) -> Rede {
-        let mut segs: Vec<(P, P)> = Vec::new();
+        // (início, fim, no piso)
+        let mut segs: Vec<(P, P, bool)> = Vec::new();
         for e in doc.model.iter() {
             if !setup.e_camada_eletroduto(&e.common.layer) {
                 continue;
             }
+            let piso = setup.e_camada_piso(&e.common.layer);
             match &e.kind {
-                EntityKind::Line(l) => segs.push(([l.a.x, l.a.y], [l.b.x, l.b.y])),
+                EntityKind::Line(l) => segs.push(([l.a.x, l.a.y], [l.b.x, l.b.y], piso)),
                 EntityKind::LwPolyline(pl) => {
                     let v: Vec<P> = pl.vertices.iter().map(|v| [v.p.x, v.p.y]).collect();
-                    segs.extend(v.windows(2).map(|w| (w[0], w[1])));
+                    segs.extend(v.windows(2).map(|w| (w[0], w[1], piso)));
                     if pl.closed && v.len() > 2 {
-                        segs.push((v[v.len() - 1], v[0]));
+                        segs.push((v[v.len() - 1], v[0], piso));
                     }
                 }
                 _ => {}
             }
         }
-        segs.retain(|(a, b)| dist(*a, *b) > 0.0);
+        segs.retain(|(a, b, _)| dist(*a, *b) > 0.0);
+        let pe = setup.pe_direito;
         let metros = if metros > 0.0 { metros } else { 1.0 };
         // Tolerância de encontro de pontas: 1 cm. Raio de captura dos pontos: das configurações.
         let eps = 0.01 / metros;
@@ -81,8 +90,8 @@ impl Rede {
 
         // Onde cada trecho é cortado: nas pontas, onde outra ponta encosta e onde um ponto liga.
         let mut cortes: Vec<Vec<f64>> = vec![vec![0.0, 1.0]; segs.len()];
-        for (i, (a, b)) in segs.iter().enumerate() {
-            for (j, (c, d)) in segs.iter().enumerate() {
+        for (i, (a, b, _)) in segs.iter().enumerate() {
+            for (j, (c, d, _)) in segs.iter().enumerate() {
                 if i == j {
                     continue;
                 }
@@ -99,7 +108,7 @@ impl Rede {
             let melhor = segs
                 .iter()
                 .enumerate()
-                .map(|(j, (a, b))| {
+                .map(|(j, (a, b, _))| {
                     let (t, dd) = projetar(p.posicao, *a, *b);
                     (j, t, dd)
                 })
@@ -112,12 +121,14 @@ impl Rede {
         }
 
         let mut rede = Rede { trechos: segs.len(), metros, ..Rede::default() };
-        let mut grade: HashMap<(i64, i64), Vec<usize>> = HashMap::new();
-        let mut no = |p: P, rede: &mut Rede| -> usize {
-            let chave = ((p[0] / eps).round() as i64, (p[1] / eps).round() as i64);
+        let mut grade: HashMap<(i64, i64, bool), Vec<usize>> = HashMap::new();
+        let celula = |p: P| ((p[0] / eps).round() as i64, (p[1] / eps).round() as i64);
+        // O nó em `p` no nível dado (teto ou piso), criado se ainda não existe.
+        let mut no = |p: P, piso: bool, rede: &mut Rede| -> usize {
+            let c = celula(p);
             for dx in -1..=1 {
                 for dy in -1..=1 {
-                    if let Some(lista) = grade.get(&(chave.0 + dx, chave.1 + dy)) {
+                    if let Some(lista) = grade.get(&(c.0 + dx, c.1 + dy, piso)) {
                         for &n in lista {
                             if dist(rede.nos[n], p) <= eps {
                                 return n;
@@ -127,31 +138,53 @@ impl Rede {
                 }
             }
             rede.nos.push(p);
+            rede.elevacao.push(if piso { 0.0 } else { pe });
             rede.adj.push(Vec::new());
             let n = rede.nos.len() - 1;
-            grade.entry(chave).or_default().push(n);
+            grade.entry((c.0, c.1, piso)).or_default().push(n);
             n
         };
-        for (i, (a, b)) in segs.iter().enumerate() {
+        for (i, (a, b, piso)) in segs.iter().enumerate() {
             let mut ts = std::mem::take(&mut cortes[i]);
             ts.sort_by(f64::total_cmp);
-            let nos: Vec<usize> = ts.iter().map(|t| no(em(*a, *b, *t), &mut rede)).collect();
+            let nos: Vec<usize> = ts.iter().map(|t| no(em(*a, *b, *t), *piso, &mut rede)).collect();
             for w in nos.windows(2) {
                 if w[0] != w[1] {
                     let comprimento = dist(rede.nos[w[0]], rede.nos[w[1]]) * metros;
-                    let e = rede.arestas.len();
-                    rede.arestas.push((w[0], w[1], comprimento));
-                    rede.adj[w[0]].push((w[1], e));
-                    rede.adj[w[1]].push((w[0], e));
+                    rede.ligar(w[0], w[1], comprimento);
                 }
             }
         }
         for (h, j, t, dd) in ligar {
-            let (a, b) = segs[j];
-            let n = no(em(a, b, t), &mut rede);
-            rede.ligacoes.insert(h, Ligacao { no: n, distancia: dd * metros });
+            let (a, b, piso) = segs[j];
+            let n = no(em(a, b, t), piso, &mut rede);
+            rede.ligacoes.insert(h, Ligacao { no: n, distancia: dd * metros, elevacao: rede.elevacao[n] });
+        }
+        // Onde um eletroduto de piso encontra um de teto, o cabo sobe um pé-direito.
+        let mut subidas = Vec::new();
+        for (n, p) in rede.nos.iter().enumerate().filter(|(n, _)| rede.elevacao[*n] < pe) {
+            let c = celula(*p);
+            for dx in -1..=1 {
+                for dy in -1..=1 {
+                    for &m in grade.get(&(c.0 + dx, c.1 + dy, false)).into_iter().flatten() {
+                        if dist(rede.nos[m], *p) <= eps {
+                            subidas.push((n, m));
+                        }
+                    }
+                }
+            }
+        }
+        for (n, m) in subidas {
+            rede.ligar(n, m, pe);
         }
         rede
+    }
+
+    fn ligar(&mut self, a: usize, b: usize, comprimento: f64) {
+        let e = self.arestas.len();
+        self.arestas.push((a, b, comprimento));
+        self.adj[a].push((b, e));
+        self.adj[b].push((a, e));
     }
 
     /// Caminhos mínimos a partir de um nó (Dijkstra): distância (m) e a aresta de chegada.
@@ -244,9 +277,13 @@ pub fn rotear_circuito(
     setup: &Setup,
 ) -> RotaCircuito {
     let pe = setup.pe_direito;
+    // Fora da rede: desce do teto até a altura do ponto.
     let perna = |p: &PontoEletrico| (pe - altura(p, setup)).max(0.0);
+    // Na rede: do eletroduto (teto ou piso) até a altura do ponto, mais a distância até ele.
+    let perna_na_rede =
+        |p: &PontoEletrico| rede.ligacoes.get(&p.handle).map_or_else(|| perna(p), |l| (l.elevacao - altura(p, setup)).abs() + l.distancia);
     let lig_q = rede.ligacoes.get(&quadro.handle);
-    let perna_q = perna(quadro) + lig_q.map_or(0.0, |l| l.distancia);
+    let perna_q = perna_na_rede(quadro);
     let total: f64 = membros.iter().map(|p| corrente(p)).sum();
 
     let mut rota = RotaCircuito { percurso: perna_q, ..RotaCircuito::default() };
@@ -254,7 +291,7 @@ pub fn rotear_circuito(
     let mut roteados: Vec<(&PontoEletrico, Vec<usize>, f64, f64)> = Vec::new(); // ponto, caminho, distância na rede, perna
     let mut estimados: Vec<(&PontoEletrico, f64)> = Vec::new(); // ponto, comprimento
     for p in membros {
-        let perna_p = perna(p) + rede.ligacoes.get(&p.handle).map_or(0.0, |l| l.distancia);
+        let perna_p = perna_na_rede(p);
         let caminho = match (arvore, lig_q, rede.ligacoes.get(&p.handle)) {
             (Some(a), Some(_), Some(l)) => a.caminho(l.no).map(|c| (c, a.distancia[l.no])),
             _ => None,
@@ -273,7 +310,7 @@ pub fn rotear_circuito(
                 let l =
                     ((p.posicao[0] - quadro.posicao[0]).abs() + (p.posicao[1] - quadro.posicao[1]).abs()) * rede.metros + perna(p) + perna(quadro);
                 rota.comprimento = Some(rota.comprimento.unwrap_or(0.0).max(l));
-                rota.percurso += l - perna_q;
+                rota.percurso += l - perna(quadro);
                 rota.fora_da_rede.push(p.handle);
                 estimados.push((p, l));
             }

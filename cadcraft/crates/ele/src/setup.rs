@@ -244,6 +244,8 @@ pub struct Setup {
     pub unidade: Unidade,
     /// Camadas dos eletrodutos, separadas por vírgula, com curingas `*` e `?`.
     pub camadas_eletroduto: String,
+    /// Entre as camadas de eletroduto, as que correm no piso (as outras correm no teto).
+    pub camadas_piso: String,
     /// Distância máxima (m) entre um ponto e o eletroduto que chega nele.
     pub raio_captura: f64,
     pub cabos_telecom: Vec<CaboTelecom>,
@@ -261,6 +263,7 @@ impl Default for Setup {
             cores_fase: [CorCabo::Preto, CorCabo::Vermelho, CorCabo::Branco],
             unidade: Unidade::default(),
             camadas_eletroduto: "*ELETRODUTO*".into(),
+            camadas_piso: "*PISO*".into(),
             raio_captura: 0.30,
             cabos_telecom: cabos_padrao(),
         }
@@ -348,8 +351,18 @@ impl Setup {
 
     /// A camada é de eletroduto.
     pub fn e_camada_eletroduto(&self, camada: &str) -> bool {
-        self.camadas_eletroduto.split([',', ';']).map(str::trim).filter(|p| !p.is_empty()).any(|p| curinga(&p.to_uppercase(), &camada.to_uppercase()))
+        casa(&self.camadas_eletroduto, camada)
     }
+
+    /// A camada de eletroduto corre no piso.
+    pub fn e_camada_piso(&self, camada: &str) -> bool {
+        casa(&self.camadas_piso, camada)
+    }
+}
+
+/// A camada casa com algum dos padrões separados por vírgula.
+fn casa(padroes: &str, camada: &str) -> bool {
+    padroes.split([',', ';']).map(str::trim).filter(|p| !p.is_empty()).any(|p| curinga(&p.to_uppercase(), &camada.to_uppercase()))
 }
 
 /// `*` vale qualquer sequência, `?` um caractere.

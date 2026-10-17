@@ -246,8 +246,8 @@ impl PontoEletrico {
         }
         if self.altura.is_none() {
             match self.tipo {
-                TipoPonto::Caixa => {}
-                TipoPonto::Iluminacao => v.push("sem ALTURA de instalação: considerado no teto".into()),
+                // Iluminação sem ALTURA fica no teto, que é o normal.
+                TipoPonto::Caixa | TipoPonto::Iluminacao => {}
                 t => v.push(format!("sem ALTURA de instalação: usando {} m", br(altura_padrao(t, None)))),
             }
         }

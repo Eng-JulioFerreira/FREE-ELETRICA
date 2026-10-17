@@ -712,6 +712,10 @@ fn aba_geral(ui: &mut egui::Ui, t: &Tokens, s: &mut Setup) {
         ui.add(egui::TextEdit::singleline(&mut s.camadas_eletroduto).desired_width(230.0))
             .on_hover_text("Separadas por vírgula; * e ? valem como curingas");
         ui.end_row();
+        ui.label("Eletrodutos no piso");
+        ui.add(egui::TextEdit::singleline(&mut s.camadas_piso).desired_width(230.0))
+            .on_hover_text("Entre as camadas de eletroduto, as que correm no piso; as demais correm no teto");
+        ui.end_row();
         ui.label("Raio de captura");
         ui.add(campo(&mut s.raio_captura, 0.01..=5.0, 0.01, 2, " m")).on_hover_text("Distância máxima entre um ponto e o eletroduto que chega nele");
         ui.end_row();
