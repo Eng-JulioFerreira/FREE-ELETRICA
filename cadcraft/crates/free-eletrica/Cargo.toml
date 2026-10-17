@@ -1,9 +1,9 @@
 [package]
-name = "cadcraft-ele"
-description = "CRAFT ELE: pontos, circuitos e dimensionamento NBR 5410 sobre o desenho do CADCraft"
+name = "free-eletrica"
+description = "Free Elétrica: pontos, circuitos e dimensionamento NBR 5410 sobre o desenho do CADCraft"
 version.workspace = true
 edition.workspace = true
-# O CRAFT ELE é GPL v3; o resto do workspace (CADCraft) é MIT OR Apache-2.0.
+# O Free Elétrica é GPL v3; o resto do workspace (CADCraft) é MIT OR Apache-2.0.
 license = "GPL-3.0-only"
 
 [lints]

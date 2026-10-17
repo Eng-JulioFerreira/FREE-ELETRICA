@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// Copyright (C) 2026 Julio Ferreira. CRAFT ELE: ver LICENSE e AVISO_LEGAL.md na raiz do repositorio.
-//! Configurações gerais do projeto (a aba de setup do CRAFT ELE). Delas saem os parâmetros do
+// Copyright (C) 2026 Julio Ferreira. Free Elétrica: ver LICENSE e AVISO_LEGAL.md na raiz do repositorio.
+//! Configurações gerais do projeto (a aba de setup do Free Elétrica). Delas saem os parâmetros do
 //! dimensionamento e do roteamento: nada disso é digitado como fator solto.
 
 use std::sync::{LazyLock, RwLock};

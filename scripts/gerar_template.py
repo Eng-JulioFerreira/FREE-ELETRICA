@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Gera o template do CRAFT ELE (templates/CRAFT_ELE_BLOCOS.dxf) a partir do desenho de
+"""Gera o template do Free Elétrica (templates/FREE_ELETRICA_BLOCOS.dxf) a partir do desenho de
 referência dos símbolos (o Drawing1 exportado do CADCraft).
 
 Blocos, da esquerda para a direita na parede de referência:
@@ -81,8 +81,8 @@ doc.header["$LTSCALE"] = 1.0
 doc.linetypes.add("ELE_PISO", pattern=[0.25, 0.15, -0.10], description="Eletroduto no piso __  __  __")
 
 camadas = {
-    "ELE-PONTOS": dict(color=7, desc="CRAFT ELE: pontos elétricos (tomadas, interruptores, iluminação)"),
-    "ELE-QUADROS": dict(color=2, desc="CRAFT ELE: quadros de distribuição"),
+    "ELE-PONTOS": dict(color=7, desc="Free Elétrica: pontos elétricos (tomadas, interruptores, iluminação)"),
+    "ELE-QUADROS": dict(color=2, desc="Free Elétrica: quadros de distribuição"),
     "ELE-ELETRODUTO-PVC-MEDIA-TETO": dict(color=4, desc="Eletroduto PVC linha média embutido no teto/laje", lw=30),
     "ELE-ELETRODUTO-PVC-MEDIA-PISO": dict(color=6, desc="Eletroduto PVC linha média embutido no piso", lw=30, lt="ELE_PISO"),
     "ELE-REFERENCIA": dict(color=3, desc="Linhas de referência do template (parede)"),

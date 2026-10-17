@@ -489,7 +489,7 @@ $SKPOLY
   9
 $TDCREATE
  40
-2461331.5364930555
+2461331.604189815
   9
 $TDUCREATE
  40
@@ -497,7 +497,7 @@ $TDUCREATE
   9
 $TDUPDATE
  40
-2461331.5364930555
+2461331.604189815
   9
 $TDUUPDATE
  40
@@ -929,11 +929,11 @@ $PSTYLEMODE
   9
 $FINGERPRINTGUID
   2
-{68D9ED19-ACED-4B54-BFE8-1B82CF92A3CF}
+{D906FE9C-C0CC-47D8-8757-140769F2B378}
   9
 $VERSIONGUID
   2
-{3395EDE7-5D89-437D-BEC4-53AD1A4A2B0C}
+{9DF02572-1FFB-4EFF-825F-DB04AA338982}
   9
 $EXTNAMES
 290
@@ -2343,7 +2343,7 @@ AcAecLayerStandard
 1000
 
 1000
-CRAFT ELE: pontos elétricos (tomadas, interruptores, iluminação)
+Free Elétrica: pontos elétricos (tomadas, interruptores, iluminação)
   0
 LAYER
   5
@@ -2373,7 +2373,7 @@ AcAecLayerStandard
 1000
 
 1000
-CRAFT ELE: quadros de distribuição
+Free Elétrica: quadros de distribuição
   0
 LAYER
   5
@@ -9667,7 +9667,7 @@ DictionaryVariables
 280
 0
   1
-1.4.5 @ 2026-10-17T15:52:33.361389+00:00
+1.4.5 @ 2026-10-17T17:30:02.440217+00:00
   0
 VISUALSTYLE
   5
@@ -10379,7 +10379,7 @@ DictionaryVariables
 280
 0
   1
-1.4.5 @ 2026-10-17T15:52:33.366940+00:00
+1.4.5 @ 2026-10-17T17:30:02.446218+00:00
   0
 ENDSEC
   0

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// Copyright (C) 2026 Julio Ferreira. CRAFT ELE: ver LICENSE e AVISO_LEGAL.md na raiz do repositorio.
-//! CRAFT ELE sem interface: todo o motor de cálculo responde por comandos do motor, como na
+// Copyright (C) 2026 Julio Ferreira. Free Elétrica: ver LICENSE e AVISO_LEGAL.md na raiz do repositorio.
+//! Free Elétrica sem interface: todo o motor de cálculo responde por comandos do motor, como na
 //! linha de comando, em scripts, no `cadcraft-cli` e no MCP.
 
 use std::sync::Arc;
@@ -71,7 +71,7 @@ fn planta() -> (Drawing, [Handle; 4]) {
 
 fn circuito(s: &Session, h: Handle) -> Option<String> {
     let doc = s.doc().ok()?;
-    cadcraft_ele::ponto::ler_ponto(doc, h)?.circuito
+    free_eletrica::ponto::ler_ponto(doc, h)?.circuito
 }
 
 #[test]
@@ -225,8 +225,8 @@ fn propriedades_do_circuito_e_demanda_por_comandos() {
     // TIPO_CARGA e FP no bloco da TUG: o quadro de cargas mostra o resultado.
     {
         let doc = s.doc_mut().unwrap();
-        cadcraft_ele::editar::definir(doc, tug, cadcraft_ele::ponto::TAGS_CARGA, Some("RESERVA")).unwrap();
-        cadcraft_ele::editar::definir(doc, tug, cadcraft_ele::ponto::TAGS_FP, Some("0,85")).unwrap();
+        free_eletrica::editar::definir(doc, tug, free_eletrica::ponto::TAGS_CARGA, Some("RESERVA")).unwrap();
+        free_eletrica::editar::definir(doc, tug, free_eletrica::ponto::TAGS_FP, Some("0,85")).unwrap();
     }
     let l2 = linha(&mut s, "2");
     assert_eq!((l2["tiposCarga"][0].as_str(), l2["fp"].as_f64()), (Some("reserva"), Some(0.85)));

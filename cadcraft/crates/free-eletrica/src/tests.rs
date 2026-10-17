@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// Copyright (C) 2026 Julio Ferreira. CRAFT ELE: ver LICENSE e AVISO_LEGAL.md na raiz do repositorio.
+// Copyright (C) 2026 Julio Ferreira. Free Elétrica: ver LICENSE e AVISO_LEGAL.md na raiz do repositorio.
 use std::sync::Arc;
 
 use cadcraft_doc::*;
@@ -176,7 +176,7 @@ fn xdata_grava_le_e_preserva_outros_aplicativos() {
     assert_eq!(xdata::ler(&x)[0].1, "4");
     xdata::gravar(&mut x, "CIRCUITO", None);
     xdata::gravar(&mut x, "QUADRO", None);
-    // Sem chaves, o trecho do CRAFT ELE some e o do outro aplicativo fica.
+    // Sem chaves, o trecho do Free Elétrica some e o do outro aplicativo fica.
     assert_eq!(x, [RawTag { code: 1001, value: "OUTRO".into() }, RawTag { code: 1000, value: "nao mexer".into() }]);
 }
 
@@ -561,17 +561,38 @@ fn ajustar_fiacao_desenha_e_refaz() {
             && textos.iter().filter(|t| *t == "%%c20").count() == 6,
         "{textos:?}"
     );
-    // No trecho horizontal (4,0)-(8,0): o diâmetro fica numa linha própria, abaixo das seções.
-    let no_trecho: Vec<(String, f64)> = d
+    // No trecho horizontal (4,0)-(8,0), nada fica um sobre o outro: as marcas vão de -0,05 a
+    // 0,05; o circuito fica acima delas, a seção abaixo e o diâmetro (menor) abaixo da seção.
+    // (valor, centro y, altura): os textos são centrados no ponto de inserção.
+    let no_trecho: Vec<(String, f64, f64)> = d
         .model
         .iter()
-        .filter_map(|e| if let EntityKind::Text(t) = &e.kind { Some((t.value.clone(), t.insert.x, t.insert.y)) } else { None })
-        .filter(|(_, x, y)| *x > 4.0 && *x < 8.0 && y.abs() < 0.5)
-        .map(|(v, _, y)| (v, y))
+        .filter_map(|e| if let EntityKind::Text(t) = &e.kind { Some((t.value.clone(), t.insert.x, t.insert.y, t.height)) } else { None })
+        .filter(|(_, x, y, _)| *x > 4.0 && *x < 8.0 && y.abs() < 0.5)
+        .map(|(v, _, y, h)| (v, y, h))
         .collect();
-    let y_diametro = no_trecho.iter().find(|(v, _)| v.starts_with("%%c")).map(|(_, y)| *y).expect("diâmetro no trecho");
-    let secoes: Vec<f64> = no_trecho.iter().filter(|(v, _)| v.starts_with('#')).map(|(_, y)| *y).collect();
-    assert!(!secoes.is_empty() && secoes.iter().all(|y| y - y_diametro >= 0.05), "{no_trecho:?}");
+    let (base, topo) = (|t: &(String, f64, f64)| t.1 - t.2 / 2.0, |t: &(String, f64, f64)| t.1 + t.2 / 2.0);
+    let diametro = no_trecho.iter().find(|t| t.0.starts_with("%%c")).expect("diâmetro no trecho");
+    let secoes: Vec<&(String, f64, f64)> = no_trecho.iter().filter(|t| t.0.starts_with('#')).collect();
+    let acima: Vec<&(String, f64, f64)> = no_trecho.iter().filter(|t| t.1 > 0.0).collect();
+    assert!(!secoes.is_empty() && !acima.is_empty(), "{no_trecho:?}");
+    assert!(acima.iter().all(|t| base(t) > 0.05), "circuito encosta nas marcas: {no_trecho:?}");
+    assert!(secoes.iter().all(|t| topo(t) < -0.05), "seção encosta nas marcas: {no_trecho:?}");
+    assert!(secoes.iter().all(|t| topo(diametro) < base(t)), "diâmetro sobre a seção: {no_trecho:?}");
+    assert!(secoes.iter().all(|t| diametro.2 < t.2), "o diâmetro é escrito menor: {no_trecho:?}");
+    // Nos trechos horizontais, textos na mesma linha não se sobrepõem (circuitos vizinhos).
+    let horizontais: Vec<(String, f64, f64, f64)> = d
+        .model
+        .iter()
+        .filter_map(|e| if let EntityKind::Text(t) = &e.kind { Some((t.value.clone(), t.insert.x, t.insert.y, t.height)) } else { None })
+        .filter(|t| t.2.abs() < 0.5)
+        .collect();
+    for (i, a) in horizontais.iter().enumerate() {
+        for b in horizontais.iter().skip(i + 1).filter(|b| (b.2 - a.2).abs() < 1e-9) {
+            let folga = (a.1 - b.1).abs() - (fiacao::largura_texto(&a.0, a.3) + fiacao::largura_texto(&b.0, b.3)) / 2.0;
+            assert!(folga >= 0.0, "\"{}\" e \"{}\" se sobrepõem: {horizontais:?}", a.0, b.0);
+        }
+    }
     // Rodar de novo não duplica: apaga e refaz.
     let f = fiacao::calcular(&d, &analisar(&d), &setup, qd).unwrap();
     assert_eq!(fiacao::aplicar(&mut d, &f, &setup).unwrap(), 42);
@@ -901,6 +922,17 @@ fn tensoes_do_quadro_pelo_atributo() {
     assert!(perto(r.linhas[0].escolha.ib, 10.0, 1e-9));
     // Bifásico: corrente por fase = S / (2 × fase-neutro).
     assert!(perto(r.corrente_instalada, 1270.0 / 254.0, 1e-9));
+}
+
+#[test]
+fn xdata_do_nome_antigo_continua_lido() {
+    // Desenho feito quando o projeto se chamava CRAFT ELE.
+    let mut x = vec![RawTag { code: 1001, value: "CRAFTELE".into() }, RawTag { code: 1000, value: "CIRCUITO=3".into() }];
+    assert_eq!(xdata::ler(&x), [("CIRCUITO".to_string(), "3".to_string())]);
+    // A próxima gravação passa o trecho para o nome novo, sem duplicar.
+    xdata::gravar(&mut x, "COMANDO", Some("a"));
+    assert_eq!(x.iter().filter(|t| t.code == 1001).map(|t| t.value.as_str()).collect::<Vec<_>>(), [xdata::APP]);
+    assert_eq!(xdata::ler(&x).len(), 2);
 }
 
 #[test]

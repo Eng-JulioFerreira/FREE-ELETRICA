@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// Copyright (C) 2026 Julio Ferreira. CRAFT ELE: ver LICENSE e AVISO_LEGAL.md na raiz do repositorio.
-//! Escritas do CRAFT ELE no desenho. Um valor vai para o atributo do bloco quando ele existe
-//! (o projetista vê e edita) e, senão, para o XDATA do CRAFT ELE (viaja com o bloco, invisível).
+// Copyright (C) 2026 Julio Ferreira. Free Elétrica: ver LICENSE e AVISO_LEGAL.md na raiz do repositorio.
+//! Escritas do Free Elétrica no desenho. Um valor vai para o atributo do bloco quando ele existe
+//! (o projetista vê e edita) e, senão, para o XDATA do Free Elétrica (viaja com o bloco, invisível).
 
 use cadcraft_doc::{Drawing, EntityKind, Handle};
 
@@ -10,7 +10,7 @@ use crate::ponto::{TAGS_CIRCUITO, TAGS_COMANDO, TAGS_QUADRO, ler_ponto};
 use crate::quadro::{CHAVE_DESCRICAO, CHAVE_DISJUNTOR, CHAVE_ISOLACAO, CHAVE_ISOLACAO_CIRCUITO, CHAVE_SECAO};
 use crate::xdata;
 
-/// Grava (ou apaga) uma chave do XDATA do CRAFT ELE num bloco.
+/// Grava (ou apaga) uma chave do XDATA do Free Elétrica num bloco.
 fn gravar_xdata(doc: &mut Drawing, h: Handle, chave: &str, valor: Option<&str>) -> Result<(), String> {
     let mut e = (**doc.model.get(h).ok_or("objeto não encontrado")?).clone();
     if !matches!(e.kind, EntityKind::Insert(_)) {

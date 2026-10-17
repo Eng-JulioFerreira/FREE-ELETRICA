@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// Copyright (C) 2026 Julio Ferreira. CRAFT ELE: ver LICENSE e AVISO_LEGAL.md na raiz do repositorio.
-//! CRAFT ELE: a paleta Elétrica (só ferramentas), os comandos ELECIRCUITO e ELECOMANDO no
+// Copyright (C) 2026 Julio Ferreira. Free Elétrica: ver LICENSE e AVISO_LEGAL.md na raiz do repositorio.
+//! Free Elétrica: a paleta Elétrica (só ferramentas), os comandos ELECIRCUITO e ELECOMANDO no
 //! desenho, a janela Rotear fiação com a tabela de resumo e a sobrescrita manual, e o setup.
 
 use std::sync::Arc;
@@ -96,7 +96,7 @@ fn harness(app: CadApp) -> Harness<'static, CadApp> {
     )
 }
 
-/// Um teste só: as janelas do CRAFT ELE guardam estado global, e dois testes em paralelo
+/// Um teste só: as janelas do Free Elétrica guardam estado global, e dois testes em paralelo
 /// mexeriam nele ao mesmo tempo.
 #[test]
 fn paleta_ferramentas_e_fluxo_completo() {

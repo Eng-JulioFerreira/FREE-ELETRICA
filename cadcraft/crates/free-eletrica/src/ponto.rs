@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// Copyright (C) 2026 Julio Ferreira. CRAFT ELE: ver LICENSE e AVISO_LEGAL.md na raiz do repositorio.
+// Copyright (C) 2026 Julio Ferreira. Free Elétrica: ver LICENSE e AVISO_LEGAL.md na raiz do repositorio.
 //! Pontos elétricos: blocos inseridos no espaço do modelo que carregam atributos elétricos
-//! (padrão em `docs/padrao_blocos_eletricos.md` do CRAFT ELE).
+//! (padrão em `docs/padrao_blocos_eletricos.md` do Free Elétrica).
 
 use cadcraft_doc::{Drawing, EntityKind, Handle, Insert, RawTag};
 use serde::Serialize;
@@ -10,7 +10,7 @@ use crate::demanda::TipoCarga;
 
 /// Atributos que marcam um bloco como ponto elétrico. Um bloco sem nenhum deles (porta, móvel,
 /// carimbo) não entra na análise, mesmo que o nome lembre um ponto elétrico. A primeira tag de
-/// cada lista é a que o CRAFT ELE grava.
+/// cada lista é a que o Free Elétrica grava.
 pub const TAGS_TIPO: &[&str] = &["TIPO_PONTO", "TIPO", "TYPE", "CATEGORIA"];
 pub const TAGS_POTENCIA: &[&str] = &["POTENCIA", "POT", "POWER"];
 pub const TAGS_TENSAO: &[&str] = &["TENSAO", "VOLTS", "VOLTAGEM"];
@@ -138,7 +138,7 @@ pub struct PontoEletrico {
     pub tipo_carga: Option<TipoCarga>,
     /// Todos os atributos lidos, na ordem do bloco.
     pub atributos: Vec<(String, String)>,
-    /// Valores que o CRAFT ELE gravou no XDATA do bloco (valem quando o bloco não tem o atributo).
+    /// Valores que o Free Elétrica gravou no XDATA do bloco (valem quando o bloco não tem o atributo).
     pub extras: Vec<(String, String)>,
 }
 
@@ -154,7 +154,7 @@ pub(crate) fn handle_hex_opcional<S: serde::Serializer>(h: &Option<Handle>, s: S
 }
 
 /// O primeiro valor não vazio entre `tags` (sem diferenciar maiúsculas): primeiro os atributos
-/// do bloco, depois o XDATA do CRAFT ELE.
+/// do bloco, depois o XDATA do Free Elétrica.
 fn buscar<'a>(atributos: &'a [(String, String)], extras: &'a [(String, String)], tags: &[&str]) -> Option<&'a str> {
     let achar = |lista: &'a [(String, String)]| {
         tags.iter().find_map(|t| lista.iter().find(|(tag, v)| tag.eq_ignore_ascii_case(t) && !v.trim().is_empty()).map(|(_, v)| v.trim()))
@@ -163,7 +163,7 @@ fn buscar<'a>(atributos: &'a [(String, String)], extras: &'a [(String, String)],
 }
 
 impl PontoEletrico {
-    /// O valor de um atributo (ou do XDATA do CRAFT ELE) entre `tags`.
+    /// O valor de um atributo (ou do XDATA do Free Elétrica) entre `tags`.
     pub fn valor(&self, tags: &[&str]) -> Option<&str> {
         buscar(&self.atributos, &self.extras, tags)
     }

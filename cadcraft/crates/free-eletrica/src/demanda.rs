@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// Copyright (C) 2026 Julio Ferreira. CRAFT ELE: ver LICENSE e AVISO_LEGAL.md na raiz do repositorio.
+// Copyright (C) 2026 Julio Ferreira. Free Elétrica: ver LICENSE e AVISO_LEGAL.md na raiz do repositorio.
 //! Cálculo de demanda do quadro pelas tabelas das concessionárias.
 //!
 //! Cada ponto de carga é um aparelho com um tipo de carga (atributo TIPO_CARGA do bloco:
@@ -13,7 +13,7 @@
 //! - outras cargas: 100 % (a norma deixa o fator ao projetista);
 //! - reserva: fora da demanda.
 //!
-//! As potências do CRAFT ELE já estão em VA (aparente): a demanda sai em VA sem dividir pelo
+//! As potências do Free Elétrica já estão em VA (aparente): a demanda sai em VA sem dividir pelo
 //! fator de potência, que nas normas converte potências dadas em W.
 //!
 //! As tabelas são transcritas das normas públicas das concessionárias e citadas em `fonte`.

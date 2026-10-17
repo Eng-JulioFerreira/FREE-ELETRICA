@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// Copyright (C) 2026 Julio Ferreira. CRAFT ELE: ver LICENSE e AVISO_LEGAL.md na raiz do repositorio.
-//! CRAFT ELE: a paleta Elétrica e as suas janelas.
+// Copyright (C) 2026 Julio Ferreira. Free Elétrica: ver LICENSE e AVISO_LEGAL.md na raiz do repositorio.
+//! Free Elétrica: a paleta Elétrica e as suas janelas.
 //!
 //! A paleta só tem ferramentas. Criar circuito, Comandos e luminárias e Ajustar fiação são
 //! comandos do motor (ELECIRCUITO, ELECOMANDO, ELEFIACAO) que pedem as seleções no desenho. As
@@ -10,7 +10,7 @@
 //! circuitos). Toda alteração passa por um comando do motor (`app.run`/`app.start`): a
 //! interface não decide nada de engenharia.
 //!
-//! Os textos ficam em português: o CRAFT ELE é um addon para projetos brasileiros e não passa
+//! Os textos ficam em português: o Free Elétrica é um addon para projetos brasileiros e não passa
 //! pelo catálogo de traduções do CADCraft. Só o nome do painel, o item de menu e os nomes dos
 //! comandos passam.
 
@@ -18,13 +18,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use cadcraft_doc::Handle;
-use cadcraft_ele::nbr5410::{DISJUNTORES, Isolacao, SECOES};
-use cadcraft_ele::ponto::br;
-use cadcraft_ele::setup::{DiametroCondutor, TamanhoEletroduto, diametros_padrao, eletrodutos_padrao};
-use cadcraft_ele::{self as ele, CaboTelecom, CategoriaTelecom, CorCabo, PontoEletrico, Setup, Sistema, TipoPonto, Unidade};
 use craft_ui::docking::{Action, Node};
 use craft_ui::layout::SplitSize;
 use egui::{Align, Color32, Layout, RichText, vec2};
+use free_eletrica::nbr5410::{DISJUNTORES, Isolacao, SECOES};
+use free_eletrica::ponto::br;
+use free_eletrica::setup::{DiametroCondutor, TamanhoEletroduto, diametros_padrao, eletrodutos_padrao};
+use free_eletrica::{self as ele, CaboTelecom, CategoriaTelecom, CorCabo, PontoEletrico, Setup, Sistema, TipoPonto, Unidade};
 use serde_json::{Value, json};
 
 use crate::CadApp;
@@ -35,8 +35,10 @@ const COR_AVISO: Color32 = Color32::from_rgb(232, 176, 72);
 /// Altura das linhas das tabelas.
 const LINHA: f32 = 20.0;
 
-/// Chave das configurações do CRAFT ELE no armazenamento de preferências do CADCraft.
-pub const PREFS_KEY: &str = "craftele.setup";
+/// Chave das configurações do Free Elétrica no armazenamento de preferências do CADCraft.
+pub const PREFS_KEY: &str = "freeeletrica.setup";
+/// A chave de quando o projeto se chamava CRAFT ELE: lida só quando a nova não existe.
+pub const PREFS_KEY_ANTIGA: &str = "craftele.setup";
 
 static JANELAS: Mutex<Janelas> = Mutex::new(Janelas { setup: None, conferencia: false, cargas: None });
 static ABRIR_AO_INICIAR: AtomicBool = AtomicBool::new(false);
@@ -106,7 +108,7 @@ enum Acao {
     Selecionar(Vec<Handle>),
 }
 
-/// As configurações em uso (guardadas no motor: `cadcraft_ele::setup`).
+/// As configurações em uso (guardadas no motor: `free_eletrica::setup`).
 pub fn setup() -> Setup {
     ele::setup::atual()
 }
@@ -183,14 +185,14 @@ fn abrir_setup() -> Result<Value, String> {
     Ok(Value::Null)
 }
 
-/// Comandos do CRAFT ELE que só existem na interface: abrir a paleta e as janelas. `None`
+/// Comandos do Free Elétrica que só existem na interface: abrir a paleta e as janelas. `None`
 /// quando `id` não é um deles.
 ///
 /// Digitados: ELETRICA (paleta), ELECONFIG, ELECARGAS, ELECONFERIR e ELEROTEAR (janelas). Todo o
 /// resto é comando do motor (`crates/engine/src/cmd/eletrica.rs`).
 pub fn route(app: &mut CadApp, id: &str, _params: &Value) -> Option<Result<Value, String>> {
     match id {
-        "ui.panel.eletrica" | "eletrica" | "craftele" => Some(open(app)),
+        "ui.panel.eletrica" | "eletrica" | "freeeletrica" => Some(open(app)),
         "ui.eletrica.setup" | "eleconfig" => Some(abrir_setup()),
         "ui.eletrica.conferir" | "eleconferir" => {
             trava(&JANELAS).conferencia = true;
@@ -397,10 +399,10 @@ impl Estado {
 }
 
 fn id_estado() -> egui::Id {
-    egui::Id::new("craft-ele-estado")
+    egui::Id::new("free-eletrica-estado")
 }
 
-/// Desenha as janelas do CRAFT ELE (chamado a cada quadro, com ou sem a paleta visível).
+/// Desenha as janelas do Free Elétrica (chamado a cada quadro, com ou sem a paleta visível).
 pub fn janelas(app: &mut CadApp, ctx: &egui::Context) {
     if ABRIR_AO_INICIAR.swap(false, Ordering::Relaxed) {
         let panel = Panel::Eletrica;
@@ -427,7 +429,7 @@ pub fn janelas(app: &mut CadApp, ctx: &egui::Context) {
     let mut acoes: Vec<Acao> = Vec::new();
 
     if conferencia {
-        egui::Window::new("CRAFT ELE · Conferência")
+        egui::Window::new("Free Elétrica · Conferência")
             .id(egui::Id::new("ele-janela-conferencia"))
             .open(&mut conferencia)
             .default_pos(egui::pos2(480.0, 140.0))
@@ -447,7 +449,7 @@ pub fn janelas(app: &mut CadApp, ctx: &egui::Context) {
 
     let cargas = cargas.and_then(|mut c| {
         let mut aberta = true;
-        egui::Window::new("CRAFT ELE · Quadro de cargas")
+        egui::Window::new("Free Elétrica · Quadro de cargas")
             .id(egui::Id::new("ele-janela-cargas"))
             .open(&mut aberta)
             .default_pos(egui::pos2(240.0, 100.0))
@@ -494,7 +496,7 @@ pub fn janelas(app: &mut CadApp, ctx: &egui::Context) {
         match a {
             Acao::Rodar(id, p) => {
                 if let Err(e) = app.run(id, p) {
-                    app.set_status(format!("CRAFT ELE: {e}"));
+                    app.set_status(format!("Free Elétrica: {e}"));
                 }
             }
             Acao::Iniciar(id) => app.start(id),
@@ -837,7 +839,7 @@ fn janela_setup(ctx: &egui::Context, t: &Tokens) {
     let Some(mut r) = trava(&JANELAS).setup.clone() else { return };
     let mut aberta = true;
     let mut fechar = false;
-    egui::Window::new("CRAFT ELE · Configurações")
+    egui::Window::new("Free Elétrica · Configurações")
         .id(egui::Id::new("ele-janela-setup"))
         .open(&mut aberta)
         .collapsible(false)

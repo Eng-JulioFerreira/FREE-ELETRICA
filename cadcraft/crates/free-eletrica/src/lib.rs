@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// Copyright (C) 2026 Julio Ferreira. CRAFT ELE: ver LICENSE e AVISO_LEGAL.md na raiz do repositorio.
-//! CRAFT ELE: projeto elétrico de baixa tensão (NBR 5410) sobre o desenho do CADCraft.
+// Copyright (C) 2026 Julio Ferreira. Free Elétrica: ver LICENSE e AVISO_LEGAL.md na raiz do repositorio.
+//! Free Elétrica: projeto elétrico de baixa tensão (NBR 5410) sobre o desenho do CADCraft.
 //!
 //! Lê os pontos elétricos (blocos com atributos), agrupa em circuitos por quadro, roteia a
 //! fiação pelos eletrodutos e dimensiona cada circuito. Não depende da interface: a paleta

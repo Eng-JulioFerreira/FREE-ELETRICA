@@ -1,4 +1,4 @@
-# CRAFT ELE
+# Free Elétrica
 
 Projeto elétrico predial de baixa tensão (NBR 5410) e telecom dentro do
 [CADCraft](https://github.com/storytold/cadcraft), no estilo do OFE Elétrico, do PRO-Elétrica e
@@ -9,7 +9,7 @@ do Lumine. Aparece como a paleta **Elétrica**, acoplada à interface do CADCraf
 
 ## Visão: de fork a plugin
 
-Hoje o CRAFT ELE é um **fork** do CADCraft: uma cópia dele em `cadcraft/` com algumas linhas de
+Hoje o Free Elétrica é um **fork** do CADCraft: uma cópia dele em `cadcraft/` com algumas linhas de
 registro, porque o CADCraft ainda não tem como receber extensões. **A meta é virar um plugin**:
 um projeto separado que só traz o próprio código e usa o CADCraft original sem modificá-lo.
 
@@ -40,7 +40,7 @@ Tudo também responde em JSON pelo canal de controle e pelo `cadcraft-cli`:
 
 1. `scripts\compilar.bat` compila (`release` para a versão otimizada).
 2. `scripts\iniciar.bat` abre o CADCraft com a paleta Elétrica.
-3. Abra `templates\CRAFT_ELE_BLOCOS.dxf` e use "Salvar como" para começar um projeto: ele traz os
+3. Abra `templates\FREE_ELETRICA_BLOCOS.dxf` e use "Salvar como" para começar um projeto: ele traz os
    blocos INT-SIM, TOM-SIM-BAIXA, QDG e ILU-OCT e as camadas de eletroduto PVC linha média.
 
 Pré-requisitos (uma vez): Rust e MinGW em `C:\rust`, como descrito em `CLAUDE.md`.
@@ -49,7 +49,7 @@ Pré-requisitos (uma vez): Rust e MinGW em `C:\rust`, como descrito em `CLAUDE.m
 
 ```
 CLAUDE.md     regras do projeto (test-driven, motor desacoplado, tudo é comando)
-cadcraft/     o CADCraft com o CRAFT ELE (crates/ele, cmd/eletrica.rs, ui-egui/eletrica.rs)
+cadcraft/     o CADCraft com o Free Elétrica (crates/free-eletrica, cmd/eletrica.rs, ui-egui/eletrica.rs)
 docs/         padrão de blocos e arquitetura do fork
 templates/    template de blocos e camadas
 scripts/      compilar, iniciar, testar, gerar o template
@@ -62,7 +62,7 @@ Test-driven: `scripts\testar.bat` precisa passar antes de todo commit. Veja `CLA
 
 ## Licença
 
-- **CRAFT ELE** (o código próprio: `cadcraft/crates/ele/`, os arquivos `eletrica*.rs` nos crates
+- **Free Elétrica** (o código próprio: `cadcraft/crates/free-eletrica/`, os arquivos `eletrica*.rs` nos crates
   do CADCraft, `docs/`, `templates/`, `scripts/`): **GNU General Public License v3**
   (`GPL-3.0-only`, texto em [LICENSE](LICENSE)). Os arquivos de código levam o cabeçalho
   `SPDX-License-Identifier: GPL-3.0-only`.

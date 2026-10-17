@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// Copyright (C) 2026 Julio Ferreira. CRAFT ELE: ver LICENSE e AVISO_LEGAL.md na raiz do repositorio.
+// Copyright (C) 2026 Julio Ferreira. Free Elétrica: ver LICENSE e AVISO_LEGAL.md na raiz do repositorio.
 //! Rotear a fiação de um quadro: os circuitos dele roteados pelos eletrodutos, dimensionados
 //! (pré-seleção automática de seção e disjuntor, que o projetista pode sobrescrever) e
 //! distribuídos nas fases. É a tabela de resumo da janela Rotear fiação.

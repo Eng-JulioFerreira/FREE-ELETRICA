@@ -623,16 +623,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cadcraft-ele"
-version = "0.7.0"
-dependencies = [
- "cadcraft-doc",
- "cadcraft-geom",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "cadcraft-engine"
 version = "0.7.0"
 dependencies = [
@@ -640,11 +630,11 @@ dependencies = [
  "cadcraft-constraints",
  "cadcraft-doc",
  "cadcraft-dxf",
- "cadcraft-ele",
  "cadcraft-fonts",
  "cadcraft-geom",
  "cadcraft-io",
  "cadcraft-render",
+ "free-eletrica",
  "log",
  "rstar",
  "serde",
@@ -719,7 +709,6 @@ version = "0.7.0"
 dependencies = [
  "cadcraft-color",
  "cadcraft-doc",
- "cadcraft-ele",
  "cadcraft-engine",
  "cadcraft-fonts",
  "cadcraft-geom",
@@ -728,6 +717,7 @@ dependencies = [
  "egui",
  "egui-wgpu",
  "egui_kittest",
+ "free-eletrica",
  "image",
  "log",
  "naga",
@@ -1474,6 +1464,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf"
 dependencies = [
  "percent-encoding",
+]
+
+[[package]]
+name = "free-eletrica"
+version = "0.7.0"
+dependencies = [
+ "cadcraft-doc",
+ "cadcraft-geom",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

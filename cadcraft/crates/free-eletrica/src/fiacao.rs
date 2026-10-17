@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// Copyright (C) 2026 Julio Ferreira. CRAFT ELE: ver LICENSE e AVISO_LEGAL.md na raiz do repositorio.
+// Copyright (C) 2026 Julio Ferreira. Free Elétrica: ver LICENSE e AVISO_LEGAL.md na raiz do repositorio.
 //! Ajustar fiação: quais condutores de cada circuito passam em cada trecho de eletroduto, e as
 //! marcas de fiação desenhadas sobre os trechos.
 //!
@@ -41,13 +41,13 @@ pub const CAMADA: &str = "ELE-FIACAO";
 /// Chave do XDATA que marca o que Ajustar fiação gerou: `FIACAO=<handle do quadro>`.
 pub const CHAVE: &str = "FIACAO";
 
-/// XDATA das linhas dos blocos de marca criados pelo CRAFT ELE: `FIACAO_BLOCO=<versão>`. Um
+/// XDATA das linhas dos blocos de marca criados pelo Free Elétrica: `FIACAO_BLOCO=<versão>`. Um
 /// bloco de versão anterior é trocado pelo desenho atual; um sem a marca (redesenhado pelo
 /// projetista) fica.
 const CHAVE_BLOCO: &str = "FIACAO_BLOCO";
 const VERSAO_BLOCOS: &str = "2";
 
-/// O bloco no desenho é um desenho padrão de versão anterior do CRAFT ELE.
+/// O bloco no desenho é um desenho padrão de versão anterior do Free Elétrica.
 fn bloco_padrao_antigo(b: &Block, tipo: TipoCondutor, m: f64) -> bool {
     let versoes: Vec<String> =
         b.entities.iter().filter_map(|e| xdata::ler(&e.common.xdata).into_iter().find(|(k, _)| k == CHAVE_BLOCO).map(|(_, v)| v)).collect();
@@ -74,8 +74,17 @@ fn bloco_padrao_antigo(b: &Block, tipo: TipoCondutor, m: f64) -> bool {
 /// Distância entre marcas no trecho e altura dos textos, em metros.
 const PASSO: f64 = 0.04;
 const ENTRE_CIRCUITOS: f64 = 0.05;
-const ALTURA_TEXTO: f64 = 0.05;
-const AFASTAMENTO_TEXTO: f64 = 0.08;
+pub const ALTURA_TEXTO: f64 = 0.05;
+/// O diâmetro do eletroduto é escrito menor que o circuito e a seção.
+pub const ALTURA_DIAMETRO: f64 = 0.035;
+/// Folga entre as marcas e os textos, e entre a seção e o diâmetro.
+const FOLGA: f64 = 0.015;
+/// Meia altura das marcas: elas vão de -0,05 a 0,05 m em torno do eletroduto.
+const MEIA_MARCA: f64 = 0.05;
+/// Centro dos textos de cima (circuito) e de baixo (seção), a partir do eixo do eletroduto.
+const AFASTAMENTO_TEXTO: f64 = MEIA_MARCA + FOLGA + ALTURA_TEXTO / 2.0;
+/// Centro do diâmetro: abaixo da seção, com folga.
+const AFASTAMENTO_DIAMETRO: f64 = AFASTAMENTO_TEXTO + ALTURA_TEXTO / 2.0 + FOLGA + ALTURA_DIAMETRO / 2.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -399,6 +408,37 @@ fn texto(valor: String, em: [f64; 2], altura: f64, rotacao: f64) -> EntityKind {
     })
 }
 
+/// Largura estimada de um texto (m) na fonte Standard: 0,8 da altura por caractere (`%%c`, o
+/// símbolo de diâmetro, conta como um).
+pub fn largura_texto(texto: &str, altura: f64) -> f64 {
+    texto.replace("%%c", "Ø").chars().count() as f64 * 0.8 * altura
+}
+
+/// O que um grupo de marcas ocupa ao longo do trecho (m), a partir da primeira marca: as marcas,
+/// o número do circuito sobre a primeira, as letras sobre os retornos e a seção centrada embaixo.
+fn faixa_do_grupo(k: &Condutores, grupo: &[(TipoCondutor, Option<&str>)], setup: &Setup) -> (f64, f64) {
+    let vao = grupo.len().saturating_sub(1) as f64 * PASSO;
+    let (mut lo, mut hi) = (0.0f64, vao);
+    let mut cobrir = |centro: f64, texto: &str| {
+        let meia = largura_texto(texto, ALTURA_TEXTO) / 2.0;
+        lo = lo.min(centro - meia);
+        hi = hi.max(centro + meia);
+    };
+    for (i, (_, letra)) in grupo.iter().enumerate() {
+        let x = i as f64 * PASSO;
+        match (i, letra) {
+            (0, Some(l)) => cobrir(x, &format!("{}{l}", k.circuito)),
+            (0, None) => cobrir(x, &k.circuito),
+            (_, Some(l)) => cobrir(x, l),
+            (_, None) => {}
+        }
+    }
+    if let Some(x) = k.secao.filter(|x| !setup.omitida(*x)) {
+        cobrir(vao / 2.0, &format!("#{}", br(x)));
+    }
+    (lo, hi)
+}
+
 /// Desenha as marcas da fiação (apagando as anteriores do mesmo quadro). Devolve quantas
 /// entidades criou.
 pub fn aplicar(doc: &mut Drawing, f: &Fiacao, setup: &Setup) -> Result<usize, String> {
@@ -419,12 +459,17 @@ pub fn aplicar(doc: &mut Drawing, f: &Fiacao, setup: &Setup) -> Result<usize, St
         let meio = [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0];
         let (passo, entre) = (PASSO / m, ENTRE_CIRCUITOS / m);
         let grupos: Vec<Vec<(TipoCondutor, Option<&str>)>> = t.circuitos.iter().map(Condutores::marcas).collect();
-        let largura: f64 =
-            grupos.iter().map(|g| (g.len().saturating_sub(1)) as f64 * passo).sum::<f64>() + grupos.len().saturating_sub(1) as f64 * entre;
-        let mut s = -largura / 2.0;
+        // Cada grupo ocupa a largura das marcas ou dos textos dele (o que for maior), para os
+        // textos de circuitos vizinhos não ficarem um sobre o outro.
+        let faixas: Vec<(f64, f64)> = t.circuitos.iter().zip(&grupos).map(|(k, g)| faixa_do_grupo(k, g, setup)).collect();
+        let largura: f64 = faixas.iter().map(|(lo, hi)| (hi - lo) / m).sum::<f64>() + faixas.len().saturating_sub(1) as f64 * entre;
+        let mut borda = -largura / 2.0;
         let acima = AFASTAMENTO_TEXTO / m;
         let ponto = |s: f64, desvio: f64| [meio[0] + d[0] * s + n[0] * desvio, meio[1] + d[1] * s + n[1] * desvio];
-        for (k, grupo) in t.circuitos.iter().zip(&grupos) {
+        for ((k, grupo), (lo, hi)) in t.circuitos.iter().zip(&grupos).zip(&faixas) {
+            // A primeira marca fica a `-lo` da borda esquerda do grupo.
+            let mut s = borda - lo / m;
+            borda += (hi - lo) / m + entre;
             let inicio = s;
             for (i, (tipo, letra)) in grupo.iter().enumerate() {
                 let p = ponto(s, 0.0);
@@ -462,12 +507,11 @@ pub fn aplicar(doc: &mut Drawing, f: &Fiacao, setup: &Setup) -> Result<usize, St
                     .map_err(|e| e.to_string())?;
                 criadas += 1;
             }
-            s += entre - passo;
         }
         // Na linha de baixo, centrado sob toda a simbologia: o diâmetro do eletroduto do trecho.
         let diametro = t.eletroduto.as_ref().map_or_else(|| "%%c?".to_string(), |e| format!("%%c{}", br(e.nominal)));
-        let abaixo = (AFASTAMENTO_TEXTO + ALTURA_TEXTO * 1.6) / m;
-        doc.add(&Space::Model, comum(f.quadro), texto(diametro, ponto(0.0, -abaixo), ALTURA_TEXTO / m, rot)).map_err(|e| e.to_string())?;
+        let abaixo = AFASTAMENTO_DIAMETRO / m;
+        doc.add(&Space::Model, comum(f.quadro), texto(diametro, ponto(0.0, -abaixo), ALTURA_DIAMETRO / m, rot)).map_err(|e| e.to_string())?;
         criadas += 1;
     }
     Ok(criadas)

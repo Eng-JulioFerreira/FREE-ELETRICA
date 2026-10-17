@@ -1,8 +1,8 @@
 @AGENTS.md
 
-# CRAFT ELE — instruções para agentes
+# Free Elétrica — instruções para agentes
 
-CRAFT ELE é um addon de projeto elétrico predial de baixa tensão (NBR 5410) e telecom para o
+Free Elétrica é um addon de projeto elétrico predial de baixa tensão (NBR 5410) e telecom para o
 [CADCraft](https://github.com/storytold/cadcraft), em Rust. Ele vive dentro de uma cópia do
 CADCraft (`cadcraft/`, um git subtree do repositório original) e aparece como a paleta
 **Elétrica**, acoplada como os painéis do próprio CADCraft.
@@ -15,14 +15,14 @@ clean-room, assets) são obrigatórias. As exceções estão no fim deste arquiv
 
 | Onde | O quê |
 | :--- | :--- |
-| `cadcraft/crates/ele/` | **Motor do CRAFT ELE**: pontos, circuitos, NBR 5410, roteamento, fiação, setup. Sem interface. |
+| `cadcraft/crates/free-eletrica/` | **Motor do Free Elétrica**: pontos, circuitos, NBR 5410, roteamento, fiação, setup. Sem interface. |
 | `cadcraft/crates/engine/src/cmd/eletrica.rs` | **Comandos** do motor: `elecircuito`, `elecomando`, `elefiacao`, `eletrica.*`. |
 | `cadcraft/crates/ui-egui/src/eletrica.rs` | **Interface**: a paleta Elétrica e as janelas. Só lê e chama comandos. |
-| `cadcraft/crates/ele/src/tests.rs` | Testes do motor. |
+| `cadcraft/crates/free-eletrica/src/tests.rs` | Testes do motor. |
 | `cadcraft/crates/engine/tests/eletrica_comandos.rs` | Testes dos comandos, sem interface. |
 | `cadcraft/crates/ui-egui/tests/eletrica_painel.rs` | Testes da paleta e das janelas. |
 | `docs/` | Padrão de blocos, arquitetura do fork. |
-| `templates/` | Template de blocos e camadas (`CRAFT_ELE_BLOCOS.dxf`) e a fonte dos símbolos. |
+| `templates/` | Template de blocos e camadas (`FREE_ELETRICA_BLOCOS.dxf`) e a fonte dos símbolos. |
 | `scripts/` | `compilar.bat`, `iniciar.bat`, `testar.bat`, `gerar_template.py`. |
 
 Pontos de registro no código do CADCraft (as únicas linhas nossas fora dos nossos arquivos)
@@ -36,7 +36,7 @@ nessa lista e precisa ser pequena.
    nem do CADCraft. Nunca apague, enfraqueça ou ignore um teste para passar: conserte o código,
    ou explique ao usuário por que o teste estava errado antes de mudá-lo.
 2. **Motor desacoplado da interface.** Toda regra elétrica, cálculo, roteamento e escrita no
-   desenho fica em `crates/ele` (camada L2, só depende de `cadcraft-doc`; nunca de egui).
+   desenho fica em `crates/free-eletrica` (camada L2, só depende de `cadcraft-doc`; nunca de egui).
    A interface não decide nada de engenharia.
 3. **Tudo é comando.** Toda capacidade do motor é um `CommandSpec` em
    `crates/engine/src/cmd/eletrica.rs`, com a forma JSON (`run`) e, quando pede seleção no
@@ -50,12 +50,12 @@ nessa lista e precisa ser pequena.
    (`#![deny]` na raiz de `ele`), erros por `Result`, entrada do desenho e de parâmetros JSON é
    hostil (`get()`, nada de índice vindo de fora, NaN e infinitos tratados).
 6. **Dados no desenho.** Valores vão para o atributo do bloco quando ele existe e, senão, para o
-   XDATA `CRAFTELE` (`ele::editar`, `ele::xdata`). O que é gerado (marcas de fiação) leva XDATA
+   XDATA `FREEELETRICA` (`ele::editar`, `ele::xdata`). O que é gerado (marcas de fiação) leva XDATA
    próprio para poder ser apagado e refeito.
 7. **Clean-room.** Programas de referência (OFE Elétrico, PRO-Elétrica, Lumine, AutoCAD) podem
    ser **observados** em uso; nunca descompilados, nunca copiados (código, símbolos, tabelas
    próprias, textos). Regras de cálculo vêm da NBR 5410 e são citadas no código (tabela, item).
-8. **Licença.** O código do CRAFT ELE é GPL-3.0-only: todo arquivo novo nosso começa com
+8. **Licença.** O código do Free Elétrica é GPL-3.0-only: todo arquivo novo nosso começa com
    `// SPDX-License-Identifier: GPL-3.0-only`. Os arquivos do CADCraft continuam MIT OR
    Apache-2.0; não mude a licença deles nem cole código GPL dentro deles além das linhas de
    registro.
@@ -97,5 +97,5 @@ Conflitos só podem aparecer nos pontos de registro (`docs/arquitetura.md`). Dep
 
 - `plan/`, `craftrules`, `cargo xtask wasm` e o push direto para `main` do CADCraft são do
   projeto original; aqui valem os portões acima e o fluxo de commits deste arquivo.
-- Os textos em português do CRAFT ELE não passam pelo catálogo de traduções (só rótulos de
+- Os textos em português do Free Elétrica não passam pelo catálogo de traduções (só rótulos de
   comandos e menus, regra 9).

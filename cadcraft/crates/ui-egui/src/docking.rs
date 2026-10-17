@@ -16,7 +16,7 @@ pub enum Panel {
     Properties,
     #[serde(rename = "externalReferences")]
     ExternalRefs,
-    /// CRAFT ELE: projeto elétrico (NBR 5410).
+    /// Free Elétrica: projeto elétrico (NBR 5410).
     Eletrica,
 }
 

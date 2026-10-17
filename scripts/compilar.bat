@@ -1,6 +1,6 @@
 @echo off
 setlocal
-title CRAFT ELE - Compilar
+title FREE ELETRICA - Compilar
 call "%~dp0ambiente.cmd"
 cd /d "%CADCRAFT_DIR%"
 
@@ -13,10 +13,10 @@ if /i "%~1"=="release" (
 )
 if errorlevel 1 (
     echo.
-    echo [CRAFT ELE] A compilacao falhou. Veja as mensagens acima.
+    echo [FREE ELETRICA] A compilacao falhou. Veja as mensagens acima.
     pause
     exit /b 1
 )
 echo.
-echo [CRAFT ELE] Pronto. Abra com scripts\iniciar.bat
+echo [FREE ELETRICA] Pronto. Abra com scripts\iniciar.bat
 exit /b 0

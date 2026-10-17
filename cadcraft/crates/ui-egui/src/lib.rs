@@ -21,7 +21,7 @@ pub mod control;
 pub mod credits;
 pub mod dialogs;
 pub mod docking;
-/// CRAFT ELE: o painel Elétrica (NBR 5410).
+/// Free Elétrica: o painel Elétrica (NBR 5410).
 pub mod eletrica;
 pub mod hatchdlg;
 mod mtext_editor;

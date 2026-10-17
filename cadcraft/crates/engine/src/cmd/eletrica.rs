@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// Copyright (C) 2026 Julio Ferreira. CRAFT ELE: ver LICENSE e AVISO_LEGAL.md na raiz do repositorio.
-//! CRAFT ELE: as ferramentas de projeto elétrico que trabalham no desenho.
+// Copyright (C) 2026 Julio Ferreira. Free Elétrica: ver LICENSE e AVISO_LEGAL.md na raiz do repositorio.
+//! Free Elétrica: as ferramentas de projeto elétrico que trabalham no desenho.
 //!
 //! ELECIRCUITO (Criar circuito): selecione o quadro de destino, informe o número do circuito
 //! (Enter aceita o próximo livre) e selecione os pontos, um a um, até Enter.
@@ -10,15 +10,15 @@
 //! ELEFIACAO (Ajustar fiação): selecione o quadro (Enter: todos) e as marcas de fiação são
 //! (re)desenhadas sobre os eletrodutos.
 //!
-//! Os valores vão para os atributos do bloco quando existem e, senão, para o XDATA do CRAFT ELE
-//! (`cadcraft_ele::editar`). Cada comando é um passo de desfazer.
+//! Os valores vão para os atributos do bloco quando existem e, senão, para o XDATA do Free Elétrica
+//! (`free_eletrica::editar`). Cada comando é um passo de desfazer.
 //!
 //! Os comandos `eletrica.*` dão em JSON tudo o que a paleta mostra (análise, roteamento,
 //! configurações) e a sobrescrita manual: o motor de cálculo inteiro é acessível sem a interface
 //! (linha de comando, scripts, canal de controle, `cadcraft-cli`, MCP).
 
 use cadcraft_doc::Handle;
-use cadcraft_ele::{self as ele, PontoEletrico, TipoPonto};
+use free_eletrica::{self as ele, PontoEletrico, TipoPonto};
 use serde_json::{Value, json};
 
 use super::*;

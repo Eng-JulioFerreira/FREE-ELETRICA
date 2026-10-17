@@ -329,8 +329,10 @@ fn main() -> eframe::Result {
             if let Some(prefs) = cc.storage.and_then(|s| s.get_string(cadcraft_ui_egui::autosave::PREFS_KEY)) {
                 cadcraft_ui_egui::autosave::load_prefs(&prefs);
             }
-            // CRAFT ELE: as configurações do projeto elétrico e a paleta aberta ao iniciar.
-            if let Some(prefs) = cc.storage.and_then(|s| s.get_string(cadcraft_ui_egui::eletrica::PREFS_KEY)) {
+            // Free Elétrica: as configurações do projeto elétrico e a paleta aberta ao iniciar.
+            if let Some(prefs) = cc.storage.and_then(|s| {
+                s.get_string(cadcraft_ui_egui::eletrica::PREFS_KEY).or_else(|| s.get_string(cadcraft_ui_egui::eletrica::PREFS_KEY_ANTIGA))
+            }) {
                 cadcraft_ui_egui::eletrica::load_prefs(&prefs);
             }
             cadcraft_ui_egui::eletrica::abrir_ao_iniciar();

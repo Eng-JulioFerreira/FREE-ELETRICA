@@ -1,6 +1,6 @@
 # Especificação do Padrão de Blocos Elétricos (CADCraft / NBR 5410)
 
-Este documento estabelece as regras e convenções de nomenclatura para os blocos CAD (`BLOCK` e `INSERT`) e seus atributos (`ATTRIB`) no ecossistema do **CRAFT ELE / CADCraft**.
+Este documento estabelece as regras e convenções de nomenclatura para os blocos CAD (`BLOCK` e `INSERT`) e seus atributos (`ATTRIB`) no ecossistema do **Free Elétrica / CADCraft**.
 
 ---
 
@@ -36,7 +36,7 @@ como aquecimento e o resto como iluminação e TUG. Sem `FP`, vale 1,00 em aquec
 no resto. O Quadro de cargas mostra o resultado por circuito: os tipos dos pontos e o FP do
 circuito (W / VA).
 
-### Blocos do template (`templates/CRAFT_ELE_BLOCOS.dxf`)
+### Blocos do template (`templates/FREE_ELETRICA_BLOCOS.dxf`)
 
 | Bloco | Símbolo | Inserção | TIPO_PONTO (constante) | Padrões | Visíveis |
 | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -74,7 +74,7 @@ escuro):
 | `FIACAO-PROTECAO` | Terra (proteção) | traço que atravessa, com barra no topo (T) |
 
 Se o desenho não tem esses blocos, eles são criados com esse desenho padrão. Blocos padrão de
-versões anteriores do CRAFT ELE são trocados pelo atual. Para usar outro símbolo, redesenhe o
+versões anteriores do Free Elétrica são trocados pelo atual. Para usar outro símbolo, redesenhe o
 bloco no seu template: um bloco redesenhado fica como está. Rodar de novo apaga e refaz as
 marcas do quadro.
 
@@ -95,7 +95,7 @@ eletrodutos correm no teto e cada ponto desce até a sua altura. Sem `ALTURA`, v
 
 `CIRCUITO`, `COMANDO` e `QUADRO` não precisam existir no bloco: as ferramentas **Criar
 circuito** e **Comandos e luminárias** gravam no atributo quando ele existe e, senão, no XDATA
-do bloco (aplicativo `CRAFTELE`), que viaja com o DWG/DXF e é copiado junto com o bloco. Com um
+do bloco (aplicativo `FREEELETRICA`), que viaja com o DWG/DXF e é copiado junto com o bloco. Com um
 só quadro no desenho, todo ponto é dele sem precisar de `QUADRO`.
 
 > [!IMPORTANT]
@@ -107,7 +107,7 @@ só quadro no desenho, todo ponto é dele sem precisar de `QUADRO`.
 
 ### C. Quadros de Distribuição (`QD`)
 Ponto de origem e alimentação dos circuitos terminais. Ficam no XDATA do bloco do quadro
-(aplicativo `CRAFTELE`):
+(aplicativo `FREEELETRICA`):
 
 - as escolhas feitas à mão na tabela de Rotear fiação (`SECAO.<circuito>` e
   `DISJ.<circuito>`);
@@ -131,7 +131,7 @@ circuitos sem `TENSAO`; sem ela, valem as do sistema das Configurações.
 
 ## 🔎 3. Normalização e Validação no Adaptador
 
-O adaptador do CRAFT ELE realiza:
+O adaptador do Free Elétrica realiza:
 1. Normalização automática de strings: remove espaços em excesso e converte para maiúsculas internamente.
 2. Extração de valores numéricos de potência (ex: extrai `600` de `'600VA'` ou `'600 W'`).
 3. Validação de consistência: emite alerta caso um interruptor contenha potência indevida ou uma tomada não contenha tensão/circuito especificado.
@@ -142,7 +142,7 @@ O adaptador do CRAFT ELE realiza:
 
 Um bloco só entra na análise se tiver **pelo menos um** destes atributos: `TIPO_PONTO`,
 `POTENCIA`, `TENSAO`, `NUMERO_FASES`, `CIRCUITO`, `COMANDO`, `ALTURA` ou `QUADRO` (no
-atributo ou no XDATA do CRAFT ELE). Blocos de arquitetura sem
+atributo ou no XDATA do Free Elétrica). Blocos de arquitetura sem
 atributos elétricos são ignorados, mesmo com nomes parecidos.
 
 O tipo vem do valor de `TIPO_PONTO`. Se ele faltar, vem do nome do bloco. Maiúsculas e

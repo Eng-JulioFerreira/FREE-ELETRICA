@@ -12,7 +12,7 @@ mod draw;
 mod draw2;
 mod draworder;
 mod edit;
-/// CRAFT ELE: Criar circuito e Comandos e luminárias.
+/// Free Elétrica: Criar circuito e Comandos e luminárias.
 mod eletrica;
 mod exchange;
 pub mod file;
