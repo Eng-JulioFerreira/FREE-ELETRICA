@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Julio Ferreira. CRAFT ELE: ver LICENSE e AVISO_LEGAL.md na raiz do repositorio.
 //! CRAFT ELE: a paleta Elétrica e as suas janelas.
 //!
 //! A paleta só tem ferramentas. Criar circuito, Comandos e luminárias e Ajustar fiação são

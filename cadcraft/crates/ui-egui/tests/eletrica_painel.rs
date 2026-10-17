@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Julio Ferreira. CRAFT ELE: ver LICENSE e AVISO_LEGAL.md na raiz do repositorio.
 //! CRAFT ELE: a paleta Elétrica (só ferramentas), os comandos ELECIRCUITO e ELECOMANDO no
 //! desenho, a janela Rotear fiação com a tabela de resumo e a sobrescrita manual, e o setup.
 

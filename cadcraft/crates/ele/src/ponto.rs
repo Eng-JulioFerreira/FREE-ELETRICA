@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Julio Ferreira. CRAFT ELE: ver LICENSE e AVISO_LEGAL.md na raiz do repositorio.
 //! Pontos elétricos: blocos inseridos no espaço do modelo que carregam atributos elétricos
 //! (padrão em `docs/padrao_blocos_eletricos.md` do CRAFT ELE).
 

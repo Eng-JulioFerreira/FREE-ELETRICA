@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Julio Ferreira. CRAFT ELE: ver LICENSE e AVISO_LEGAL.md na raiz do repositorio.
 //! Circuitos: os pontos agrupados pelo atributo CIRCUITO.
 
 use cadcraft_doc::Handle;

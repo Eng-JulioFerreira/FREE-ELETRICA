@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Julio Ferreira. CRAFT ELE: ver LICENSE e AVISO_LEGAL.md na raiz do repositorio.
 //! CRAFT ELE: as ferramentas de projeto elétrico que trabalham no desenho.
 //!
 //! ELECIRCUITO (Criar circuito): selecione o quadro de destino, informe o número do circuito

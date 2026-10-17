@@ -1,4 +1,5 @@
-﻿"""Gera o template do CRAFT ELE (templates/CRAFT_ELE_BLOCOS.dxf) a partir do desenho de
+# SPDX-License-Identifier: GPL-3.0-only
+"""Gera o template do CRAFT ELE (templates/CRAFT_ELE_BLOCOS.dxf) a partir do desenho de
 referência dos símbolos (o Drawing1 exportado do CADCraft).
 
 Blocos, da esquerda para a direita na parede de referência:

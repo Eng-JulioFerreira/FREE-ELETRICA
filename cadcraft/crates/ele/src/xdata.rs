@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Julio Ferreira. CRAFT ELE: ver LICENSE e AVISO_LEGAL.md na raiz do repositorio.
 //! Dados do CRAFT ELE gravados no XDATA das entidades (aplicativo `CRAFTELE`), como pares
 //! `CHAVE=valor` em grupos 1000. Viajam dentro do DWG/DXF e são copiados junto com o objeto.
 

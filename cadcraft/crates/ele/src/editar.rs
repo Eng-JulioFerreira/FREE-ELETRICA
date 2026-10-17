@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Julio Ferreira. CRAFT ELE: ver LICENSE e AVISO_LEGAL.md na raiz do repositorio.
 //! Escritas do CRAFT ELE no desenho. Um valor vai para o atributo do bloco quando ele existe
 //! (o projetista vê e edita) e, senão, para o XDATA do CRAFT ELE (viaja com o bloco, invisível).
 

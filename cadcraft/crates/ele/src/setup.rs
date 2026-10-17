@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Julio Ferreira. CRAFT ELE: ver LICENSE e AVISO_LEGAL.md na raiz do repositorio.
 //! Configurações gerais do projeto (a aba de setup do CRAFT ELE). Delas saem os parâmetros do
 //! dimensionamento e do roteamento: nada disso é digitado como fator solto.
 

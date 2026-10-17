@@ -55,7 +55,11 @@ nessa lista e precisa ser pequena.
 7. **Clean-room.** Programas de referência (OFE Elétrico, PRO-Elétrica, Lumine, AutoCAD) podem
    ser **observados** em uso; nunca descompilados, nunca copiados (código, símbolos, tabelas
    próprias, textos). Regras de cálculo vêm da NBR 5410 e são citadas no código (tabela, item).
-8. **Idioma.** Textos para o usuário em português do Brasil. Ids e rótulos de `CommandSpec` e de
+8. **Licença.** O código do CRAFT ELE é GPL-3.0-only: todo arquivo novo nosso começa com
+   `// SPDX-License-Identifier: GPL-3.0-only`. Os arquivos do CADCraft continuam MIT OR
+   Apache-2.0; não mude a licença deles nem cole código GPL dentro deles além das linhas de
+   registro.
+9. **Idioma.** Textos para o usuário em português do Brasil. Ids e rótulos de `CommandSpec` e de
    menu seguem o CADCraft (rótulo em inglês, com linha em `i18n/uk.tsv`, obrigatória, e em
    `i18n/pt_br.tsv`).
 
@@ -94,4 +98,4 @@ Conflitos só podem aparecer nos pontos de registro (`docs/arquitetura.md`). Dep
 - `plan/`, `craftrules`, `cargo xtask wasm` e o push direto para `main` do CADCraft são do
   projeto original; aqui valem os portões acima e o fluxo de commits deste arquivo.
 - Os textos em português do CRAFT ELE não passam pelo catálogo de traduções (só rótulos de
-  comandos e menus, regra 8).
+  comandos e menus, regra 9).

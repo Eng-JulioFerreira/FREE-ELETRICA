@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Julio Ferreira. CRAFT ELE: ver LICENSE e AVISO_LEGAL.md na raiz do repositorio.
 //! Ajustar fiação: quais condutores de cada circuito passam em cada trecho de eletroduto, e as
 //! marcas de fiação desenhadas sobre os trechos.
 //!

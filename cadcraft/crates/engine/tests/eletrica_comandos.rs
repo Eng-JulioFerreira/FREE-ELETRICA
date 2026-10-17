@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Julio Ferreira. CRAFT ELE: ver LICENSE e AVISO_LEGAL.md na raiz do repositorio.
 //! CRAFT ELE sem interface: todo o motor de cálculo responde por comandos do motor, como na
 //! linha de comando, em scripts, no `cadcraft-cli` e no MCP.
 

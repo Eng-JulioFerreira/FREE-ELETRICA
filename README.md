@@ -4,6 +4,22 @@ Projeto elétrico predial de baixa tensão (NBR 5410) e telecom dentro do
 [CADCraft](https://github.com/storytold/cadcraft), no estilo do OFE Elétrico, do PRO-Elétrica e
 do Lumine. Aparece como a paleta **Elétrica**, acoplada à interface do CADCraft.
 
+> **Aviso:** os resultados são de apoio e não substituem a responsabilidade técnica de um
+> profissional habilitado. Leia o [AVISO_LEGAL.md](AVISO_LEGAL.md).
+
+## Visão: de fork a plugin
+
+Hoje o CRAFT ELE é um **fork** do CADCraft: uma cópia dele em `cadcraft/` com algumas linhas de
+registro, porque o CADCraft ainda não tem como receber extensões. **A meta é virar um plugin**:
+um projeto separado que só traz o próprio código e usa o CADCraft original sem modificá-lo.
+
+Isso depende de o CADCraft ganhar uma **API de extensão** (registrar comandos extras no motor e
+painéis e janelas extras na interface, carregados quando o programa inicia). O código do CRAFT
+ELE já está organizado para essa mudança: o motor fica numa biblioteca própria, os comandos e a
+paleta ficam em arquivos próprios, e as poucas linhas nos arquivos do CADCraft estão listadas em
+[docs/arquitetura.md](docs/arquitetura.md). Elas são exatamente o que a API de extensão precisaria
+oferecer.
+
 ## O que faz
 
 | Ferramenta | Comando | O quê |
@@ -45,6 +61,13 @@ Test-driven: `scripts\testar.bat` precisa passar antes de todo commit. Veja `CLA
 
 ## Licença
 
-O CADCraft é MIT OR Apache-2.0 (`cadcraft/LICENSE-MIT`, `cadcraft/LICENSE-APACHE`, `cadcraft/NOTICE`);
-esses avisos precisam acompanhar o repositório. A licença do código próprio do CRAFT ELE ainda
-não foi definida.
+- **CRAFT ELE** (o código próprio: `cadcraft/crates/ele/`, os arquivos `eletrica*.rs` nos crates
+  do CADCraft, `docs/`, `templates/`, `scripts/`): **GNU General Public License v3**
+  (`GPL-3.0-only`, texto em [LICENSE](LICENSE)). Os arquivos de código levam o cabeçalho
+  `SPDX-License-Identifier: GPL-3.0-only`.
+- **Isenção de garantia e de responsabilidade:** [AVISO_LEGAL.md](AVISO_LEGAL.md), que complementa
+  as seções 15 e 16 da GPL.
+- **CADCraft** (o resto de `cadcraft/`): continua sob as licenças dele, MIT OR Apache-2.0
+  (`cadcraft/LICENSE-MIT`, `cadcraft/LICENSE-APACHE`, `cadcraft/NOTICE`), que precisam acompanhar
+  o repositório. Ambas são compatíveis com a GPL v3; o programa compilado como um todo é
+  distribuído sob a GPL v3.

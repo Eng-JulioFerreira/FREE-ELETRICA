@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Julio Ferreira. CRAFT ELE: ver LICENSE e AVISO_LEGAL.md na raiz do repositorio.
 //! Roteamento: a rede de eletrodutos do desenho como grafo, o caminho do quadro até cada ponto
 //! e, dele, comprimentos (com subidas e descidas) e momentos elétricos para a queda de tensão.
 //!
