@@ -164,7 +164,8 @@ fn paleta_ferramentas_e_fluxo_completo() {
 
     h.run_steps(4);
     // A paleta só tem ferramentas.
-    for f in ["Configurações...", "Criar circuito", "Comandos e luminárias", "Conferir pontos e circuitos...", "Rotear fiação..."] {
+    for f in ["Configurações...", "Criar circuito", "Comandos e luminárias", "Conferir pontos e circuitos...", "Rotear fiação...", "Ajustar fiação"]
+    {
         h.get_by_label(f);
     }
     assert!(h.query_by_label("Pontos elétricos").is_none());

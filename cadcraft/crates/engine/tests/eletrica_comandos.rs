@@ -1,0 +1,143 @@
+//! CRAFT ELE sem interface: todo o motor de cálculo responde por comandos do motor, como na
+//! linha de comando, em scripts, no `cadcraft-cli` e no MCP.
+
+use std::sync::Arc;
+
+use cadcraft_engine::doc::geom::Vec3;
+use cadcraft_engine::doc::{Attrib, Block, Common, Drawing, EntityKind, HAlign, Handle, Insert, Line, Space, Text, VAlign};
+use cadcraft_engine::{Input, Session};
+use serde_json::{Value, json};
+
+fn atributo(tag: &str, valor: &str) -> Attrib {
+    Attrib {
+        tag: tag.into(),
+        text: Text {
+            insert: Vec3::ZERO,
+            align_pt: None,
+            height: 0.05,
+            value: valor.into(),
+            rotation: 0.0,
+            width_factor: 1.0,
+            oblique: 0.0,
+            style: "Standard".into(),
+            halign: HAlign::Left,
+            valign: VAlign::Baseline,
+        },
+        invisible: false,
+        constant: false,
+        prompt: String::new(),
+        props: Default::default(),
+        multiline: None,
+        modes: Default::default(),
+    }
+}
+
+fn inserir(d: &mut Drawing, bloco: &str, x: f64, y: f64, attrs: &[(&str, &str)]) -> Handle {
+    d.blocks.entry(bloco.to_string()).or_insert_with(|| Arc::new(Block::new(bloco)));
+    let ins = Insert {
+        block: bloco.into(),
+        insert: Vec3::new(x, y, 0.0),
+        scale: Vec3::new(1.0, 1.0, 1.0),
+        rotation: 0.0,
+        attribs: attrs.iter().map(|(t, v)| atributo(t, v)).collect(),
+        cols: 1,
+        rows: 1,
+        col_spacing: 0.0,
+        row_spacing: 0.0,
+    };
+    d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap()
+}
+
+fn eletroduto(d: &mut Drawing, a: (f64, f64), b: (f64, f64)) {
+    let c = Common { layer: "ELE-ELETRODUTO-PVC-MEDIA-TETO".into(), ..Default::default() };
+    d.add(&Space::Model, c, EntityKind::Line(Line { a: Vec3::new(a.0, a.1, 0.0), b: Vec3::new(b.0, b.1, 0.0) })).unwrap();
+}
+
+/// Quadro em 0, luz em 3 (comando a), interruptor em (3,1), TUG em 6; eletrodutos ligando tudo.
+fn planta() -> (Drawing, [Handle; 4]) {
+    let mut d = Drawing::new_metric();
+    d.header.set_i64("INSUNITS", 6);
+    let qd = inserir(&mut d, "QDG", 0.0, 0.0, &[("TIPO_PONTO", "QUADRO"), ("TAG", "QDG"), ("NUMERO_FASES", "3"), ("ALTURA", "1,5")]);
+    let luz = inserir(&mut d, "ILU-OCT", 3.0, 0.0, &[("TIPO_PONTO", "ILUM"), ("POTENCIA", "100VA"), ("TENSAO", "220V"), ("COMANDO", "")]);
+    let int = inserir(&mut d, "INT-SIM", 3.0, 1.0, &[("TIPO_PONTO", "INTERRUPTOR"), ("POTENCIA", "0W"), ("ALTURA", "1,10")]);
+    let tug = inserir(&mut d, "TOM-SIM-BAIXA", 6.0, 0.0, &[("TIPO_PONTO", "TUG"), ("POTENCIA", "100VA"), ("TENSAO", "220V"), ("ALTURA", "0,30")]);
+    eletroduto(&mut d, (0.0, 0.0), (3.0, 0.0));
+    eletroduto(&mut d, (3.0, 0.0), (6.0, 0.0));
+    eletroduto(&mut d, (3.0, 0.0), (3.0, 1.0));
+    (d, [qd, luz, int, tug])
+}
+
+fn circuito(s: &Session, h: Handle) -> Option<String> {
+    let doc = s.doc().ok()?;
+    cadcraft_ele::ponto::ler_ponto(doc, h)?.circuito
+}
+
+#[test]
+fn projeto_inteiro_por_comandos_sem_interface() {
+    let mut s = Session::new();
+    let (d, [qd, luz, int, tug]) = planta();
+    s.open_drawing(d, "Planta", None);
+
+    // Criar circuito pelo JSON e pelo prompt interativo.
+    let r = s.execute("elecircuito", &json!({ "quadro": qd.hex(), "pontos": [luz.hex()] })).unwrap();
+    assert_eq!(r["circuito"], "1");
+    s.start("elecircuito").unwrap();
+    s.input(Input::Pick(vec![qd])).unwrap();
+    s.input(Input::Enter).unwrap(); // aceita o próximo: 2
+    s.input(Input::Pick(vec![tug])).unwrap();
+    s.input(Input::Enter).unwrap();
+    assert_eq!(circuito(&s, tug).as_deref(), Some("2"));
+
+    // Comandos e luminárias: o interruptor sem circuito entra no da luz.
+    let r = s.execute("elecomando", &json!({ "interruptor": int.hex(), "luminarias": [luz.hex()] })).unwrap();
+    assert_eq!((r["comando"].as_str(), r["circuito"].as_str()), (Some("a"), Some("1")));
+
+    // Análise e roteamento em JSON.
+    let a = s.execute("eletrica.analisar", &json!({})).unwrap();
+    assert_eq!(a["circuitos"].as_array().unwrap().len(), 2);
+    let r = s.execute("eletrica.rotear", &json!({ "quadro": "QDG" })).unwrap();
+    assert_eq!(r["tag"], "QDG");
+    let c2: &Value = r["linhas"].as_array().unwrap().iter().find(|l| l["circuito"]["id"] == "2").unwrap();
+    // 6 m + 2,50 de descida + 1,30 do quadro.
+    assert!((c2["comprimento"].as_f64().unwrap() - 9.8).abs() < 1e-9);
+
+    // Configurações pelo motor, com ou sem desenho.
+    let st = s.execute("eletrica.setup", &json!({})).unwrap();
+    assert_eq!(st["sistema"], "trifasico380220");
+
+    // Sobrescrita e desfazer.
+    s.execute("eletrica.sobrescrever", &json!({ "circuito": "2", "disjuntor": 16 })).unwrap();
+    let r = s.execute("eletrica.rotear", &json!({})).unwrap();
+    assert_eq!(r["linhas"].as_array().unwrap().iter().find(|l| l["circuito"]["id"] == "2").unwrap()["escolha"]["disjuntor"], 16.0);
+    s.undo().unwrap();
+
+    // Ajustar fiação: marca os trechos; rodar de novo refaz sem duplicar; limpar apaga.
+    let r = s.execute("elefiacao", &json!({})).unwrap();
+    let marcas = r["quadros"][0]["marcas"].as_u64().unwrap();
+    assert!(marcas > 0, "{r}");
+    assert_eq!(r["quadros"][0]["trechos"], 3);
+    let entidades = s.doc().unwrap().model.len();
+    s.execute("elefiacao", &json!({ "quadro": "QDG" })).unwrap();
+    assert_eq!(s.doc().unwrap().model.len(), entidades);
+    let r = s.execute("elefiacao", &json!({ "limpar": true })).unwrap();
+    assert_eq!(r["quadros"][0]["apagadas"].as_u64(), Some(marcas));
+
+    // ELEFIACAO digitado: Enter ajusta todos os quadros; um passo de desfazer.
+    s.start("elefiacao").unwrap();
+    s.input(Input::Enter).unwrap();
+    assert!(s.running.is_none());
+    assert_eq!(s.doc().unwrap().model.len(), entidades);
+    s.undo().unwrap();
+    assert_eq!(s.doc().unwrap().model.len() as u64, entidades as u64 - marcas);
+}
+
+#[test]
+fn comandos_eletricos_sem_quadro_dao_erro_e_nao_travam() {
+    let mut s = Session::new();
+    s.open_drawing(Drawing::new_metric(), "Vazio", None);
+    assert!(s.execute("eletrica.rotear", &json!({})).is_err());
+    assert!(s.execute("elefiacao", &json!({})).is_err());
+    assert!(s.execute("eletrica.sobrescrever", &json!({ "circuito": "1" })).is_err());
+    assert!(s.execute("eletrica.setup", &json!({ "sistema": 42 })).is_err());
+    assert!(s.execute("eletrica.analisar", &json!({})).unwrap()["pontos"].as_array().unwrap().is_empty());
+}

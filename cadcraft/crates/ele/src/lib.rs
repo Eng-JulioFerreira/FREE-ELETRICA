@@ -3,9 +3,12 @@
 //! Lê os pontos elétricos (blocos com atributos), agrupa em circuitos por quadro, roteia a
 //! fiação pelos eletrodutos e dimensiona cada circuito. Não depende da interface: a paleta
 //! Elétrica do `cadcraft-ui-egui` e os comandos do motor só usam o que está aqui.
+#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
+#![forbid(unsafe_code)]
 
 pub mod circuito;
 pub mod editar;
+pub mod fiacao;
 pub mod nbr5410;
 pub mod ponto;
 pub mod quadro;

@@ -1,7 +1,8 @@
 //! CRAFT ELE: a paleta Elétrica e as suas janelas.
 //!
-//! A paleta só tem ferramentas. Criar circuito e Comandos e luminárias são comandos do motor
-//! (ELECIRCUITO, ELECOMANDO) que pedem as seleções no desenho. Os dados do projeto aparecem nas
+//! A paleta só tem ferramentas. Criar circuito, Comandos e luminárias e Ajustar fiação são
+//! comandos do motor (ELECIRCUITO, ELECOMANDO, ELEFIACAO) que pedem as seleções no desenho; a
+//! interface não calcula nada que o motor não exponha também como comando. Os dados do projeto aparecem nas
 //! janelas: Configurações (o setup, com a aba de telecom), Conferência (pontos e circuitos) e
 //! Rotear fiação (a tabela de resumo de um quadro, com a pré-seleção automática de seção e
 //! disjuntor que o projetista pode sobrescrever).
@@ -11,9 +12,9 @@
 //! comandos passam.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 
-use cadcraft_doc::{Drawing, Handle};
+use cadcraft_doc::Handle;
 use cadcraft_ele::nbr5410::{DISJUNTORES, SECOES};
 use cadcraft_ele::ponto::br;
 use cadcraft_ele::{self as ele, CaboTelecom, CategoriaTelecom, CorCabo, Setup, Sistema, TipoPonto, Unidade};
@@ -31,7 +32,6 @@ const COR_AVISO: Color32 = Color32::from_rgb(232, 176, 72);
 /// Chave das configurações do CRAFT ELE no armazenamento de preferências do CADCraft.
 pub const PREFS_KEY: &str = "craftele.setup";
 
-static SETUP: LazyLock<Mutex<Setup>> = LazyLock::new(|| Mutex::new(Setup::default()));
 static JANELAS: Mutex<Janelas> = Mutex::new(Janelas { setup: None, conferencia: false, rotear: None });
 static ABRIR_AO_INICIAR: AtomicBool = AtomicBool::new(false);
 
@@ -82,14 +82,13 @@ impl Aba {
     }
 }
 
-/// As configurações em uso.
+/// As configurações em uso (guardadas no motor: `cadcraft_ele::setup`).
 pub fn setup() -> Setup {
-    trava(&SETUP).clone()
+    ele::setup::atual()
 }
 
-fn definir_setup(mut s: Setup) {
-    s.normalizar();
-    *trava(&SETUP) = s;
+fn definir_setup(s: Setup) {
+    ele::setup::definir(s);
 }
 
 /// As configurações como JSON, para o armazenamento do CADCraft ([`PREFS_KEY`]).
@@ -160,14 +159,13 @@ fn abrir_setup() -> Result<Value, String> {
     Ok(Value::Null)
 }
 
-/// Comandos do CRAFT ELE da interface. `None` quando `id` não é um deles.
+/// Comandos do CRAFT ELE que só existem na interface: abrir a paleta e as janelas. `None`
+/// quando `id` não é um deles.
 ///
-/// Digitados: ELETRICA (paleta), ELECONFIG, ELECONFERIR e ELEROTEAR (janelas). ELECIRCUITO e
-/// ELECOMANDO são do motor. JSON, para o canal de controle, o MCP e scripts:
-/// `eletrica.analisar`; `eletrica.rotear {quadro?: handle | TAG}` (a tabela de resumo);
-/// `eletrica.sobrescrever {quadro, circuito, secao?, disjuntor?}` (sem valor: volta ao
-/// automático); `eletrica.setup` (sem parâmetros lê; com campos grava).
-pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
+/// Digitados: ELETRICA (paleta), ELECONFIG, ELECONFERIR e ELEROTEAR (janelas). Todo o resto é
+/// comando do motor (`crates/engine/src/cmd/eletrica.rs`): ELECIRCUITO, ELECOMANDO, ELEFIACAO e
+/// os `eletrica.*` em JSON.
+pub fn route(app: &mut CadApp, id: &str, _params: &Value) -> Option<Result<Value, String>> {
     match id {
         "ui.panel.eletrica" | "eletrica" | "craftele" => Some(open(app)),
         "ui.eletrica.setup" | "eleconfig" => Some(abrir_setup()),
@@ -182,88 +180,13 @@ pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value,
             }
             Some(Ok(Value::Null))
         }
-        "eletrica.analisar" => Some(com_desenho(app, |doc| serde_json::to_value(ele::analisar(doc)).map_err(|e| e.to_string()))),
-        "eletrica.rotear" | "eletrica.dimensionar" => Some(com_desenho(app, |doc| {
-            let a = ele::analisar(doc);
-            let q = achar_quadro(&a, params.get("quadro"))?;
-            serde_json::to_value(ele::rotear_quadro(doc, &a, &setup(), q)?).map_err(|e| e.to_string())
-        })),
-        "eletrica.sobrescrever" => Some(sobrescrever_json(app, params)),
-        "eletrica.setup" => Some(setup_json(params)),
         _ => None,
     }
 }
 
-fn com_desenho(app: &CadApp, f: impl FnOnce(&Drawing) -> Result<Value, String>) -> Result<Value, String> {
-    let st = app.session.state().map_err(|e| e.to_string())?;
-    f(&st.doc)
-}
-
-/// O quadro por handle ou TAG; sem nada, o primeiro do desenho.
-fn achar_quadro(a: &ele::Analise, v: Option<&Value>) -> Result<Handle, String> {
-    let quadros = a.quadros();
-    let achado = match v.and_then(Value::as_str) {
-        None => quadros.first().copied(),
-        Some(t) => quadros
-            .iter()
-            .find(|q| Handle::parse_hex(t) == Some(q.handle))
-            .or_else(|| quadros.iter().find(|q| q.tag.as_deref().is_some_and(|tag| tag.eq_ignore_ascii_case(t))))
-            .copied(),
-    };
-    achado.map(|q| q.handle).ok_or_else(|| "nenhum quadro (TIPO_PONTO = QUADRO) no desenho".into())
-}
-
-/// Altera o desenho como um passo de desfazer.
-fn editar_desenho(app: &mut CadApp, rotulo: &str, f: impl FnOnce(&mut Drawing) -> Result<(), String>) -> Result<(), String> {
-    let st = app.session.state_mut().map_err(|e| e.to_string())?;
-    let antes = st.doc.clone();
-    let selecao = st.selection.clone();
-    if let Err(e) = f(Arc::make_mut(&mut st.doc)) {
-        st.doc = antes;
-        return Err(e);
-    }
-    if !Arc::ptr_eq(&antes, &st.doc) {
-        st.push_undo(cadcraft_engine::Snapshot { label: rotulo.to_string(), doc: antes, selection: selecao });
-        st.revision += 1;
-    }
-    Ok(())
-}
-
-fn sobrescrever(app: &mut CadApp, quadro: Handle, circuito: &str, s: ele::Sobrescrita) -> Result<(), String> {
-    editar_desenho(app, "Sobrescrever circuito", |doc| ele::editar::definir_sobrescrita(doc, quadro, circuito, s.secao, s.disjuntor))
-}
-
-fn sobrescrever_json(app: &mut CadApp, params: &Value) -> Result<Value, String> {
-    let q = {
-        let st = app.session.state().map_err(|e| e.to_string())?;
-        achar_quadro(&ele::analisar(&st.doc), params.get("quadro"))?
-    };
-    let circuito = params
-        .get("circuito")
-        .and_then(|v| v.as_str().map(str::to_string).or_else(|| v.as_u64().map(|n| n.to_string())))
-        .ok_or("`circuito` é obrigatório")?;
-    let num = |k: &str| params.get(k).and_then(Value::as_f64);
-    if let Some(s) = num("secao")
-        && !SECOES.iter().any(|x| (x - s).abs() < 1e-6)
-    {
-        return Err(format!("seção {s} mm² fora da tabela"));
-    }
-    sobrescrever(app, q, &circuito, ele::Sobrescrita { secao: num("secao"), disjuntor: num("disjuntor") })?;
-    Ok(json!({ "quadro": q.hex(), "circuito": circuito }))
-}
-
-fn setup_json(params: &Value) -> Result<Value, String> {
-    let mut v = serde_json::to_value(setup()).map_err(|e| e.to_string())?;
-    if let (Some(atual), Some(novo)) = (v.as_object_mut(), params.as_object())
-        && !novo.is_empty()
-    {
-        for (k, valor) in novo {
-            atual.insert(k.clone(), valor.clone());
-        }
-        definir_setup(serde_json::from_value(v).map_err(|e| e.to_string())?);
-        v = serde_json::to_value(setup()).map_err(|e| e.to_string())?;
-    }
-    Ok(v)
+/// A tabela de Rotear fiação age pelo comando do motor, como a linha de comando faria.
+fn sobrescrever(app: &mut CadApp, quadro: Handle, circuito: &str, s: ele::Sobrescrita) -> Result<Value, String> {
+    app.run("eletrica.sobrescrever", json!({ "quadro": quadro.hex(), "circuito": circuito, "secao": s.secao, "disjuntor": s.disjuntor }))
 }
 
 fn pequeno(texto: impl Into<String>, cor: Color32) -> RichText {
@@ -320,6 +243,16 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
                 .clicked()
             {
                 comando = Some("ui.eletrica.rotear");
+            }
+            if ferramenta(
+                ui,
+                "Ajustar fiação",
+                tem_desenho,
+                "Desenha as marcas de fiação (fase, neutro, retorno, proteção) sobre os eletrodutos (ELEFIACAO)",
+            )
+            .clicked()
+            {
+                comando = Some("elefiacao");
             }
         });
     });

@@ -11,7 +11,7 @@ workspace = true
 [dependencies]
 cadcraft-doc = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 
 [dev-dependencies]
 cadcraft-geom = { workspace = true }
-serde_json = { workspace = true }

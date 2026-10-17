@@ -5,8 +5,15 @@
 //! ELECOMANDO (Comandos e luminárias): selecione o interruptor e depois as luminárias que ele
 //! comanda, até Enter. As luminárias recebem a letra do interruptor e o circuito dele.
 //!
+//! ELEFIACAO (Ajustar fiação): selecione o quadro (Enter: todos) e as marcas de fiação são
+//! (re)desenhadas sobre os eletrodutos.
+//!
 //! Os valores vão para os atributos do bloco quando existem e, senão, para o XDATA do CRAFT ELE
 //! (`cadcraft_ele::editar`). Cada comando é um passo de desfazer.
+//!
+//! Os comandos `eletrica.*` dão em JSON tudo o que a paleta mostra (análise, roteamento,
+//! configurações) e a sobrescrita manual: o motor de cálculo inteiro é acessível sem a interface
+//! (linha de comando, scripts, canal de controle, `cadcraft-cli`, MCP).
 
 use cadcraft_doc::Handle;
 use cadcraft_ele::{self as ele, PontoEletrico, TipoPonto};
@@ -23,7 +30,151 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("elecomando", "Switches and Lamps", run_comando)
             .params("{interruptor: hex, luminarias: [hex], comando?: letter (default: the switch's, or the next free one)} → {comando, circuito, luminarias}")
             .interactive(|_| Ok(Box::new(ComandoM::default()))),
+        CommandSpec::new("elefiacao", "Adjust Wiring", run_fiacao)
+            .params("{quadro?: hex | TAG (default: every board), limpar?: bool (only erase the wiring marks)} → {quadros: [{quadro, tag, trechos, marcas, avisos}]}")
+            .interactive(|_| Ok(Box::new(FiacaoM))),
+        CommandSpec::new("eletrica.analisar", "Electrical Analysis", run_analisar).params("{} → {pontos, circuitos}").noundo(),
+        CommandSpec::new("eletrica.rotear", "Wiring Summary", run_rotear)
+            .params("{quadro?: hex | TAG (default: the first board)} → the routing and sizing summary of the board's circuits")
+            .noundo(),
+        CommandSpec::new("eletrica.sobrescrever", "Override Circuit", run_sobrescrever)
+            .params("{quadro?: hex | TAG, circuito, secao?: mm², disjuntor?: A} (no value: back to the automatic choice) → {quadro, circuito}"),
+        CommandSpec::new("eletrica.setup", "Electrical Settings", run_setup)
+            .params("{} reads; {sistema?, temperaturaAmbiente?, peDireito?, quedaAdmissivel?, ...} writes → the settings")
+            .enabled(always)
+            .noundo(),
     ]
+}
+
+/// O quadro por handle ou TAG; sem nada, o primeiro do desenho.
+fn achar_quadro(a: &ele::Analise, v: Option<&Value>) -> Result<Handle> {
+    let quadros = a.quadros();
+    let achado = match v.and_then(Value::as_str) {
+        None => quadros.first().copied(),
+        Some(t) => quadros
+            .iter()
+            .find(|q| Handle::parse_hex(t) == Some(q.handle))
+            .or_else(|| quadros.iter().find(|q| q.tag.as_deref().is_some_and(|tag| tag.eq_ignore_ascii_case(t))))
+            .copied(),
+    };
+    achado.map(|q| q.handle).ok_or_else(|| erro("nenhum quadro (TIPO_PONTO = QUADRO) com esse nome no desenho"))
+}
+
+fn json_de<T: serde::Serialize>(v: &T) -> Result<Value> {
+    serde_json::to_value(v).map_err(|e| erro(e.to_string()))
+}
+
+fn run_analisar(s: &mut Session, _p: &Value) -> Result<Value> {
+    json_de(&analise(s)?)
+}
+
+fn run_rotear(s: &mut Session, p: &Value) -> Result<Value> {
+    let a = analise(s)?;
+    let q = achar_quadro(&a, p.get("quadro"))?;
+    json_de(&ele::rotear_quadro(s.doc()?, &a, &ele::setup::atual(), q).map_err(erro)?)
+}
+
+fn run_sobrescrever(s: &mut Session, p: &Value) -> Result<Value> {
+    let q = achar_quadro(&analise(s)?, p.get("quadro"))?;
+    let circuito = p
+        .get("circuito")
+        .and_then(|v| v.as_str().map(str::to_string).or_else(|| v.as_u64().map(|n| n.to_string())))
+        .ok_or_else(|| bad("eletrica.sobrescrever", "`circuito` is required"))?;
+    let num = |k: &str| p.get(k).and_then(Value::as_f64).filter(|v| v.is_finite());
+    if let Some(sec) = num("secao")
+        && ele::nbr5410::indice_secao(sec).is_none()
+    {
+        return Err(bad("eletrica.sobrescrever", format!("section {sec} mm² is not in the table")));
+    }
+    ele::editar::definir_sobrescrita(s.doc_mut()?, q, &circuito, num("secao"), num("disjuntor")).map_err(erro)?;
+    Ok(json!({ "quadro": q.hex(), "circuito": circuito }))
+}
+
+fn run_setup(_s: &mut Session, p: &Value) -> Result<Value> {
+    ele::setup::json(p).map_err(|e| bad("eletrica.setup", e))
+}
+
+/// Ajusta a fiação de um quadro: apaga as marcas antigas e desenha as novas.
+fn ajustar(s: &mut Session, q: Handle, limpar: bool) -> Result<Value> {
+    if limpar {
+        let n = ele::fiacao::limpar(s.doc_mut()?, q);
+        return Ok(json!({ "quadro": q.hex(), "apagadas": n }));
+    }
+    let a = analise(s)?;
+    let setup = ele::setup::atual();
+    let f = ele::fiacao::calcular(s.doc()?, &a, &setup, q).map_err(erro)?;
+    let marcas = ele::fiacao::aplicar(s.doc_mut()?, &f, &setup).map_err(erro)?;
+    Ok(json!({ "quadro": q.hex(), "tag": f.tag, "trechos": f.trechos.len(), "marcas": marcas, "avisos": f.avisos }))
+}
+
+fn run_fiacao(s: &mut Session, p: &Value) -> Result<Value> {
+    let a = analise(s)?;
+    let alvos: Vec<Handle> = match p.get("quadro") {
+        None | Some(Value::Null) => a.quadros().iter().map(|q| q.handle).collect(),
+        v => vec![achar_quadro(&a, v)?],
+    };
+    if alvos.is_empty() {
+        return Err(erro("nenhum quadro (TIPO_PONTO = QUADRO) no desenho"));
+    }
+    let limpar = p.get("limpar").and_then(Value::as_bool).unwrap_or(false);
+    let mut quadros = Vec::new();
+    for q in alvos {
+        quadros.push(ajustar(s, q, limpar)?);
+    }
+    Ok(json!({ "quadros": quadros }))
+}
+
+/// ELEFIACAO digitado: um quadro selecionado, ou Enter para todos.
+struct FiacaoM;
+
+impl FiacaoM {
+    fn executar(s: &mut Session, alvos: Vec<Handle>) -> Result<Step> {
+        for q in alvos {
+            match ajustar(s, q, false) {
+                Ok(v) => {
+                    s.echo(format!("Fiação de {}: {} marca(s) em {} trecho(s).", v["tag"].as_str().unwrap_or("?"), v["marcas"], v["trechos"]));
+                    for a in v["avisos"].as_array().into_iter().flatten().filter_map(Value::as_str) {
+                        s.echo(a.to_string());
+                    }
+                }
+                Err(e) => s.echo(e.to_string()),
+            }
+        }
+        Ok(Step::Done)
+    }
+}
+
+impl Interactive for FiacaoM {
+    fn name(&self) -> &'static str {
+        "ELEFIACAO"
+    }
+    fn begin(&mut self, s: &mut Session) -> Result<Step> {
+        s.set_selection(Vec::new());
+        Ok(Step::Continue)
+    }
+    fn prompt(&self, _s: &Session) -> Prompt {
+        Prompt::new("Selecione o quadro", Accept::SELECT).default("Todos")
+    }
+    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        match i {
+            Input::Cancel => Ok(Step::Done),
+            Input::Enter => {
+                let todos = analise(s)?.quadros().iter().map(|q| q.handle).collect();
+                Self::executar(s, todos)
+            }
+            Input::Pick(hs) => {
+                s.set_selection(Vec::new());
+                match hs.into_iter().find(|h| quadro_valido(s, *h).ok().flatten().is_some()) {
+                    Some(q) => Self::executar(s, vec![q]),
+                    None => {
+                        s.echo("Selecione um bloco de quadro (TIPO_PONTO = QUADRO).");
+                        Ok(Step::Continue)
+                    }
+                }
+            }
+            _ => Ok(Step::Continue),
+        }
+    }
 }
 
 fn erro(m: impl Into<String>) -> EngineError {

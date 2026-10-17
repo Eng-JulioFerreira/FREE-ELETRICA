@@ -498,3 +498,101 @@ fn atributo_constante_vem_da_definicao_do_bloco() {
     assert_eq!(a.pontos[0].tipo, TipoPonto::Tomada);
     assert!(a.pontos[0].tipo_informado);
 }
+
+// ------------------------------------------------------------------ fiação
+
+fn trecho(f: &fiacao::Fiacao, a: (f64, f64), b: (f64, f64)) -> &fiacao::Trecho {
+    let igual = |p: [f64; 2], q: (f64, f64)| perto(p[0], q.0, 1e-6) && perto(p[1], q.1, 1e-6);
+    f.trechos.iter().find(|t| (igual(t.a, a) && igual(t.b, b)) || (igual(t.a, b) && igual(t.b, a))).unwrap_or_else(|| panic!("trecho {a:?}-{b:?}"))
+}
+
+fn circ<'a>(t: &'a fiacao::Trecho, id: &str) -> &'a fiacao::Condutores {
+    t.circuitos.iter().find(|k| k.circuito == id).unwrap_or_else(|| panic!("circuito {id}"))
+}
+
+#[test]
+fn fiacao_por_trecho() {
+    let d = planta();
+    let a = analisar(&d);
+    let f = fiacao::calcular(&d, &a, &Setup::default(), quadro(&d)).unwrap();
+    assert_eq!(f.trechos.len(), 6, "{:#?}", f.trechos);
+    assert!(f.avisos.is_empty(), "{:?}", f.avisos);
+    // Do quadro até a TUG em (2,0): a iluminação (fase do interruptor, neutro e proteção das
+    // luzes) e a TUG (fase, neutro, proteção).
+    let t = trecho(&f, (0.0, 0.0), (2.0, 0.0));
+    let c1 = circ(t, "1");
+    assert_eq!((c1.fases, c1.neutro, c1.protecao, c1.retornos.len()), (1, true, true, 0));
+    let c2 = circ(t, "2");
+    assert_eq!((c2.fases, c2.neutro, c2.protecao, c2.secao), (1, true, true, Some(2.5)));
+    // Descida ao interruptor: fase e o retorno "a".
+    let c1 = circ(trecho(&f, (4.0, 0.0), (4.0, 1.0)), "1");
+    assert_eq!((c1.fases, c1.neutro, c1.protecao), (1, false, false));
+    assert_eq!(c1.retornos.iter().map(String::as_str).collect::<Vec<_>>(), ["a"]);
+    // Até a segunda luz: neutro, proteção e retorno, sem fase.
+    let c1 = circ(trecho(&f, (4.0, 0.0), (8.0, 0.0)), "1");
+    assert_eq!((c1.fases, c1.neutro, c1.protecao, c1.retornos.len()), (0, true, true, 1));
+    // Chuveiro bifásico: duas fases e proteção, sem neutro.
+    let c3 = circ(trecho(&f, (0.0, 0.0), (0.0, -5.0)), "3");
+    assert_eq!((c3.fases, c3.neutro, c3.protecao), (2, false, true));
+    let n = fiacao::contagem(&f);
+    assert_eq!((n["FIO-FASE"], n["FIO-NEUTRO"], n["FIO-RETORNO"], n["FIO-PROTECAO"]), (7, 5, 2, 6));
+}
+
+#[test]
+fn ajustar_fiacao_desenha_e_refaz() {
+    let mut d = planta();
+    let qd = quadro(&d);
+    let setup = Setup::default();
+    let f = fiacao::calcular(&d, &analisar(&d), &setup, qd).unwrap();
+    // 20 marcas, 2 letras de retorno e 7 rótulos de circuito.
+    assert_eq!(fiacao::aplicar(&mut d, &f, &setup).unwrap(), 29);
+    for tipo in fiacao::TipoCondutor::TODOS {
+        assert!(d.blocks.contains_key(tipo.bloco()), "{}", tipo.bloco());
+    }
+    assert!(d.layer(fiacao::CAMADA).is_some());
+    assert_eq!(fiacao::gerados(&d, qd).len(), 29);
+    let textos: Vec<String> = d.model.iter().filter_map(|e| if let EntityKind::Text(t) = &e.kind { Some(t.value.clone()) } else { None }).collect();
+    assert!(textos.contains(&"2 #2,5".to_string()) && textos.contains(&"3 #4".to_string()) && textos.contains(&"a".to_string()), "{textos:?}");
+    // Rodar de novo não duplica: apaga e refaz.
+    let f = fiacao::calcular(&d, &analisar(&d), &setup, qd).unwrap();
+    assert_eq!(fiacao::aplicar(&mut d, &f, &setup).unwrap(), 29);
+    assert_eq!(fiacao::gerados(&d, qd).len(), 29);
+    // As marcas não viram pontos elétricos nem eletrodutos.
+    assert_eq!(analisar(&d).pontos.len(), 8);
+    // Seção omitida sai do rótulo.
+    let omite = Setup { secoes_omitidas: vec![2.5], ..Setup::default() };
+    fiacao::aplicar(&mut d, &f, &omite).unwrap();
+    let textos: Vec<String> = d.model.iter().filter_map(|e| if let EntityKind::Text(t) = &e.kind { Some(t.value.clone()) } else { None }).collect();
+    assert!(textos.contains(&"2".to_string()) && !textos.iter().any(|t| t.contains("#2,5")), "{textos:?}");
+    assert_eq!(fiacao::limpar(&mut d, qd), 29);
+    assert!(fiacao::gerados(&d, qd).is_empty());
+}
+
+#[test]
+fn bloco_de_marca_do_projetista_e_mantido() {
+    let mut d = planta();
+    let mut proprio = Block::new("FIO-FASE");
+    proprio.entities.push(Entity::new(Handle(990), EntityKind::Circle(Circle { center: Vec3::ZERO, radius: 0.02 })));
+    d.blocks.insert("FIO-FASE".into(), Arc::new(proprio));
+    fiacao::garantir_blocos(&mut d, 1.0);
+    assert_eq!(d.blocks["FIO-FASE"].entities.len(), 1);
+    assert_eq!(d.blocks["FIO-NEUTRO"].entities.len(), 2);
+}
+
+#[test]
+fn fiacao_sem_eletroduto_no_quadro_e_erro() {
+    let mut d = metros();
+    inserir(&mut d, "QD", 0.0, 0.0, &[("TIPO_PONTO", "QUADRO")]);
+    inserir(&mut d, "TUG", 3.0, 0.0, &[("TIPO_PONTO", "TUG"), ("POTENCIA", "100VA"), ("CIRCUITO", "1")]);
+    assert!(fiacao::calcular(&d, &analisar(&d), &Setup::default(), quadro(&d)).is_err());
+}
+
+#[test]
+fn setup_global_le_e_grava_por_json() {
+    let antes = setup::atual();
+    let v = setup::json(&serde_json::json!({ "peDireito": 3.1 })).unwrap();
+    assert_eq!(v["peDireito"], 3.1);
+    assert_eq!(setup::atual().pe_direito, 3.1);
+    assert!(setup::json(&serde_json::json!({ "sistema": "inexistente" })).is_err());
+    setup::definir(antes);
+}

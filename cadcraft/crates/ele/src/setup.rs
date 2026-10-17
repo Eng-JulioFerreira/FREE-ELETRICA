@@ -1,9 +1,46 @@
 //! Configurações gerais do projeto (a aba de setup do CRAFT ELE). Delas saem os parâmetros do
 //! dimensionamento e do roteamento: nada disso é digitado como fator solto.
 
+use std::sync::{LazyLock, RwLock};
+
 use serde::{Deserialize, Serialize};
 
 use crate::nbr5410::Config;
+
+/// As configurações em uso no processo. Ficam no motor, e não na interface: os comandos
+/// (linha de comando, scripts, canal de controle, MCP) e a paleta leem a mesma fonte. A
+/// interface só carrega e grava nas preferências do CADCraft.
+static ATUAL: LazyLock<RwLock<Setup>> = LazyLock::new(|| RwLock::new(Setup::default()));
+
+/// As configurações em uso.
+pub fn atual() -> Setup {
+    ATUAL.read().map_or_else(|e| e.into_inner().clone(), |s| s.clone())
+}
+
+/// Troca as configurações em uso (normalizadas).
+pub fn definir(mut s: Setup) {
+    s.normalizar();
+    match ATUAL.write() {
+        Ok(mut g) => *g = s,
+        Err(e) => *e.into_inner() = s,
+    }
+}
+
+/// Lê (`params` vazio) ou grava campos das configurações, como JSON: `{sistema,
+/// temperaturaAmbiente, peDireito...}`. Devolve as configurações em uso.
+pub fn json(params: &serde_json::Value) -> Result<serde_json::Value, String> {
+    let mut v = serde_json::to_value(atual()).map_err(|e| e.to_string())?;
+    if let (Some(campos), Some(novos)) = (v.as_object_mut(), params.as_object())
+        && !novos.is_empty()
+    {
+        for (k, valor) in novos {
+            campos.insert(k.clone(), valor.clone());
+        }
+        definir(serde_json::from_value(v).map_err(|e| e.to_string())?);
+        v = serde_json::to_value(atual()).map_err(|e| e.to_string())?;
+    }
+    Ok(v)
+}
 
 /// Sistema de distribuição da instalação.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
