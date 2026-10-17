@@ -14,9 +14,9 @@ rem Configuracao separada do CADCraft oficial: o layout salvo com o painel Eletr
 rem nao seria entendido pelo CADCraft oficial.
 set "CADCRAFT_CONFIG_DIR=%APPDATA%\CADCraft-CRAFTELE"
 
+rem Abre o executavel compilado mais recente (release ou desenvolvimento).
 set "EXE="
-if exist "%CADCRAFT_RELEASE%" set "EXE=%CADCRAFT_RELEASE%"
-if not defined EXE if exist "%CADCRAFT_DEBUG%" set "EXE=%CADCRAFT_DEBUG%"
+for /f "usebackq delims=" %%i in (`powershell -NoProfile -Command "Get-Item '%CADCRAFT_RELEASE%','%CADCRAFT_DEBUG%' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName"`) do set "EXE=%%i"
 if not defined EXE (
     echo [CRAFT ELE] O CADCraft ainda nao foi compilado. Rode COMPILAR_CADCRAFT.bat primeiro.
     pause

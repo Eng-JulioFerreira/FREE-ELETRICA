@@ -28,9 +28,22 @@ Seguindo o paradigma de **Programação Orientada a Objetos (POO)**, todo ponto 
 | `ALTURA` | Altura de instalação | `0,30`, `30cm`, `2,20 m` | `1,10` |
 | `QUADRO` (opcional) | TAG do quadro que alimenta | `QD-01` | `QD-01` |
 
+### Blocos do template (`templates/CRAFT_ELE_BLOCOS.dxf`)
+
+| Bloco | Símbolo | Inserção | TIPO_PONTO (constante) | Padrões | Visíveis |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `INT-SIM` | Interruptor simples | meio da aresta na parede | `INTERRUPTOR` | 0W, 220V, 1 fase, 1,10 m | COMANDO |
+| `TOM-SIM-BAIXA` | Tomada simples baixa | meio da aresta na parede | `TUG` | 100VA, 220V, 1 fase, 0,30 m | CIRCUITO |
+| `QDG` | Quadro de distribuição | meio da aresta na parede | `QUADRO` | TAG QDG, 380/220V, 3 fases, 1,50 m | TAG |
+| `ILU-OCT` | Ponto de luz, caixa octogonal | centro | `ILUM` | 100VA, 220V, 1 fase, no teto | POTENCIA, COMANDO, CIRCUITO |
+
+Camadas: `ELE-PONTOS`, `ELE-QUADROS`, `ELE-ELETRODUTO-PVC-MEDIA-TETO` (contínua) e
+`ELE-ELETRODUTO-PVC-MEDIA-PISO` (tracejada `ELE_PISO`). Para limpar blocos que não são mais
+usados num desenho, use o comando `PURGE` (ou `PU`).
+
 `ALTURA`, junto com o pé-direito das Configurações, dá o comprimento real do cabo: os
 eletrodutos correm no teto e cada ponto desce até a sua altura. Sem `ALTURA`, valem: TUG/TUE
-0,30 m, interruptor 1,10 m, quadro 1,50 m, iluminação no teto. Um número sem unidade acima de
+0,30 m, interruptor 1,10 m, quadro 1,50 m, iluminação no teto (sem aviso). Um número sem unidade acima de
 10 é lido em centímetros (`30` = 0,30 m).
 
 `CIRCUITO`, `COMANDO` e `QUADRO` não precisam existir no bloco: as ferramentas **Criar

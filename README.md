@@ -26,7 +26,10 @@ do projeto original:
 ## Fluxo de uso
 
 1. O projetista insere os blocos (quadro, pontos de luz, tomadas, interruptores) com os
-   atributos do [padrão de blocos](docs/padrao_blocos_eletricos.md).
+   atributos do [padrão de blocos](docs/padrao_blocos_eletricos.md). O template
+   `templates/CRAFT_ELE_BLOCOS.dxf` já traz os blocos INT-SIM, TOM-SIM-BAIXA, QDG e ILU-OCT e
+   as camadas de eletroduto PVC linha média de teto (contínua) e de piso (tracejada). Ele é
+   gerado por `ferramentas/gerar_template.py` a partir de `templates/fontes/simbolos_referencia.dxf`.
 2. A paleta **Elétrica** já abre com o programa, acima das Tool Sets. Ela só tem ferramentas.
    Se for fechada, volta com `ELETRICA` ou **Janela > Elétrica**.
 3. **Configurações...** (`ELECONFIG`) é a aba de setup, com as premissas globais:
@@ -72,8 +75,9 @@ cobre, PVC, método B1), FCT pela temperatura do projeto (tabela 40), FCA pelo a
 eletrodutos (tabela 42), queda de tensão pelo momento elétrico com ρ do cobre a 70 °C,
 disjuntor com Ib ≤ In ≤ Iz, balanceamento de fases e levantamento de cabo por seção.
 
-Premissas do roteamento: eletrodutos são linhas e polilinhas nas camadas configuradas e correm
-no pé-direito; linhas que se cruzam sem vértice comum não se ligam; uma ponta encostada no meio
+Premissas do roteamento: eletrodutos são linhas e polilinhas nas camadas configuradas; os das
+camadas de piso (padrão `*PISO*`) correm no chão e os demais no pé-direito, e a passagem do piso
+ao teto num mesmo ponto soma um pé-direito; linhas que se cruzam sem vértice comum não se ligam; uma ponta encostada no meio
 de outro trecho liga (derivação). Ponto fora da rede tem o comprimento estimado em L a partir do
 quadro, marcado com `*` na tabela. O FCA conta só os circuitos do quadro roteado.
 
