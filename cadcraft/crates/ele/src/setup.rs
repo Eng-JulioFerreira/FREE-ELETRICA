@@ -390,6 +390,10 @@ pub struct Setup {
     pub eletrodutos: Vec<TamanhoEletroduto>,
     /// Menor diâmetro nominal usado (mm).
     pub eletroduto_minimo: f64,
+    /// Tabela de demanda da concessionária (id em `demanda::tabelas`).
+    pub concessionaria: String,
+    /// Tipo de edificação da tabela de iluminação e tomadas.
+    pub edificacao: String,
 }
 
 impl Default for Setup {
@@ -412,6 +416,8 @@ impl Default for Setup {
             tipo_eletroduto: "PVC rígido roscável, linha média".into(),
             eletrodutos: eletrodutos_padrao(),
             eletroduto_minimo: 20.0,
+            concessionaria: "equatorial-nt001-r07".into(),
+            edificacao: "Residências e edifícios de apartamentos".into(),
         }
     }
 }
@@ -507,6 +513,15 @@ impl Setup {
         if self.tipo_eletroduto.trim().is_empty() {
             self.tipo_eletroduto = Setup::default().tipo_eletroduto;
         }
+        // Concessionária e edificação sempre válidas (as tabelas mudam entre versões).
+        let tabela = crate::demanda::tabela(&self.concessionaria);
+        self.concessionaria = tabela.id.to_string();
+        self.edificacao = tabela.edificacao(&self.edificacao).nome.to_string();
+    }
+
+    /// A tabela de demanda escolhida.
+    pub fn tabela_demanda(&self) -> &'static crate::demanda::TabelaDemanda {
+        crate::demanda::tabela(&self.concessionaria)
     }
 
     /// Cadastra um cabo de telecom. O nome é obrigatório e único.

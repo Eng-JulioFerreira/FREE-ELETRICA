@@ -111,7 +111,7 @@ fn paleta_ferramentas_e_fluxo_completo() {
     // Digitado, abre a paleta acima das Tool Sets, com altura fixa.
     assert!(app.cmdline("ELETRICA").is_none());
     let local = app.ui.docking.layout.location(&Panel::Eletrica).unwrap();
-    assert_eq!(local.size, Some(craft_ui::layout::SplitSize::FixedFirst(330.0)));
+    assert_eq!(local.size, Some(craft_ui::layout::SplitSize::FixedFirst(300.0)));
     assert_eq!(local.anchor, Some(Panel::ToolSets));
 
     let (qd, luz, int) = handles(app);
@@ -166,17 +166,13 @@ fn paleta_ferramentas_e_fluxo_completo() {
 
     h.run_steps(4);
     // A paleta só tem ferramentas.
-    for f in [
-        "Configurações...",
-        "Quadro de cargas...",
-        "Criar circuito",
-        "Comandos e luminárias",
-        "Conferir pontos e circuitos...",
-        "Rotear fiação...",
-        "Ajustar fiação",
-    ] {
+    for f in
+        ["Configurações...", "Quadro de cargas...", "Criar circuito", "Comandos e luminárias", "Conferir pontos e circuitos...", "Ajustar fiação"]
+    {
         h.get_by_label(f);
     }
+    // Rotear fiação vive dentro do Quadro de cargas.
+    assert!(h.query_by_label("Rotear fiação...").is_none());
     assert!(h.query_by_label("Pontos elétricos").is_none());
 
     // Configurações: isolação e diâmetros dos condutores, eletrodutos, e o catálogo de telecom
@@ -191,6 +187,10 @@ fn paleta_ferramentas_e_fluxo_completo() {
     h.get_by_label("Eletrodutos").click();
     h.run_steps(3);
     h.get_by_label("Diâmetro mínimo");
+    h.get_by_label("Demanda").click();
+    h.run_steps(3);
+    h.get_by_label("Concessionária");
+    h.get_by_label("Tipo de edificação");
     h.get_by_label("Telecom").click();
     h.run_steps(3);
     h.get_by_label("Fibra óptica N12");
@@ -200,10 +200,17 @@ fn paleta_ferramentas_e_fluxo_completo() {
     h.run_steps(3);
     assert!(h.query_by_label("Cadastrar novo cabo").is_none());
 
-    // Quadro de cargas: os circuitos do quadro, e Novo circuito cria o próximo número (4) vazio.
+    // Quadro de cargas: o menu central do quadro, já com a fiação roteada e a demanda.
     h.get_by_label("Quadro de cargas...").click();
     h.run_steps(3);
-    h.get_by_label("Potência (VA)");
+    h.get_by_label("PAINEL: QD-01");
+    for coluna in ["Tipo de carga", "Potência (VA)", "FP", "Potência (W)", "Corrente (A)", "Queda (%)", "Isolação", "Fase A (VA)", "Situação"] {
+        assert!(h.query_all_by_label(coluna).count() >= 1, "coluna {coluna}");
+    }
+    h.get_by_label("Demanda");
+    h.get_by_label("Potência demandada");
+    h.get_by_label("Copiar resumo");
+    // Novo circuito cria o próximo número (4) vazio, listado na tabela.
     h.get_by_label("Novo circuito").click();
     h.run_steps(3);
     let cargas = h.state_mut().run("eletrica.cargas", json!({})).unwrap();
@@ -211,17 +218,8 @@ fn paleta_ferramentas_e_fluxo_completo() {
     h.get_by_label("vazio");
     h.state_mut().session.undo().unwrap();
     h.run_steps(3);
-
-    // Rotear fiação: escolher o quadro e rotear mostra a tabela de resumo, sem cores por fase.
-    h.get_by_label("Rotear fiação...").click();
+    // ELEROTEAR abre o mesmo quadro de cargas.
+    assert!(h.state_mut().cmdline("ELEROTEAR").is_none());
     h.run_steps(3);
-    assert!(h.query_by_label("Resumo da fiação: QD-01").is_none());
-    // A isolação do quadro aparece nas duas janelas (Quadro de cargas continua aberta).
-    assert_eq!(h.query_all_by_label("Isolação").count(), 2);
-    h.get_by_label("Rotear").click();
-    h.run_steps(3);
-    h.get_by_label("Resumo da fiação: QD-01");
-    h.get_by_label("Queda (%)");
-    h.get_by_label("Situação");
-    h.get_by_label("Copiar resumo");
+    assert_eq!(h.query_all_by_label("PAINEL: QD-01").count(), 1);
 }

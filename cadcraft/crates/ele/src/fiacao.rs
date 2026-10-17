@@ -95,8 +95,10 @@ pub struct Condutores {
     pub protecao: bool,
     /// Letras dos retornos.
     pub retornos: BTreeSet<String>,
-    /// Seção do circuito (mm²), a escolhida em Rotear fiação.
+    /// Seção do circuito (mm²), a escolhida no quadro de cargas.
     pub secao: Option<f64>,
+    /// Isolação dos condutores do circuito (entra no diâmetro externo).
+    pub isolacao: Isolacao,
 }
 
 impl Condutores {
@@ -142,15 +144,15 @@ impl Trecho {
 }
 
 /// Escolhe o eletroduto do trecho pela ocupação dos condutores.
-fn dimensionar_eletroduto(t: &mut Trecho, setup: &Setup, isolacao: Isolacao, avisos: &mut Vec<String>) {
+fn dimensionar_eletroduto(t: &mut Trecho, setup: &Setup, avisos: &mut Vec<String>) {
     let mut diametros = Vec::new();
     for k in &t.circuitos {
         let Some(secao) = k.secao else {
             avisos.push(format!("circuito {}: sem seção, eletroduto não dimensionado", k.circuito));
             return;
         };
-        let Some(d) = setup.diametro_condutor(secao, isolacao) else {
-            avisos.push(format!("sem diâmetro externo para {} mm² ({}) nas configurações", br(secao), isolacao.codigo()));
+        let Some(d) = setup.diametro_condutor(secao, k.isolacao) else {
+            avisos.push(format!("sem diâmetro externo para {} mm² ({}) nas configurações", br(secao), k.isolacao.codigo()));
             return;
         };
         diametros.extend(std::iter::repeat_n(d, k.marcas().len()));
@@ -201,7 +203,7 @@ pub fn calcular(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle)
     for (ic, linha) in resumo.linhas.iter().enumerate() {
         let c = &linha.circuito;
         let membros: Vec<&PontoEletrico> = analise.pontos.iter().filter(|p| c.pontos.contains(&p.handle)).collect();
-        let novo = || Condutores { circuito: c.id.clone(), secao: linha.escolha.secao, ..Condutores::default() };
+        let novo = || Condutores { circuito: c.id.clone(), secao: linha.escolha.secao, isolacao: linha.isolacao, ..Condutores::default() };
         let mut marcar = |arestas: &[usize], f: &dyn Fn(&mut Condutores)| {
             for e in arestas {
                 f(por_aresta.entry(*e).or_default().entry(ic).or_insert_with(novo));
@@ -271,7 +273,7 @@ pub fn calcular(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle)
         .collect::<Vec<_>>();
     let mut trechos = trechos;
     for t in &mut trechos {
-        dimensionar_eletroduto(t, setup, resumo.isolacao, &mut avisos);
+        dimensionar_eletroduto(t, setup, &mut avisos);
     }
     avisos.sort();
     avisos.dedup();

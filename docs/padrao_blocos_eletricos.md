@@ -95,7 +95,16 @@ Ponto de origem e alimentação dos circuitos terminais. Ficam no XDATA do bloco
 - as descrições do Quadro de cargas (`DESC.<circuito>`), que também guardam os circuitos
   criados ainda sem pontos;
 - a isolação dos condutores do quadro (`ISOLACAO` = `PVC`, `EPR` ou `XLPE`); sem ela, vale a
-  isolação padrão das Configurações.
+  isolação padrão das Configurações;
+- a isolação de um circuito (`ISOL.<circuito>`), que vale sobre a do quadro;
+- o tipo de carga do circuito na demanda (`CARGA.<circuito>` = `ILUM_TUG`, `AQUECIMENTO`,
+  `ELETRODOMESTICOS`, `AR`, `BOMBA`, `OUTROS` ou `RESERVA`); sem ele, TUE conta como
+  aquecimento e o resto como iluminação e TUG;
+- o fator de potência do circuito (`FP.<circuito>`); sem ele, 1,00 em aquecimento e 0,92 no
+  resto.
+
+`TENSAO` do quadro no formato `220/127V` dá as tensões fase-fase e fase-neutro do quadro e dos
+circuitos sem `TENSAO`; sem ela, valem as do sistema das Configurações.
 
 | Atributo | Descrição | Exemplos Válidos |
 | :--- | :--- | :--- |

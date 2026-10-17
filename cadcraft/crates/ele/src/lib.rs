@@ -9,6 +9,7 @@
 #![forbid(unsafe_code)]
 
 pub mod circuito;
+pub mod demanda;
 pub mod editar;
 pub mod fiacao;
 pub mod nbr5410;

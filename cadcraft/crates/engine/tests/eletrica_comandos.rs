@@ -194,3 +194,42 @@ fn quadro_de_cargas_e_isolacao_por_comandos() {
         s.doc().unwrap().model.iter().filter_map(|e| if let EntityKind::Text(t) = &e.kind { Some(t.value.clone()) } else { None }).collect();
     assert!(textos.iter().any(|t| t == "%%c20"), "{textos:?}");
 }
+
+#[test]
+fn propriedades_do_circuito_e_demanda_por_comandos() {
+    let mut s = Session::new();
+    let (d, [qd, luz, _int, tug]) = planta();
+    s.open_drawing(d, "Planta", None);
+    s.execute("elecircuito", &json!({ "quadro": qd.hex(), "pontos": [luz.hex()] })).unwrap();
+    s.execute("elecircuito", &json!({ "quadro": qd.hex(), "pontos": [tug.hex()] })).unwrap();
+    let linha = |s: &mut Session, id: &str| -> Value {
+        let r = s.execute("eletrica.rotear", &json!({})).unwrap();
+        r["linhas"].as_array().unwrap().iter().find(|l| l["circuito"]["id"] == id).unwrap().clone()
+    };
+
+    // Isolação, tipo de carga e FP só do circuito 2, num passo de desfazer.
+    s.execute("eletrica.circuito.definir", &json!({ "circuito": "2", "isolacao": "EPR", "carga": "RESERVA", "fp": 0.85 })).unwrap();
+    let l2 = linha(&mut s, "2");
+    assert_eq!((l2["isolacao"].as_str(), l2["tipoCarga"].as_str(), l2["fp"].as_f64()), (Some("epr"), Some("reserva"), Some(0.85)));
+    assert_eq!(linha(&mut s, "1")["isolacao"], "pvc");
+    // A reserva sai da demanda: só a luz de 100 VA (100 %).
+    let r = s.execute("eletrica.rotear", &json!({})).unwrap();
+    assert_eq!(r["demanda"]["demandada"].as_f64(), Some(100.0));
+    // Só a chave dada muda; null volta ao automático.
+    s.execute("eletrica.circuito.definir", &json!({ "circuito": "2", "carga": null })).unwrap();
+    let l2 = linha(&mut s, "2");
+    assert_eq!((l2["isolacao"].as_str(), l2["tipoCarga"].as_str()), (Some("epr"), Some("iluminacaoTug")));
+    s.undo().unwrap();
+    assert_eq!(linha(&mut s, "2")["tipoCarga"], "reserva");
+
+    // Valores errados não gravam nada.
+    assert!(s.execute("eletrica.circuito.definir", &json!({ "circuito": "2" })).is_err());
+    assert!(s.execute("eletrica.circuito.definir", &json!({ "circuito": "2", "fp": 1.2 })).is_err());
+    assert!(s.execute("eletrica.circuito.definir", &json!({ "circuito": "2", "isolacao": "XLPE", "carga": "nuclear" })).is_err());
+    assert_eq!(linha(&mut s, "2")["isolacao"], "epr");
+
+    // Tabelas de demanda, também sem desenho.
+    let t = s.execute("eletrica.demanda.tabelas", &json!({})).unwrap();
+    assert_eq!(t[0]["id"], "equatorial-nt001-r07");
+    assert!(t[0]["fonte"].as_str().unwrap().contains("NT.00001.EQTL"));
+}

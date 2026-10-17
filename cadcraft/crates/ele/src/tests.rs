@@ -731,6 +731,113 @@ fn quadro_de_cargas_cria_descreve_junta_e_exclui() {
     assert_eq!(a.pontos.iter().filter(|p| p.tipo == TipoPonto::Tomada && p.circuito.is_none()).count(), 2);
 }
 
+// ------------------------------------------------------------------ demanda e propriedades do circuito
+
+#[test]
+fn tabelas_de_demanda_da_equatorial() {
+    use demanda::*;
+    let t = tabela("equatorial-nt001-r07");
+    assert_eq!(t.id, "equatorial-nt001-r07");
+    // Id desconhecido: a primeira tabela.
+    assert_eq!(tabela("inexistente").id, t.id);
+    // Tabela 5, residências: 100 % até 10 kW, 35 % nos 110 seguintes, 25 % acima de 120.
+    let res = t.edificacao("Residências e edifícios de apartamentos").faixas;
+    assert!(perto(por_faixas(res, 8_000.0), 8_000.0, 1e-6));
+    assert!(perto(por_faixas(res, 15_000.0), 11_750.0, 1e-6));
+    assert!(perto(por_faixas(res, 130_000.0), 10_000.0 + 38_500.0 + 2_500.0, 1e-6));
+    // Hotéis: 50 % até 20, 40 % nos 80 seguintes, 30 % acima de 100.
+    assert!(perto(por_faixas(t.edificacao("Hotéis").faixas, 150_000.0), 57_000.0, 1e-6));
+    assert!(perto(por_faixas(res, -5.0), 0.0, 1e-9));
+    // Tabela 4: colunas até e acima de 3,5 kW.
+    assert_eq!((fator_aparelhos(t.aparelhos, 1, false), fator_aparelhos(t.aparelhos, 2, true)), (0.80, 0.65));
+    assert_eq!(
+        (fator_aparelhos(t.aparelhos, 28, true), fator_aparelhos(t.aparelhos, 100, false), fator_aparelhos(t.aparelhos, 100, true)),
+        (0.24, 0.30, 0.16)
+    );
+    // Tabela 10 e bombas.
+    assert_eq!(
+        (fator_quantidade(t.ar_condicionado, 2), fator_quantidade(t.ar_condicionado, 3), fator_quantidade(t.ar_condicionado, 15)),
+        (1.00, 0.88, 0.70)
+    );
+    assert_eq!((fator_quantidade(t.bombas, 1), fator_quantidade(t.bombas, 3)), (1.0, 0.5));
+}
+
+#[test]
+fn demanda_por_tipo_de_carga() {
+    use demanda::*;
+    let t = tabela("equatorial-nt001-r07");
+    let cargas = [
+        Cargas { tipo: TipoCarga::IluminacaoTug, aparelhos: vec![100.0, 160.0, 600.0, 600.0] },
+        Cargas { tipo: TipoCarga::Aquecimento, aparelhos: vec![5_400.0] },
+        Cargas { tipo: TipoCarga::Aquecimento, aparelhos: vec![2_000.0, 2_000.0] },
+        Cargas { tipo: TipoCarga::Reserva, aparelhos: vec![1_000.0] },
+    ];
+    let d = calcular(t, "", &cargas);
+    assert_eq!(d.edificacao, "Residências e edifícios de apartamentos");
+    // Aquecimento: um acima de 3,5 kW (0,80) e dois até 3,5 kW (0,75).
+    let aq = d.linhas.iter().find(|l| l.tipo == TipoCarga::Aquecimento).unwrap();
+    assert!(perto(aq.demandada, 5_400.0 * 0.80 + 4_000.0 * 0.75, 1e-6), "{aq:?}");
+    // A reserva não entra na instalada nem na demandada.
+    assert!(perto(d.instalada, 1_460.0 + 9_400.0, 1e-6));
+    assert!(perto(d.demandada, 1_460.0 + 7_320.0, 1e-6));
+    assert_eq!(TipoCarga::de_codigo("ar"), Some(TipoCarga::ArCondicionado));
+    assert_eq!(TipoCarga::padrao(Natureza::Tue), TipoCarga::Aquecimento);
+}
+
+#[test]
+fn quadro_de_cargas_por_circuito_isolacao_carga_e_fp() {
+    use nbr5410::Isolacao;
+    let mut d = planta();
+    let qd = quadro(&d);
+    let r = rotear_quadro(&d, &analisar(&d), &Setup::default(), qd).unwrap();
+    // Padrões: o chuveiro (TUE) é aquecimento com FP 1; a TUG, iluminação e TUG com 0,92.
+    assert_eq!((r.linhas[2].tipo_carga, r.linhas[2].fp), (demanda::TipoCarga::Aquecimento, 1.0));
+    assert_eq!((r.linhas[1].tipo_carga, r.linhas[1].fp), (demanda::TipoCarga::IluminacaoTug, 0.92));
+    assert!(perto(r.demanda.demandada, 1_460.0 + 5_400.0 * 0.80, 1e-6), "{:?}", r.demanda);
+    assert!(perto(r.corrente_demandada, r.demanda.demandada / (3f64.sqrt() * r.tensao_ff), 1e-9));
+    for l in &r.linhas {
+        assert!(perto(l.carga_fase.iter().sum::<f64>(), l.circuito.potencia, 1e-9));
+    }
+    // Isolação só do chuveiro: XLPE leva a 2,5 mm²; a TUG continua em PVC.
+    editar::definir_isolacao_circuito(&mut d, qd, "3", Some(Isolacao::Xlpe)).unwrap();
+    // A TUG vira reserva e com FP 0,80.
+    editar::definir_tipo_carga(&mut d, qd, "2", Some(demanda::TipoCarga::Reserva)).unwrap();
+    editar::definir_fp(&mut d, qd, "2", Some(0.8)).unwrap();
+    assert!(editar::definir_fp(&mut d, qd, "2", Some(1.5)).is_err());
+    let r = rotear_quadro(&d, &analisar(&d), &Setup::default(), qd).unwrap();
+    assert_eq!((r.linhas[2].isolacao, r.linhas[2].isolacao_propria, r.linhas[2].escolha.secao), (Isolacao::Xlpe, true, Some(2.5)));
+    assert_eq!((r.linhas[1].isolacao, r.linhas[1].isolacao_propria), (Isolacao::Pvc, false));
+    assert!(perto(r.linhas[1].potencia_w(), 960.0, 1e-9));
+    assert!(perto(r.demanda.demandada, 260.0 + 4_320.0, 1e-6), "{:?}", r.demanda);
+    // A fiação usa a isolação de cada circuito: 2,5 mm² em XLPE tem 6,0 mm.
+    let f = fiacao::calcular(&d, &analisar(&d), &Setup::default(), qd).unwrap();
+    assert_eq!(circ(trecho(&f, (0.0, 0.0), (0.0, -5.0)), "3").isolacao, Isolacao::Xlpe);
+    // Excluir o circuito apaga as propriedades dele.
+    editar::excluir_circuito(&mut d, qd, "2").unwrap();
+    assert!(!quadro::propriedades(analisar(&d).ponto(qd).unwrap()).contains_key("2"));
+}
+
+#[test]
+fn tensoes_do_quadro_pelo_atributo() {
+    let mut d = metros();
+    inserir(&mut d, "QD", 0.0, 0.0, &[("TIPO_PONTO", "QUADRO"), ("TENSAO", "220/127V"), ("NUMERO_FASES", "2")]);
+    // TUG sem TENSAO: usa a fase-neutro do quadro.
+    inserir(&mut d, "TUG", 3.0, 0.0, &[("TIPO_PONTO", "TUG"), ("POTENCIA", "1270VA"), ("CIRCUITO", "1")]);
+    let r = rotear_quadro(&d, &analisar(&d), &Setup::default(), quadro(&d)).unwrap();
+    assert_eq!((r.tensao_fn, r.tensao_ff), (127.0, 220.0));
+    assert_eq!(r.linhas[0].tensao, 127.0);
+    assert!(perto(r.linhas[0].escolha.ib, 10.0, 1e-9));
+    // Bifásico: corrente por fase = S / (2 × fase-neutro).
+    assert!(perto(r.corrente_instalada, 1270.0 / 254.0, 1e-9));
+}
+
+#[test]
+fn setup_normaliza_a_concessionaria() {
+    let mut s = Setup { concessionaria: "nenhuma".into(), edificacao: "hotéis".into(), ..Setup::default() };
+    s.normalizar();
+    assert_eq!((s.concessionaria.as_str(), s.edificacao.as_str()), ("equatorial-nt001-r07", "Hotéis"));
+}
+
 #[test]
 fn alvo_do_proximo_elecircuito() {
     circuito::definir_alvo(Some((Handle(5), "3".into())));
