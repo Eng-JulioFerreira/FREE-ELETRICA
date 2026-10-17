@@ -6,6 +6,8 @@
 use cadcraft_doc::{Drawing, EntityKind, Handle, Insert, RawTag};
 use serde::Serialize;
 
+use crate::demanda::TipoCarga;
+
 /// Atributos que marcam um bloco como ponto elétrico. Um bloco sem nenhum deles (porta, móvel,
 /// carimbo) não entra na análise, mesmo que o nome lembre um ponto elétrico. A primeira tag de
 /// cada lista é a que o CRAFT ELE grava.
@@ -18,6 +20,10 @@ pub const TAGS_COMANDO: &[&str] = &["COMANDO", "CMD"];
 pub const TAGS_ID: &[&str] = &["TAG", "ID", "NOME"];
 pub const TAGS_ALTURA: &[&str] = &["ALTURA", "ALTURA_INSTALACAO", "H_INSTALACAO", "ALT"];
 pub const TAGS_QUADRO: &[&str] = &["QUADRO"];
+/// Fator de potência do ponto: "0,92", "0.92" ou "92%".
+pub const TAGS_FP: &[&str] = &["FP", "FATOR_POTENCIA", "FATOR_DE_POTENCIA", "COS_FI"];
+/// Tipo de carga na demanda: ILUM_TUG, AQUECIMENTO, ELETRODOMESTICOS, AR, BOMBA, OUTROS, RESERVA.
+pub const TAGS_CARGA: &[&str] = &["TIPO_CARGA", "CARGA"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -84,7 +90,7 @@ impl TipoPonto {
 }
 
 /// Maiúsculas, sem acentos, e tudo o que não é letra ou dígito vira espaço.
-fn normalizar(s: &str) -> String {
+pub(crate) fn normalizar(s: &str) -> String {
     s.chars()
         .map(|c| match c.to_uppercase().next().unwrap_or(c) {
             'Á' | 'À' | 'Â' | 'Ã' | 'Ä' => 'A',
@@ -126,6 +132,10 @@ pub struct PontoEletrico {
     /// A referência ao quadro como estava escrita, antes de ser resolvida.
     #[serde(skip)]
     pub quadro_ref: Option<String>,
+    /// Fator de potência do atributo FP. `None`: o padrão do tipo de carga.
+    pub fp: Option<f64>,
+    /// Tipo de carga do atributo TIPO_CARGA. `None`: o padrão do tipo do ponto.
+    pub tipo_carga: Option<TipoCarga>,
     /// Todos os atributos lidos, na ordem do bloco.
     pub atributos: Vec<(String, String)>,
     /// Valores que o CRAFT ELE gravou no XDATA do bloco (valem quando o bloco não tem o atributo).
@@ -207,9 +217,22 @@ impl PontoEletrico {
             altura: valor(TAGS_ALTURA).and_then(altura_m),
             quadro: None,
             quadro_ref: texto(TAGS_QUADRO),
+            fp: valor(TAGS_FP).and_then(fator_potencia),
+            tipo_carga: valor(TAGS_CARGA).and_then(TipoCarga::de_texto),
             atributos,
             extras,
         })
+    }
+
+    /// O tipo de carga na demanda: o do atributo TIPO_CARGA ou, sem ele, TUE em aquecimento e o
+    /// resto em iluminação e TUG.
+    pub fn tipo_carga_efetivo(&self) -> TipoCarga {
+        self.tipo_carga.unwrap_or(if self.tipo == TipoPonto::TomadaEspecifica { TipoCarga::Aquecimento } else { TipoCarga::IluminacaoTug })
+    }
+
+    /// O fator de potência: o do atributo FP ou o padrão do tipo de carga.
+    pub fn fp_efetivo(&self) -> f64 {
+        self.fp.unwrap_or_else(|| self.tipo_carga_efetivo().fp_padrao())
     }
 
     /// Problemas de preenchimento segundo o padrão de blocos.
@@ -243,6 +266,16 @@ impl PontoEletrico {
                 }
                 if self.circuito.is_none() {
                     v.push("ponto sem CIRCUITO".into());
+                }
+                if let Some(t) = self.valor(TAGS_FP)
+                    && self.fp.is_none()
+                {
+                    v.push(format!("FP \"{t}\" inválido: use um valor de 0 a 1 (ex.: 0,92)"));
+                }
+                if let Some(t) = self.valor(TAGS_CARGA)
+                    && self.tipo_carga.is_none()
+                {
+                    v.push(format!("TIPO_CARGA \"{t}\" não reconhecido: use ILUM_TUG, AQUECIMENTO, ELETRODOMESTICOS, AR, BOMBA, OUTROS ou RESERVA"));
                 }
             }
         }
@@ -311,6 +344,14 @@ pub fn altura_padrao(tipo: TipoPonto, pe_direito: Option<f64>) -> f64 {
         TipoPonto::Quadro => 1.5,
         TipoPonto::Tomada | TipoPonto::TomadaEspecifica | TipoPonto::Outro => 0.3,
     }
+}
+
+/// Fator de potência: "0,92", "0.92", "92%" ou "92" (de 10 a 100 é porcentagem). Fora de
+/// (0, 1] não vale: "1,5" é erro, não 1,5 %.
+pub fn fator_potencia(texto: &str) -> Option<f64> {
+    let n = numero(texto)?;
+    let f = if texto.contains('%') || (10.0..=100.0).contains(&n) { n / 100.0 } else { n };
+    (f > 0.0 && f <= 1.0).then_some(f)
 }
 
 /// Altura em metros: "0,30", "1.10 m", "30cm", "300 mm". Sem unidade e acima de 10, é cm.

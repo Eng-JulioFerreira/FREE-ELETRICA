@@ -54,7 +54,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("eletrica.circuito.juntar", "Merge Circuits", run_juntar)
             .params("{quadro?: hex | TAG, de, para} (the points of `de` go to `para`) → {quadro, de, para, pontos}"),
         CommandSpec::new("eletrica.circuito.definir", "Circuit Properties", run_definir).params(
-            "{quadro?: hex | TAG, circuito, isolacao?: \"PVC\" | \"EPR\" | \"XLPE\" | null (null: the board's), carga?: \"ILUM_TUG\" | \"AQUECIMENTO\" | \"ELETRODOMESTICOS\" | \"AR\" | \"BOMBA\" | \"OUTROS\" | \"RESERVA\" | null (null: automatic), fp?: 0..1 | null} (only the keys given change) → {quadro, circuito}",
+            "{quadro?: hex | TAG, circuito, isolacao: \"PVC\" | \"EPR\" | \"XLPE\" | null (null: the board's)} → {quadro, circuito, isolacao}. Load type and power factor come from the block attributes TIPO_CARGA and FP.",
         ),
         CommandSpec::new("eletrica.demanda.tabelas", "Demand Tables", run_tabelas_demanda)
             .params("{} → the utilities' demand tables (id, nome, fonte, edificacoes, aparelhos, arCondicionado, bombas)")
@@ -185,45 +185,19 @@ fn run_definir(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "eletrica.circuito.definir";
     let q = achar_quadro(&analise(s)?, p.get("quadro"))?;
     let id = texto(CMD, p, "circuito")?;
-    if !["isolacao", "carga", "fp"].iter().any(|k| p.get(k).is_some()) {
-        return Err(bad(CMD, "give `isolacao`, `carga` or `fp`"));
+    // Tipo de carga e FP são atributos dos blocos (TIPO_CARGA e FP), não do circuito.
+    if p.get("carga").is_some() || p.get("fp").is_some() {
+        return Err(bad(CMD, "load type and power factor are block attributes (TIPO_CARGA, FP): edit the points"));
     }
-    // Lê e confere tudo antes de gravar: um valor errado não deixa meia alteração.
-    let codigo = |k: &str| match p.get(k) {
-        None => Ok(None),
-        Some(Value::Null) => Ok(Some(None)),
-        Some(v) => v.as_str().map(|t| Some(Some(t.to_string()))).ok_or_else(|| bad(CMD, format!("`{k}` must be text or null"))),
-    };
-    let isolacao = match codigo("isolacao")? {
-        Some(Some(t)) => {
-            Some(Some(ele::nbr5410::Isolacao::de_codigo(&t).ok_or_else(|| bad(CMD, "`isolacao` must be \"PVC\", \"EPR\" or \"XLPE\""))?))
-        }
-        Some(None) => Some(None),
-        None => None,
-    };
-    let carga = match codigo("carga")? {
-        Some(Some(t)) => Some(Some(ele::demanda::TipoCarga::de_codigo(&t).ok_or_else(|| bad(CMD, format!("unknown load type `{t}`")))?)),
-        Some(None) => Some(None),
-        None => None,
-    };
-    let fp = match p.get("fp") {
-        None => None,
-        Some(Value::Null) => Some(None),
+    let isolacao = match p.get("isolacao") {
+        None => return Err(bad(CMD, "give `isolacao`")),
+        Some(Value::Null) => None,
         Some(v) => {
-            Some(Some(v.as_f64().filter(|f| f.is_finite() && *f > 0.0 && *f <= 1.0).ok_or_else(|| bad(CMD, "`fp` must be a number in (0, 1]"))?))
+            Some(v.as_str().and_then(ele::nbr5410::Isolacao::de_codigo).ok_or_else(|| bad(CMD, "`isolacao` must be \"PVC\", \"EPR\" or \"XLPE\""))?)
         }
     };
-    let doc = s.doc_mut()?;
-    if let Some(i) = isolacao {
-        ele::editar::definir_isolacao_circuito(doc, q, &id, i).map_err(erro)?;
-    }
-    if let Some(c) = carga {
-        ele::editar::definir_tipo_carga(doc, q, &id, c).map_err(erro)?;
-    }
-    if let Some(f) = fp {
-        ele::editar::definir_fp(doc, q, &id, f).map_err(erro)?;
-    }
-    Ok(json!({ "quadro": q.hex(), "circuito": id }))
+    ele::editar::definir_isolacao_circuito(s.doc_mut()?, q, &id, isolacao).map_err(erro)?;
+    Ok(json!({ "quadro": q.hex(), "circuito": id, "isolacao": isolacao.map(|i| i.codigo()) }))
 }
 
 fn run_tabelas_demanda(_s: &mut Session, _p: &Value) -> Result<Value> {

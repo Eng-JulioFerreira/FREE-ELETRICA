@@ -41,6 +41,36 @@ pub const CAMADA: &str = "ELE-FIACAO";
 /// Chave do XDATA que marca o que Ajustar fiação gerou: `FIACAO=<handle do quadro>`.
 pub const CHAVE: &str = "FIACAO";
 
+/// XDATA das linhas dos blocos de marca criados pelo CRAFT ELE: `FIACAO_BLOCO=<versão>`. Um
+/// bloco de versão anterior é trocado pelo desenho atual; um sem a marca (redesenhado pelo
+/// projetista) fica.
+const CHAVE_BLOCO: &str = "FIACAO_BLOCO";
+const VERSAO_BLOCOS: &str = "2";
+
+/// O bloco no desenho é um desenho padrão de versão anterior do CRAFT ELE.
+fn bloco_padrao_antigo(b: &Block, tipo: TipoCondutor, m: f64) -> bool {
+    let versoes: Vec<String> =
+        b.entities.iter().filter_map(|e| xdata::ler(&e.common.xdata).into_iter().find(|(k, _)| k == CHAVE_BLOCO).map(|(_, v)| v)).collect();
+    if !versoes.is_empty() {
+        return versoes.iter().any(|v| v != VERSAO_BLOCOS);
+    }
+    // Sem marca: os blocos da primeira versão, reconhecidos pela geometria.
+    let linhas: Vec<((f64, f64), (f64, f64))> = b
+        .entities
+        .iter()
+        .filter_map(|e| match &e.kind {
+            EntityKind::Line(l) => Some(((l.a.x * m, l.a.y * m), (l.b.x * m, l.b.y * m))),
+            _ => None,
+        })
+        .collect();
+    let perto = |a: (f64, f64), b: (f64, f64)| (a.0 - b.0).abs() < 1e-6 && (a.1 - b.1).abs() < 1e-6;
+    linhas.len() == b.entities.len()
+        && tipo
+            .tracos_antigos()
+            .iter()
+            .any(|antigo| antigo.len() == linhas.len() && antigo.iter().zip(&linhas).all(|(x, y)| perto(x.0, y.0) && perto(x.1, y.1)))
+}
+
 /// Distância entre marcas no trecho e altura dos textos, em metros.
 const PASSO: f64 = 0.04;
 const ENTRE_CIRCUITOS: f64 = 0.05;
@@ -69,17 +99,31 @@ impl TipoCondutor {
         }
     }
 
-    /// O desenho padrão da marca, em metros, com o eletroduto no eixo x: fase "1" (traço com
-    /// bico no topo), neutro "'" (traço curto acima do eletroduto), retorno "7" (traço com
-    /// bandeira no topo) e proteção "T".
+    /// O desenho padrão da marca, em metros, com o eletroduto no eixo x: fase, traço que
+    /// atravessa o eletroduto; neutro, o traço com uma bandeira para a esquerda no topo;
+    /// retorno, um traço curto só acima do eletroduto; terra (proteção), o traço com uma barra
+    /// no topo, em T.
     fn tracos(self) -> Vec<((f64, f64), (f64, f64))> {
         const H: f64 = 0.05;
         let haste = ((0.0, -H), (0.0, H));
         match self {
-            Self::Fase => vec![haste, ((-0.015, H - 0.015), (0.0, H))],
-            Self::Neutro => vec![((0.0, 0.01), (0.0, H))],
-            Self::Retorno => vec![haste, ((-0.025, H), (0.0, H))],
+            Self::Fase => vec![haste],
+            Self::Neutro => vec![haste, ((-0.02, H), (0.0, H))],
+            Self::Retorno => vec![((0.0, 0.0), (0.0, H * 0.6))],
             Self::Protecao => vec![haste, ((-0.02, H), (0.02, H))],
+        }
+    }
+
+    /// Os desenhos padrão das versões anteriores, para trocar por este quando o bloco no
+    /// desenho ainda é um deles.
+    fn tracos_antigos(self) -> Vec<Vec<((f64, f64), (f64, f64))>> {
+        const H: f64 = 0.05;
+        let haste = ((0.0, -H), (0.0, H));
+        match self {
+            Self::Fase => vec![vec![haste, ((-0.015, H - 0.015), (0.0, H))]],
+            Self::Neutro => vec![vec![((0.0, 0.01), (0.0, H))]],
+            Self::Retorno => vec![vec![haste, ((-0.025, H), (0.0, H))]],
+            Self::Protecao => vec![],
         }
     }
 }
@@ -313,14 +357,19 @@ pub fn limpar(doc: &mut Drawing, quadro: Handle) -> usize {
 pub fn garantir_blocos(doc: &mut Drawing, m: f64) {
     let u = |v: f64| v / m;
     for tipo in TipoCondutor::TODOS {
-        if doc.blocks.contains_key(tipo.bloco()) {
+        if let Some(b) = doc.blocks.get(tipo.bloco())
+            && !bloco_padrao_antigo(b, tipo, m)
+        {
+            // O desenho atual, ou um bloco redesenhado pelo projetista: fica.
             continue;
         }
         let mut b = Block::new(tipo.bloco());
         for (a, c) in tipo.tracos() {
             let h = doc.new_handle();
             let linha = Line { a: Vec3::new(u(a.0), u(a.1), 0.0), b: Vec3::new(u(c.0), u(c.1), 0.0) };
-            b.entities.push(Entity::new(h, EntityKind::Line(linha)));
+            let mut e = Entity::new(h, EntityKind::Line(linha));
+            xdata::gravar(&mut e.common.xdata, CHAVE_BLOCO, Some(VERSAO_BLOCOS));
+            b.entities.push(e);
         }
         doc.blocks.insert(tipo.bloco().to_string(), Arc::new(b));
     }

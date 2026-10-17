@@ -5,10 +5,9 @@
 
 use cadcraft_doc::{Drawing, EntityKind, Handle};
 
-use crate::demanda::TipoCarga;
 use crate::nbr5410::Isolacao;
 use crate::ponto::{TAGS_CIRCUITO, TAGS_COMANDO, TAGS_QUADRO, ler_ponto};
-use crate::quadro::{CHAVE_CARGA, CHAVE_DESCRICAO, CHAVE_DISJUNTOR, CHAVE_FP, CHAVE_ISOLACAO, CHAVE_ISOLACAO_CIRCUITO, CHAVE_SECAO};
+use crate::quadro::{CHAVE_DESCRICAO, CHAVE_DISJUNTOR, CHAVE_ISOLACAO, CHAVE_ISOLACAO_CIRCUITO, CHAVE_SECAO};
 use crate::xdata;
 
 /// Grava (ou apaga) uma chave do XDATA do CRAFT ELE num bloco.
@@ -35,7 +34,7 @@ fn pontos_do_circuito(doc: &Drawing, quadro: Handle, circuito: &str) -> Vec<Hand
 /// Apaga do quadro as escolhas e a descrição de um circuito.
 fn esquecer_circuito(doc: &mut Drawing, quadro: Handle, circuito: &str) -> Result<(), String> {
     let id = circuito.trim().to_uppercase();
-    for prefixo in [CHAVE_SECAO, CHAVE_DISJUNTOR, CHAVE_DESCRICAO, CHAVE_ISOLACAO_CIRCUITO, CHAVE_CARGA, CHAVE_FP] {
+    for prefixo in [CHAVE_SECAO, CHAVE_DISJUNTOR, CHAVE_DESCRICAO, CHAVE_ISOLACAO_CIRCUITO] {
         gravar_xdata(doc, quadro, &format!("{prefixo}{id}"), None)?;
     }
     Ok(())
@@ -52,21 +51,6 @@ fn chave_do_circuito(prefixo: &str, circuito: &str) -> Result<String, String> {
 /// Isolação dos condutores de um circuito; `None` volta à do quadro.
 pub fn definir_isolacao_circuito(doc: &mut Drawing, quadro: Handle, circuito: &str, isolacao: Option<Isolacao>) -> Result<(), String> {
     gravar_xdata(doc, quadro, &chave_do_circuito(CHAVE_ISOLACAO_CIRCUITO, circuito)?, isolacao.map(Isolacao::codigo))
-}
-
-/// Tipo de carga de um circuito no cálculo de demanda; `None` volta ao automático.
-pub fn definir_tipo_carga(doc: &mut Drawing, quadro: Handle, circuito: &str, tipo: Option<TipoCarga>) -> Result<(), String> {
-    gravar_xdata(doc, quadro, &chave_do_circuito(CHAVE_CARGA, circuito)?, tipo.map(TipoCarga::codigo))
-}
-
-/// Fator de potência de um circuito (entre 0 e 1); `None` volta ao do tipo de carga.
-pub fn definir_fp(doc: &mut Drawing, quadro: Handle, circuito: &str, fp: Option<f64>) -> Result<(), String> {
-    if let Some(f) = fp
-        && !(f.is_finite() && f > 0.0 && f <= 1.0)
-    {
-        return Err(format!("fator de potência {f} fora de 0 a 1"));
-    }
-    gravar_xdata(doc, quadro, &chave_do_circuito(CHAVE_FP, circuito)?, fp.map(|f| f.to_string()).as_deref())
 }
 
 /// Isolação dos condutores do quadro; `None` volta à das configurações.

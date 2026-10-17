@@ -27,6 +27,14 @@ Seguindo o paradigma de **Programação Orientada a Objetos (POO)**, todo ponto 
 | `TAG` | Identificador individual | `TUG-01`, `LUM-01` | `INT-01` |
 | `ALTURA` | Altura de instalação | `0,30`, `30cm`, `2,20 m` | `1,10` |
 | `QUADRO` (opcional) | TAG do quadro que alimenta | `QD-01` | `QD-01` |
+| `TIPO_CARGA` (opcional) | Tipo de carga no cálculo de demanda | `ILUM_TUG`, `AQUECIMENTO`, `AR` | (não se aplica) |
+| `FP` (opcional) | Fator de potência | `0,92`, `1`, `85%` | (não se aplica) |
+
+`TIPO_CARGA` aceita `ILUM_TUG`, `AQUECIMENTO`, `ELETRODOMESTICOS`, `AR`, `BOMBA`, `OUTROS` e
+`RESERVA`, e também nomes comuns como "chuveiro", "split" ou "geladeira". Sem ele, a TUE conta
+como aquecimento e o resto como iluminação e TUG. Sem `FP`, vale 1,00 em aquecimento e 0,92
+no resto. O Quadro de cargas mostra o resultado por circuito: os tipos dos pontos e o FP do
+circuito (W / VA).
 
 ### Blocos do template (`templates/CRAFT_ELE_BLOCOS.dxf`)
 
@@ -36,6 +44,9 @@ Seguindo o paradigma de **Programação Orientada a Objetos (POO)**, todo ponto 
 | `TOM-SIM-BAIXA` | Tomada simples baixa | meio da aresta na parede | `TUG` | 100VA, 220V, 1 fase, 0,30 m | CIRCUITO |
 | `QDG` | Quadro de distribuição | meio da aresta na parede | `QUADRO` | TAG QDG, 380/220V, 3 fases, 1,50 m | TAG |
 | `ILU-OCT` | Ponto de luz, caixa octogonal | centro | `ILUM` | 100VA, 220V, 1 fase, no teto | POTENCIA, COMANDO, CIRCUITO |
+
+`TOM-SIM-BAIXA` e `ILU-OCT` trazem também `TIPO_CARGA` = `ILUM_TUG` e `FP` = `0,92`,
+invisíveis.
 
 Camadas: `ELE-PONTOS`, `ELE-QUADROS`, `ELE-ELETRODUTO-PVC-MEDIA-TETO` (contínua) e
 `ELE-ELETRODUTO-PVC-MEDIA-PISO` (tracejada `ELE_PISO`). Para limpar blocos que não são mais
@@ -52,12 +63,20 @@ trecho e agrupadas por circuito:
 - na linha de baixo, centrado sob toda a simbologia, o diâmetro do eletroduto do trecho
   (`Ø20`).
 
-As marcas são os blocos `FIACAO-FASE` (traço com bico, como um "1"), `FIACAO-NEUTRO` (traço
-curto), `FIACAO-RETORNO` (traço com barra para a esquerda, como um "7") e `FIACAO-PROTECAO`
-(traço com barra no topo, como um "T"), na camada `ELE-FIACAO` em cor 7 (preto no fundo
-claro, branco no escuro). Se o desenho não tem esses blocos, eles são criados com esse desenho
-padrão; para usar outro símbolo, redesenhe o bloco no seu template e Ajustar fiação passa a
-usá-lo. Rodar de novo apaga e refaz as marcas do quadro.
+As marcas são blocos na camada `ELE-FIACAO`, em cor 7 (preto no fundo claro, branco no
+escuro):
+
+| Bloco | Condutor | Desenho |
+| :--- | :--- | :--- |
+| `FIACAO-FASE` | Fase | traço que atravessa o eletroduto |
+| `FIACAO-NEUTRO` | Neutro | traço que atravessa, com bandeira para a esquerda no topo |
+| `FIACAO-RETORNO` | Retorno | traço curto só acima do eletroduto |
+| `FIACAO-PROTECAO` | Terra (proteção) | traço que atravessa, com barra no topo (T) |
+
+Se o desenho não tem esses blocos, eles são criados com esse desenho padrão. Blocos padrão de
+versões anteriores do CRAFT ELE são trocados pelo atual. Para usar outro símbolo, redesenhe o
+bloco no seu template: um bloco redesenhado fica como está. Rodar de novo apaga e refaz as
+marcas do quadro.
 
 O diâmetro do eletroduto é o menor tamanho, a partir do mínimo das Configurações, cuja área
 interna comporta os condutores do trecho: ocupação máxima de 53 % com um condutor, 31 % com
@@ -96,12 +115,7 @@ Ponto de origem e alimentação dos circuitos terminais. Ficam no XDATA do bloco
   criados ainda sem pontos;
 - a isolação dos condutores do quadro (`ISOLACAO` = `PVC`, `EPR` ou `XLPE`); sem ela, vale a
   isolação padrão das Configurações;
-- a isolação de um circuito (`ISOL.<circuito>`), que vale sobre a do quadro;
-- o tipo de carga do circuito na demanda (`CARGA.<circuito>` = `ILUM_TUG`, `AQUECIMENTO`,
-  `ELETRODOMESTICOS`, `AR`, `BOMBA`, `OUTROS` ou `RESERVA`); sem ele, TUE conta como
-  aquecimento e o resto como iluminação e TUG;
-- o fator de potência do circuito (`FP.<circuito>`); sem ele, 1,00 em aquecimento e 0,92 no
-  resto.
+- a isolação de um circuito (`ISOL.<circuito>`), que vale sobre a do quadro.
 
 `TENSAO` do quadro no formato `220/127V` dá as tensões fase-fase e fase-neutro do quadro e dos
 circuitos sem `TENSAO`; sem ela, valem as do sistema das Configurações.

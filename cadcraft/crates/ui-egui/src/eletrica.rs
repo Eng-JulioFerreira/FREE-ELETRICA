@@ -67,8 +67,6 @@ struct Cargas {
     quadro: Option<Handle>,
     /// Descrições em edição: (circuito, texto).
     descricoes: Vec<(String, String)>,
-    /// Fatores de potência em edição: (circuito, valor).
-    fps: Vec<(String, f64)>,
     /// Circuito com a exclusão pedida (espera a confirmação).
     excluir: Option<String>,
     nova_descricao: String,
@@ -468,7 +466,6 @@ pub fn janelas(app: &mut CadApp, ctx: &egui::Context) {
                 ui.horizontal(|ui| {
                     if seletor_quadro(ui, "ele-cargas", &analise, &s, &mut c.quadro, &mut acoes) {
                         c.descricoes.clear();
-                        c.fps.clear();
                         c.excluir = None;
                     }
                 });
@@ -599,25 +596,12 @@ fn quadro_de_cargas(
                 *selecionar = Some(k.pontos.clone());
             }
             campo_descricao(ui, c, q, id, &l.descricao, largura(1), acoes);
-            // Tipo de carga (demanda).
-            ui.allocate_ui_with_layout(vec2(largura(2), LINHA), Layout::left_to_right(Align::Center), |ui| {
-                let auto = ele::demanda::TipoCarga::padrao(k.natureza);
-                let texto = if l.tipo_carga_proprio { RichText::new(l.tipo_carga.nome()).strong() } else { RichText::new(l.tipo_carga.nome()) };
-                egui::ComboBox::from_id_salt(("ele-carga", id.as_str())).selected_text(texto).width(largura(2) - 4.0).show_ui(ui, |ui| {
-                    if ui.selectable_label(!l.tipo_carga_proprio, format!("Automático ({})", auto.nome())).clicked() && l.tipo_carga_proprio {
-                        acoes.push(Acao::Rodar("eletrica.circuito.definir", json!({ "quadro": q.hex(), "circuito": id, "carga": null })));
-                    }
-                    for tipo in ele::demanda::TipoCarga::TODOS {
-                        if ui.selectable_label(l.tipo_carga_proprio && l.tipo_carga == tipo, tipo.nome()).clicked() {
-                            acoes
-                                .push(Acao::Rodar("eletrica.circuito.definir", json!({ "quadro": q.hex(), "circuito": id, "carga": tipo.codigo() })));
-                        }
-                    }
-                });
-            });
+            // Tipo de carga e FP: o resultado dos atributos TIPO_CARGA e FP dos blocos.
+            let tipos = if l.tipos_carga.is_empty() { "-".to_string() } else { l.tipos_texto() };
+            celula(ui, largura(2), tipos.as_str(), false).on_hover_text(format!("{tipos}\n(atributo TIPO_CARGA de cada bloco)"));
             celula(ui, largura(3), numero(fixo(k.potencia, 0)), true);
-            campo_fp(ui, c, q, id, l.fp, largura(4), acoes);
-            celula(ui, largura(5), numero(fixo(l.potencia_w(), 0)), true);
+            celula(ui, largura(4), numero(fixo(l.fp, 2)), true).on_hover_text("W / VA do circuito (atributo FP de cada bloco)");
+            celula(ui, largura(5), numero(fixo(l.potencia_w, 0)), true);
             celula(ui, largura(6), numero(fixo(l.tensao, 0)), true);
             celula(ui, largura(7), numero(fixo(e.ib, 2)), true);
             let queda = e.queda.map_or("-".to_string(), |v| fixo(v, 2));
@@ -698,7 +682,7 @@ fn quadro_de_cargas(
         celula(ui, largura(2), "", false);
         celula(ui, largura(3), numero(fixo(r.potencia_total, 0)).strong(), true);
         celula(ui, largura(4), "", false);
-        celula(ui, largura(5), numero(fixo(r.linhas.iter().map(|l| l.potencia_w()).sum::<f64>(), 0)).strong(), true);
+        celula(ui, largura(5), numero(fixo(r.linhas.iter().map(|l| l.potencia_w).sum::<f64>(), 0)).strong(), true);
         for i in 6..12 {
             celula(ui, largura(i), "", false);
         }
@@ -713,7 +697,7 @@ fn quadro_de_cargas(
         ui.label(pequeno("Nenhum circuito neste quadro: crie um acima ou use Criar circuito na paleta.", t.text_dim));
     }
     ui.label(pequeno(
-        "Em negrito, o que foi escolhido à mão (o resto é automático). Seção e disjuntor: \"Auto\" volta à pré-seleção. Tudo grava no quadro e Ctrl+Z desfaz.",
+        "Tipo de carga e FP vêm dos atributos TIPO_CARGA e FP de cada bloco (sem eles: TUE é aquecimento com FP 1,00, o resto iluminação e TUG com 0,92). Em negrito, o que foi escolhido à mão; seção e disjuntor: \"Auto\" volta à pré-seleção. Ctrl+Z desfaz.",
         t.text_dim,
     ));
     ui.add_space(8.0);
@@ -785,28 +769,6 @@ fn campo_descricao(ui: &mut egui::Ui, c: &mut Cargas, q: Handle, id: &str, grava
         let r = ui.add_sized(vec2(largura, LINHA), egui::TextEdit::singleline(texto).hint_text("sem descrição"));
         if r.lost_focus() && texto.trim() != gravada {
             acoes.push(Acao::Rodar("eletrica.circuito.descrever", json!({ "quadro": q.hex(), "circuito": id, "descricao": texto.trim() })));
-        }
-    }
-}
-
-/// FP editável: grava ao soltar o arrasto ou sair do campo (um passo de desfazer).
-fn campo_fp(ui: &mut egui::Ui, c: &mut Cargas, q: Handle, id: &str, gravado: f64, largura: f32, acoes: &mut Vec<Acao>) {
-    let i = match c.fps.iter().position(|(k, _)| k == id) {
-        Some(i) => i,
-        None => {
-            c.fps.push((id.to_string(), gravado));
-            c.fps.len() - 1
-        }
-    };
-    if let Some((_, valor)) = c.fps.get_mut(i) {
-        let r = ui.add_sized(vec2(largura, LINHA), campo(valor, 0.1..=1.0, 0.01, 2, ""));
-        if !r.has_focus() && !r.dragged() && (*valor - gravado).abs() > 1e-9 {
-            if r.drag_stopped() || r.lost_focus() {
-                acoes.push(Acao::Rodar("eletrica.circuito.definir", json!({ "quadro": q.hex(), "circuito": id, "fp": *valor })));
-            } else {
-                // Mudou por fora (desfazer, outro comando): mostra o gravado.
-                *valor = gravado;
-            }
         }
     }
 }
@@ -1161,7 +1123,7 @@ fn aba_demanda(ui: &mut egui::Ui, t: &Tokens, s: &mut Setup) {
     ui.add_space(4.0);
     ui.label(pequeno(format!("Fonte: {}", tabela.fonte), t.text_dim));
     ui.label(pequeno(
-        "O tipo de carga de cada circuito é escolhido no Quadro de cargas (TUE começa como aquecimento). Outras cargas entram com 100 % e reservas ficam fora. Confira a revisão da norma em vigor na sua área de concessão.",
+        "O tipo de carga de cada ponto vem do atributo TIPO_CARGA do bloco (ILUM_TUG, AQUECIMENTO, ELETRODOMESTICOS, AR, BOMBA, OUTROS, RESERVA; sem ele, TUE é aquecimento). Outras cargas entram com 100 % e reservas ficam fora. Confira a revisão da norma em vigor na sua área de concessão.",
         t.text_dim,
     ));
 }

@@ -595,7 +595,51 @@ fn bloco_de_marca_do_projetista_e_mantido() {
     d.blocks.insert("FIACAO-FASE".into(), Arc::new(proprio));
     fiacao::garantir_blocos(&mut d, 1.0);
     assert_eq!(d.blocks["FIACAO-FASE"].entities.len(), 1);
-    assert_eq!(d.blocks["FIACAO-NEUTRO"].entities.len(), 1);
+    assert!(matches!(d.blocks["FIACAO-FASE"].entities.iter().next().map(|e| &e.kind), Some(EntityKind::Circle(_))));
+    assert_eq!(d.blocks["FIACAO-NEUTRO"].entities.len(), 2);
+}
+
+/// As linhas de um bloco de marca, em metros.
+fn linhas_do_bloco(d: &Drawing, nome: &str) -> Vec<((f64, f64), (f64, f64))> {
+    d.blocks[nome]
+        .entities
+        .iter()
+        .filter_map(|e| if let EntityKind::Line(l) = &e.kind { Some(((l.a.x, l.a.y), (l.b.x, l.b.y))) } else { None })
+        .collect()
+}
+
+#[test]
+fn simbologia_de_fiacao_do_padrao() {
+    let mut d = planta();
+    fiacao::garantir_blocos(&mut d, 1.0);
+    // Fase: só o traço que atravessa o eletroduto.
+    assert_eq!(linhas_do_bloco(&d, "FIACAO-FASE"), [((0.0, -0.05), (0.0, 0.05))]);
+    // Neutro: o traço com bandeira para a esquerda no topo.
+    assert_eq!(linhas_do_bloco(&d, "FIACAO-NEUTRO"), [((0.0, -0.05), (0.0, 0.05)), ((-0.02, 0.05), (0.0, 0.05))]);
+    // Retorno: traço curto só acima do eletroduto.
+    let r = linhas_do_bloco(&d, "FIACAO-RETORNO");
+    assert_eq!(r.len(), 1);
+    assert!(r[0].0.1 >= 0.0 && r[0].1.1 > 0.0 && r[0].1.1 < 0.05, "{r:?}");
+    // Terra: o T.
+    assert_eq!(linhas_do_bloco(&d, "FIACAO-PROTECAO"), [((0.0, -0.05), (0.0, 0.05)), ((-0.02, 0.05), (0.02, 0.05))]);
+}
+
+#[test]
+fn blocos_de_marca_da_versao_anterior_sao_trocados() {
+    let mut d = planta();
+    // A fase da versão anterior: traço com bico ("1").
+    let mut velho = Block::new("FIACAO-FASE");
+    for (a, b) in [((0.0, -0.05), (0.0, 0.05)), ((-0.015, 0.035), (0.0, 0.05))] {
+        velho.entities.push(Entity::new(d.new_handle(), EntityKind::Line(Line { a: Vec3::new(a.0, a.1, 0.0), b: Vec3::new(b.0, b.1, 0.0) })));
+    }
+    d.blocks.insert("FIACAO-FASE".into(), Arc::new(velho));
+    fiacao::garantir_blocos(&mut d, 1.0);
+    assert_eq!(linhas_do_bloco(&d, "FIACAO-FASE"), [((0.0, -0.05), (0.0, 0.05))]);
+    // Rodar de novo não troca o bloco atual.
+    let primeiro = |d: &Drawing| d.blocks["FIACAO-FASE"].entities.iter().next().map(|e| e.handle);
+    let antes = primeiro(&d);
+    fiacao::garantir_blocos(&mut d, 1.0);
+    assert_eq!(primeiro(&d), antes);
 }
 
 #[test]
@@ -781,7 +825,26 @@ fn demanda_por_tipo_de_carga() {
     assert!(perto(d.instalada, 1_460.0 + 9_400.0, 1e-6));
     assert!(perto(d.demandada, 1_460.0 + 7_320.0, 1e-6));
     assert_eq!(TipoCarga::de_codigo("ar"), Some(TipoCarga::ArCondicionado));
-    assert_eq!(TipoCarga::padrao(Natureza::Tue), TipoCarga::Aquecimento);
+}
+
+#[test]
+fn tipo_de_carga_e_fp_vem_dos_atributos() {
+    use demanda::TipoCarga;
+    use ponto::fator_potencia;
+    // TIPO_CARGA: códigos e nomes comuns.
+    assert_eq!(TipoCarga::de_texto("ilum_tug"), Some(TipoCarga::IluminacaoTug));
+    assert_eq!(TipoCarga::de_texto("Chuveiro elétrico"), Some(TipoCarga::Aquecimento));
+    assert_eq!(TipoCarga::de_texto("Split 9000 BTU"), Some(TipoCarga::ArCondicionado));
+    assert_eq!(TipoCarga::de_texto("ar-condicionado"), Some(TipoCarga::ArCondicionado));
+    assert_eq!(TipoCarga::de_texto("Geladeira"), Some(TipoCarga::Eletrodomesticos));
+    assert_eq!(TipoCarga::de_texto("xyz"), None);
+    // FP: decimal ou porcentagem; "1,5" é erro (não 1,5 %).
+    assert_eq!(fator_potencia("0,92"), Some(0.92));
+    assert_eq!(fator_potencia("92%"), Some(0.92));
+    assert_eq!(fator_potencia("85"), Some(0.85));
+    assert_eq!(fator_potencia("1"), Some(1.0));
+    assert_eq!(fator_potencia("1,5"), None);
+    assert_eq!(fator_potencia("0"), None);
 }
 
 #[test]
@@ -790,9 +853,9 @@ fn quadro_de_cargas_por_circuito_isolacao_carga_e_fp() {
     let mut d = planta();
     let qd = quadro(&d);
     let r = rotear_quadro(&d, &analisar(&d), &Setup::default(), qd).unwrap();
-    // Padrões: o chuveiro (TUE) é aquecimento com FP 1; a TUG, iluminação e TUG com 0,92.
-    assert_eq!((r.linhas[2].tipo_carga, r.linhas[2].fp), (demanda::TipoCarga::Aquecimento, 1.0));
-    assert_eq!((r.linhas[1].tipo_carga, r.linhas[1].fp), (demanda::TipoCarga::IluminacaoTug, 0.92));
+    // Sem atributos: o chuveiro (TUE) é aquecimento com FP 1; a TUG, iluminação e TUG com 0,92.
+    assert_eq!((r.linhas[2].tipos_carga.as_slice(), r.linhas[2].fp), (&[demanda::TipoCarga::Aquecimento][..], 1.0));
+    assert_eq!((r.linhas[1].tipos_carga.as_slice(), r.linhas[1].fp), (&[demanda::TipoCarga::IluminacaoTug][..], 0.92));
     assert!(perto(r.demanda.demandada, 1_460.0 + 5_400.0 * 0.80, 1e-6), "{:?}", r.demanda);
     assert!(perto(r.corrente_demandada, r.demanda.demandada / (3f64.sqrt() * r.tensao_ff), 1e-9));
     for l in &r.linhas {
@@ -800,15 +863,24 @@ fn quadro_de_cargas_por_circuito_isolacao_carga_e_fp() {
     }
     // Isolação só do chuveiro: XLPE leva a 2,5 mm²; a TUG continua em PVC.
     editar::definir_isolacao_circuito(&mut d, qd, "3", Some(Isolacao::Xlpe)).unwrap();
-    // A TUG vira reserva e com FP 0,80.
-    editar::definir_tipo_carga(&mut d, qd, "2", Some(demanda::TipoCarga::Reserva)).unwrap();
-    editar::definir_fp(&mut d, qd, "2", Some(0.8)).unwrap();
-    assert!(editar::definir_fp(&mut d, qd, "2", Some(1.5)).is_err());
-    let r = rotear_quadro(&d, &analisar(&d), &Setup::default(), qd).unwrap();
+    // Uma das TUGs vira reserva com FP 80 % pelos atributos do bloco; a outra recebe um FP inválido.
+    let a = analisar(&d);
+    let tugs: Vec<Handle> = a.pontos.iter().filter(|p| p.tipo == TipoPonto::Tomada).map(|p| p.handle).collect();
+    editar::definir(&mut d, tugs[0], ponto::TAGS_CARGA, Some("RESERVA")).unwrap();
+    editar::definir(&mut d, tugs[0], ponto::TAGS_FP, Some("80%")).unwrap();
+    editar::definir(&mut d, tugs[1], ponto::TAGS_FP, Some("1,5")).unwrap();
+    let a = analisar(&d);
+    let avisos: Vec<String> = a.avisos_pontos().into_iter().map(|(_, w)| w).collect();
+    assert!(avisos.iter().any(|w| w.contains("FP \"1,5\" inválido")), "{avisos:?}");
+    let r = rotear_quadro(&d, &a, &Setup::default(), qd).unwrap();
     assert_eq!((r.linhas[2].isolacao, r.linhas[2].isolacao_propria, r.linhas[2].escolha.secao), (Isolacao::Xlpe, true, Some(2.5)));
     assert_eq!((r.linhas[1].isolacao, r.linhas[1].isolacao_propria), (Isolacao::Pvc, false));
-    assert!(perto(r.linhas[1].potencia_w(), 960.0, 1e-9));
-    assert!(perto(r.demanda.demandada, 260.0 + 4_320.0, 1e-6), "{:?}", r.demanda);
+    // O circuito 2 mistura reserva e TUG: W = 600 × 0,80 + 600 × 0,92; FP = W / VA.
+    assert_eq!(r.linhas[1].tipos_carga, [demanda::TipoCarga::Reserva, demanda::TipoCarga::IluminacaoTug]);
+    assert!(perto(r.linhas[1].potencia_w, 1_032.0, 1e-9));
+    assert!(perto(r.linhas[1].fp, 0.86, 1e-9));
+    // A reserva sai da demanda: iluminação e a outra TUG (860 VA) e o chuveiro (5400 × 0,80).
+    assert!(perto(r.demanda.demandada, 860.0 + 4_320.0, 1e-6), "{:?}", r.demanda);
     // A fiação usa a isolação de cada circuito: 2,5 mm² em XLPE tem 6,0 mm.
     let f = fiacao::calcular(&d, &analisar(&d), &Setup::default(), qd).unwrap();
     assert_eq!(circ(trecho(&f, (0.0, 0.0), (0.0, -5.0)), "3").isolacao, Isolacao::Xlpe);

@@ -30,18 +30,12 @@ pub const CHAVE_DESCRICAO: &str = "DESC.";
 pub const CHAVE_ISOLACAO: &str = "ISOLACAO";
 /// Isolação de um circuito: `ISOL.<circuito>`; sem ela vale a do quadro.
 pub const CHAVE_ISOLACAO_CIRCUITO: &str = "ISOL.";
-/// Tipo de carga de um circuito no cálculo de demanda: `CARGA.<circuito>`.
-pub const CHAVE_CARGA: &str = "CARGA.";
-/// Fator de potência de um circuito: `FP.<circuito>`.
-pub const CHAVE_FP: &str = "FP.";
-
-/// O que o projetista definiu para um circuito no quadro de cargas.
+/// O que o projetista definiu para um circuito no quadro de cargas (o tipo de carga e o FP
+/// vêm dos blocos: atributos TIPO_CARGA e FP).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Propriedades {
     pub isolacao: Option<nbr5410::Isolacao>,
-    pub carga: Option<TipoCarga>,
-    pub fp: Option<f64>,
 }
 
 /// As propriedades gravadas no quadro, por circuito (em maiúsculas).
@@ -51,10 +45,6 @@ pub fn propriedades(quadro: &PontoEletrico) -> HashMap<String, Propriedades> {
         let k = k.to_uppercase();
         if let Some(c) = k.strip_prefix(CHAVE_ISOLACAO_CIRCUITO) {
             m.entry(c.to_string()).or_default().isolacao = nbr5410::Isolacao::de_codigo(v);
-        } else if let Some(c) = k.strip_prefix(CHAVE_CARGA) {
-            m.entry(c.to_string()).or_default().carga = TipoCarga::de_codigo(v);
-        } else if let Some(c) = k.strip_prefix(CHAVE_FP) {
-            m.entry(c.to_string()).or_default().fp = crate::ponto::numero(v).filter(|f| *f > 0.0 && *f <= 1.0);
         }
     }
     m
@@ -164,12 +154,12 @@ pub struct Linha {
     pub isolacao: nbr5410::Isolacao,
     /// A isolação foi escolhida para este circuito.
     pub isolacao_propria: bool,
-    /// Tipo de carga no cálculo de demanda.
-    pub tipo_carga: TipoCarga,
-    pub tipo_carga_proprio: bool,
-    /// Fator de potência.
+    /// Tipos de carga dos pontos do circuito (atributo TIPO_CARGA), sem repetição.
+    pub tipos_carga: Vec<TipoCarga>,
+    /// Potência ativa (W): soma da potência de cada ponto vezes o FP dele.
+    pub potencia_w: f64,
+    /// Fator de potência do circuito: W / VA (o dos pontos, quando o circuito não tem potência).
     pub fp: f64,
-    pub fp_proprio: bool,
     /// Tensão do circuito (V).
     pub tensao: f64,
     /// Potência por fase do quadro (VA).
@@ -181,9 +171,9 @@ impl Linha {
         self.fases.iter().map(|f| NOMES_FASES[*f]).collect::<Vec<_>>().join("+")
     }
 
-    /// Potência ativa (W): a aparente vezes o fator de potência.
-    pub fn potencia_w(&self) -> f64 {
-        self.circuito.potencia * self.fp
+    /// Os tipos de carga para a tabela: um nome, ou os nomes juntos quando o circuito mistura.
+    pub fn tipos_texto(&self) -> String {
+        self.tipos_carga.iter().map(|t| t.nome()).collect::<Vec<_>>().join(" + ")
     }
 }
 
@@ -315,7 +305,20 @@ pub fn rotear(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle) -
             let agrupados = r.arestas.iter().filter_map(|e| por_aresta.get(e).copied()).max().unwrap_or(1).max(1);
             let p = props.get(&c.id.to_uppercase()).copied().unwrap_or_default();
             let isolacao_circuito = p.isolacao.unwrap_or(isolacao);
-            let tipo_carga = p.carga.unwrap_or_else(|| TipoCarga::padrao(c.natureza));
+            // Tipo de carga e FP vêm de cada ponto (atributos TIPO_CARGA e FP).
+            let cargas: Vec<&PontoEletrico> = analise.pontos.iter().filter(|p| c.pontos.contains(&p.handle) && p.tipo.e_carga()).collect();
+            let mut tipos_carga: Vec<TipoCarga> = Vec::new();
+            for p in &cargas {
+                if !tipos_carga.contains(&p.tipo_carga_efetivo()) {
+                    tipos_carga.push(p.tipo_carga_efetivo());
+                }
+            }
+            let potencia_w: f64 = cargas.iter().map(|p| p.potencia.unwrap_or(0.0) * p.fp_efetivo()).sum();
+            let fp = if c.potencia > 0.0 {
+                potencia_w / c.potencia
+            } else {
+                cargas.first().map_or(TipoCarga::IluminacaoTug.fp_padrao(), |p| p.fp_efetivo())
+            };
             let cfg = nbr5410::Config {
                 fca: nbr5410::fca_agrupamento(agrupados),
                 fct: isolacao_circuito.fct(setup.temperatura_ambiente),
@@ -347,10 +350,9 @@ pub fn rotear(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle) -
                 cabo: r.percurso * f64::from(condutores) * setup.fator_materiais,
                 isolacao: isolacao_circuito,
                 isolacao_propria: p.isolacao.is_some(),
-                tipo_carga,
-                tipo_carga_proprio: p.carga.is_some(),
-                fp: p.fp.unwrap_or_else(|| tipo_carga.fp_padrao()),
-                fp_proprio: p.fp.is_some(),
+                tipos_carga,
+                potencia_w,
+                fp,
                 tensao: nbr5410::tensao_circuito(c, &cfg).0,
                 carga_fase: [0.0; 3],
             }
@@ -399,18 +401,11 @@ pub fn rotear(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle) -
         avisos.push("nenhum circuito ligado a este quadro: use Criar circuito".into());
     }
 
-    // Demanda: cada ponto de carga é um aparelho do tipo de carga do seu circuito.
+    // Demanda: cada ponto de carga dos circuitos do quadro é um aparelho do seu tipo de carga.
     let cargas: Vec<demanda::Cargas> = linhas
         .iter()
-        .map(|l| demanda::Cargas {
-            tipo: l.tipo_carga,
-            aparelhos: analise
-                .pontos
-                .iter()
-                .filter(|p| l.circuito.pontos.contains(&p.handle) && p.tipo.e_carga())
-                .filter_map(|p| p.potencia)
-                .collect(),
-        })
+        .flat_map(|l| analise.pontos.iter().filter(|p| l.circuito.pontos.contains(&p.handle) && p.tipo.e_carga()))
+        .filter_map(|p| Some(demanda::Cargas { tipo: p.tipo_carga_efetivo(), aparelhos: vec![p.potencia?] }))
         .collect();
     let demanda = demanda::calcular(setup.tabela_demanda(), &setup.edificacao, &cargas);
     let (tensao_fn, tensao_ff) = (cfg_base.tensao_fn, cfg_base.tensao_ff);

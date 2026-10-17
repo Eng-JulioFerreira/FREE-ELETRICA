@@ -142,6 +142,8 @@ bloco("TOM-SIM-BAIXA", tomada, base_tom, [
     ("TENSAO", "220V", "Tensão", "invisivel", None),
     ("NUMERO_FASES", "1", "Número de fases", "invisivel", None),
     ("ALTURA", "0,30", "Altura de instalação (m)", "invisivel", None),
+    ("TIPO_CARGA", "ILUM_TUG", "Tipo de carga (ILUM_TUG, AQUECIMENTO, ELETRODOMESTICOS, AR, BOMBA, OUTROS, RESERVA)", "invisivel", None),
+    ("FP", "0,92", "Fator de potência", "invisivel", None),
 ])
 bloco("QDG", quadro, base_qd, [
     ("TIPO_PONTO", "QUADRO", "Tipo do ponto", "constante", None),
@@ -159,6 +161,8 @@ bloco("ILU-OCT", [("anel", r_int, r_ext)], (0, 0), [
     ("TENSAO", "220V", "Tensão", "invisivel", None),
     ("NUMERO_FASES", "1", "Número de fases", "invisivel", None),
     ("ALTURA", "", "Altura de instalação (m); vazio = teto", "invisivel", None),
+    ("TIPO_CARGA", "ILUM_TUG", "Tipo de carga (ILUM_TUG, AQUECIMENTO, ELETRODOMESTICOS, AR, BOMBA, OUTROS, RESERVA)", "invisivel", None),
+    ("FP", "0,92", "Fator de potência", "invisivel", None),
 ])
 
 # ------------------------------------------------------------------ amostras no modelo

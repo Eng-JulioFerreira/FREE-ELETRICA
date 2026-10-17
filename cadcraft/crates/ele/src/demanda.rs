@@ -2,9 +2,10 @@
 // Copyright (C) 2026 Julio Ferreira. CRAFT ELE: ver LICENSE e AVISO_LEGAL.md na raiz do repositorio.
 //! Cálculo de demanda do quadro pelas tabelas das concessionárias.
 //!
-//! Cada circuito tem um tipo de carga (iluminação e TUG, aquecimento, eletrodomésticos, ar
-//! condicionado, bomba d'água, outras, reserva). A demanda de cada tipo sai da tabela da
-//! concessionária escolhida nas Configurações:
+//! Cada ponto de carga é um aparelho com um tipo de carga (atributo TIPO_CARGA do bloco:
+//! iluminação e TUG, aquecimento, eletrodomésticos, ar condicionado, bomba d'água, outras,
+//! reserva). A demanda de cada tipo sai da tabela da concessionária escolhida nas
+//! Configurações:
 //! - iluminação e TUG: fator por faixa de potência acumulada, conforme o tipo de edificação;
 //! - aquecimento e eletrodomésticos: fator pelo número de aparelhos, em duas colunas (potência
 //!   individual até o limite ou acima dele), cada coluna com a sua contagem;
@@ -19,8 +20,6 @@
 //! Confira sempre a revisão em vigor na sua área de concessão.
 
 use serde::{Deserialize, Serialize};
-
-use crate::circuito::Natureza;
 
 /// O tipo de carga de um circuito no cálculo de demanda.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -56,7 +55,7 @@ impl TipoCarga {
         }
     }
 
-    /// Código gravado no XDATA do quadro (`CARGA.<circuito>`).
+    /// Código do atributo TIPO_CARGA dos blocos.
     pub fn codigo(self) -> &'static str {
         match self {
             Self::IluminacaoTug => "ILUM_TUG",
@@ -74,14 +73,33 @@ impl TipoCarga {
         Self::TODOS.into_iter().find(|t| t.codigo().eq_ignore_ascii_case(s))
     }
 
-    /// O tipo que um circuito recebe sem escolha: iluminação e tomadas de uso geral em
-    /// "Iluminação e TUG", TUE em "Aquecimento" (o caso mais comum, o chuveiro).
-    pub fn padrao(natureza: Natureza) -> TipoCarga {
-        match natureza {
-            Natureza::Tue => Self::Aquecimento,
-            Natureza::SemCarga => Self::Outros,
-            _ => Self::IluminacaoTug,
+    /// O valor do atributo TIPO_CARGA: os códigos e os nomes comuns ("chuveiro", "split",
+    /// "geladeira"...), sem diferenciar maiúsculas e acentos.
+    pub fn de_texto(s: &str) -> Option<TipoCarga> {
+        if let Some(t) = Self::de_codigo(s) {
+            return Some(t);
         }
+        let n = crate::ponto::normalizar(s);
+        let palavras: Vec<&str> = n.split(' ').filter(|p| !p.is_empty()).collect();
+        let contem = |p: &str| n.contains(p);
+        let palavra = |p: &str| palavras.contains(&p);
+        Some(if contem("RESERVA") {
+            Self::Reserva
+        } else if contem("AQUEC") || contem("CHUVEIRO") || contem("TORNEIRA") || contem("FORNO") || contem("FOGAO") || contem("BOILER") {
+            Self::Aquecimento
+        } else if contem("ELETRODOM") || contem("GELADEIRA") || contem("REFRIGERADOR") || contem("LAVA") || contem("MICRO") {
+            Self::Eletrodomesticos
+        } else if palavra("AR") || contem("CONDICIONADO") || contem("SPLIT") {
+            Self::ArCondicionado
+        } else if contem("BOMBA") {
+            Self::Bomba
+        } else if contem("OUTR") {
+            Self::Outros
+        } else if contem("ILUM") || palavra("TUG") || palavra("ILUM TUG") {
+            Self::IluminacaoTug
+        } else {
+            return None;
+        })
     }
 
     /// Fator de potência sugerido: 1,00 em aquecimento resistivo, 0,92 no resto.
