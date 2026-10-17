@@ -41,6 +41,20 @@ Camadas: `ELE-PONTOS`, `ELE-QUADROS`, `ELE-ELETRODUTO-PVC-MEDIA-TETO` (contínua
 `ELE-ELETRODUTO-PVC-MEDIA-PISO` (tracejada `ELE_PISO`). Para limpar blocos que não são mais
 usados num desenho, use o comando `PURGE` (ou `PU`).
 
+### Marcas de fiação (Ajustar fiação)
+
+`ELEFIACAO` desenha, em cada trecho de eletroduto, uma marca por condutor atravessando o trecho,
+agrupadas por circuito: o número do circuito (e a seção, quando não omitida nas Configurações)
+embaixo do grupo e a letra de cada retorno em cima. As marcas são os blocos `FIO-FASE`,
+`FIO-NEUTRO` (com círculo), `FIO-RETORNO` (com bandeira) e `FIO-PROTECAO` (com traço cruzado),
+na camada `ELE-FIACAO`. Se o desenho não tem esses blocos, eles são criados com esse desenho
+padrão; para usar outro símbolo, redesenhe o bloco no seu template e Ajustar fiação passa a
+usá-lo. Rodar de novo apaga e refaz as marcas do quadro.
+
+Condutores por trecho: fase do quadro às tomadas, interruptores e luminárias sem interruptor;
+neutro e proteção do quadro às cargas (sem neutro em circuito de duas fases); retorno de cada
+interruptor às luminárias com a letra dele.
+
 `ALTURA`, junto com o pé-direito das Configurações, dá o comprimento real do cabo: os
 eletrodutos correm no teto e cada ponto desce até a sua altura. Sem `ALTURA`, valem: TUG/TUE
 0,30 m, interruptor 1,10 m, quadro 1,50 m, iluminação no teto (sem aviso). Um número sem unidade acima de

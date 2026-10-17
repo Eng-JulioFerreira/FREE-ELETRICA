@@ -1,4 +1,4 @@
-"""Gera o template do CRAFT ELE (templates/CRAFT_ELE_BLOCOS.dxf) a partir do desenho de
+﻿"""Gera o template do CRAFT ELE (templates/CRAFT_ELE_BLOCOS.dxf) a partir do desenho de
 referência dos símbolos (o Drawing1 exportado do CADCraft).
 
 Blocos, da esquerda para a direita na parede de referência:
@@ -7,7 +7,7 @@ Blocos, da esquerda para a direita na parede de referência:
   QDG            quadro de distribuição    inserção: meio da aresta que encosta na parede
   ILU-OCT        ponto de luz, caixa octogonal (fora da parede)   inserção: centro
 
-Uso: python ferramentas/gerar_template.py <drawing1.dxf> <saida.dxf>
+Uso: python scripts/gerar_template.py <drawing1.dxf> <saida.dxf>
 """
 import math
 import sys
