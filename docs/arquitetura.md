@@ -20,7 +20,7 @@ crates/ui-egui        L5  paleta e janelas: eletrica.rs (só lê e chama comando
 apps/cadcraft             carrega/grava as configurações e abre a paleta na primeira vez
 ```
 
-`cargo xtask layers` confere: `ele` está registrado em `xtask/src/layers.rs` como L2.
+`cargo xtask layers` confere: `free-eletrica` está registrado em `xtask/src/layers.rs` como L2.
 
 ## Pontos de registro no código do CADCraft
 
@@ -38,7 +38,7 @@ aqui é um possível conflito ao atualizar o CADCraft.
 | `crates/ui-egui/src/menus.rs` | item Janela > Elétrica e `eletrica::route(...)` |
 | `crates/ui-egui/src/i18n/uk.tsv`, `pt_br.tsv` | rótulos dos comandos e do painel |
 | `apps/cadcraft/src/main.rs` | carregar/gravar `freeeletrica.setup` e abrir a paleta ao iniciar |
-| `xtask/src/layers.rs` | `ele` na tabela de camadas |
+| `xtask/src/layers.rs` | `free-eletrica` na tabela de camadas |
 
 ## Como sair do fork um dia
 
