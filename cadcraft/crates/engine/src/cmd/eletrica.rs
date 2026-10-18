@@ -17,7 +17,7 @@
 //! configurações) e a sobrescrita manual: o motor de cálculo inteiro é acessível sem a interface
 //! (linha de comando, scripts, canal de controle, `cadcraft-cli`, MCP).
 
-use cadcraft_doc::Handle;
+use cadcraft_doc::{EntityKind, Handle};
 use free_eletrica::{self as ele, PontoEletrico, TipoPonto};
 use serde_json::{Value, json};
 
@@ -35,6 +35,21 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("elefiacao", "Adjust Wiring", run_fiacao)
             .params("{quadro?: hex | TAG (default: every board), limpar?: bool (only erase the wiring marks)} → {quadros: [{quadro, tag, trechos, marcas, avisos}]}")
             .interactive(|_| Ok(Box::new(FiacaoM))),
+        CommandSpec::new("eleeletroduto", "Insert Conduit", run_eletroduto)
+            .params(
+                "{de: hex | [x, y], para: hex | [x, y], piso?: bool, flecha?: number (arc bulge as a fraction of the chord: + left, - right, 0 straight; default 0.15)} → {eletroduto}",
+            )
+            .interactive(|_| Ok(Box::new(EletrodutoM::default()))),
+        CommandSpec::new("eleponto", "Insert Electrical Point", run_ponto)
+            .params("{bloco, pontos: [[x, y]], rotacao?: degrees, valores?: {TAG: value}} → {pontos: [hex]}")
+            .interactive(|_| Ok(Box::new(PontoM::default()))),
+        CommandSpec::new("eletrica.blocos", "Electrical Point Blocks", run_blocos)
+            .params("{} → [{nome, tipo, inseridos, atributos: [{tag, padrao, prompt, constante}]}]")
+            .noundo(),
+        CommandSpec::new("eletrica.ponto.modelo", "Point Template", run_modelo)
+            .params("{bloco, rotacao?: degrees, valores?: {TAG: value}} → the next ELEPONTO inserts this block with these values")
+            .noundo(),
+        CommandSpec::new("eletrica.ponto.excluir", "Delete Electrical Points", run_excluir_pontos).params("{pontos: [hex]} → {excluidos}"),
         CommandSpec::new("eletrica.analisar", "Electrical Analysis", run_analisar).params("{} → {pontos, circuitos}").noundo(),
         CommandSpec::new("eletrica.rotear", "Wiring Summary", run_rotear)
             .params("{quadro?: hex | TAG (default: the first board)} → the routing and sizing summary of the board's circuits")
@@ -543,6 +558,301 @@ impl Interactive for ComandoM {
             Input::Enter => {
                 if let Some(sw) = &self.interruptor {
                     s.echo(format!("{} luminária(s) no comando {}.", self.feitos, sw.letra));
+                }
+                Ok(Step::Done)
+            }
+            _ => Ok(Step::Continue),
+        }
+    }
+}
+
+// ---------------------------------------------------------------- eletroduto em arco
+
+/// Uma ponta do eletroduto no JSON: o handle de um bloco (ou círculo) ou `[x, y]`.
+fn ponta(s: &Session, cmd: &str, p: &Value, k: &str) -> Result<[f64; 2]> {
+    match p.get(k) {
+        Some(Value::String(t)) => {
+            let h = Handle::parse_hex(t).ok_or_else(|| bad(cmd, format!("`{k}` is not a handle")))?;
+            ele::eletroduto::posicao(s.doc()?, h).ok_or_else(|| bad(cmd, format!("`{k}` must be a block or a circle")))
+        }
+        Some(Value::Array(a)) => match (a.first().and_then(Value::as_f64), a.get(1).and_then(Value::as_f64)) {
+            (Some(x), Some(y)) if x.is_finite() && y.is_finite() => Ok([x, y]),
+            _ => Err(bad(cmd, format!("`{k}` must be [x, y]"))),
+        },
+        _ => Err(bad(cmd, format!("`{k}` (handle or [x, y]) is required"))),
+    }
+}
+
+fn run_eletroduto(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "eleeletroduto";
+    let (a, b) = (ponta(s, CMD, p, "de")?, ponta(s, CMD, p, "para")?);
+    let piso = p.get("piso").and_then(Value::as_bool).unwrap_or(false);
+    let flecha = match p.get("flecha") {
+        None | Some(Value::Null) => ele::eletroduto::FLECHA_PADRAO,
+        Some(v) => v.as_f64().filter(|f| f.is_finite()).ok_or_else(|| bad(CMD, "`flecha` must be a number"))?,
+    };
+    let h = ele::eletroduto::inserir(s.doc_mut()?, a, b, piso, flecha).map_err(erro)?;
+    Ok(json!({ "eletroduto": h.hex() }))
+}
+
+/// ELEELETRODUTO digitado: o primeiro objeto, depois os seguintes; cada um é ligado ao anterior
+/// por um eletroduto em arco, até Enter.
+struct EletrodutoM {
+    anterior: Option<[f64; 2]>,
+    piso: bool,
+    /// Lado do arco: 1 à esquerda de quem vai do anterior ao próximo, -1 à direita.
+    lado: f64,
+    flecha: f64,
+    pedindo_flecha: bool,
+    feitos: usize,
+}
+
+impl Default for EletrodutoM {
+    fn default() -> Self {
+        EletrodutoM { anterior: None, piso: false, lado: 1.0, flecha: ele::eletroduto::FLECHA_PADRAO, pedindo_flecha: false, feitos: 0 }
+    }
+}
+
+impl EletrodutoM {
+    fn chaves(&self) -> Vec<&'static str> {
+        let nivel = if self.piso { "Teto" } else { "Piso" };
+        if self.anterior.is_some() { vec![nivel, "Inverter", "Flecha"] } else { vec![nivel, "Flecha"] }
+    }
+}
+
+impl Interactive for EletrodutoM {
+    fn name(&self) -> &'static str {
+        "ELEELETRODUTO"
+    }
+    fn begin(&mut self, s: &mut Session) -> Result<Step> {
+        s.set_selection(Vec::new());
+        Ok(Step::Continue)
+    }
+    fn prompt(&self, _s: &Session) -> Prompt {
+        if self.pedindo_flecha {
+            return Prompt::new("Flecha do arco (fração da corda, de 0 a 0,5)", Accept::TEXT).default(ele::ponto::br(self.flecha));
+        }
+        let onde = if self.piso { "piso" } else { "teto" };
+        let msg = match self.anterior {
+            None => format!("Selecione o primeiro objeto (eletroduto no {onde})"),
+            Some(_) => format!("Selecione o próximo objeto (eletroduto no {onde}; Enter termina)"),
+        };
+        Prompt::new(msg, Accept::SELECT).kw(&self.chaves())
+    }
+    fn preview(&self, _s: &Session, cursor: Vec2) -> Vec<EntityKind> {
+        let Some(a) = self.anterior else { return Vec::new() };
+        let pts: Vec<Vec2> =
+            ele::eletroduto::pontos_do_arco(a, [cursor.x, cursor.y], self.lado * self.flecha, 9).into_iter().map(|p| Vec2::new(p[0], p[1])).collect();
+        if (a[0] - cursor.x).hypot(a[1] - cursor.y) <= 0.0 {
+            return Vec::new();
+        }
+        vec![EntityKind::Spline(cadcraft_doc::geom::Spline::from_fit_points(&pts))]
+    }
+    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        if self.pedindo_flecha {
+            self.pedindo_flecha = false;
+            if let Input::Text(t) | Input::Keyword(t) = &i
+                && let Some(f) = ele::ponto::numero(t)
+            {
+                self.flecha = f.clamp(0.0, ele::eletroduto::FLECHA_MAXIMA);
+            }
+            return Ok(Step::Continue);
+        }
+        match i {
+            Input::Cancel | Input::Enter => {
+                if self.feitos > 0 {
+                    s.echo(format!("{} eletroduto(s) inserido(s).", self.feitos));
+                }
+                Ok(Step::Done)
+            }
+            Input::Keyword(k) | Input::Text(k) => {
+                match k.to_ascii_lowercase().as_str() {
+                    "piso" => self.piso = true,
+                    "teto" => self.piso = false,
+                    "inverter" => self.lado = -self.lado,
+                    "flecha" => self.pedindo_flecha = true,
+                    _ => s.echo("Opção inválida."),
+                }
+                Ok(Step::Continue)
+            }
+            Input::Pick(hs) => {
+                s.set_selection(Vec::new());
+                let Some(p) = hs.iter().find_map(|h| ele::eletroduto::posicao(s.doc().ok()?, *h)) else {
+                    s.echo("Selecione um bloco (ponto, quadro, caixa) ou um círculo.");
+                    return Ok(Step::Continue);
+                };
+                if let Some(a) = self.anterior {
+                    match ele::eletroduto::inserir(s.doc_mut()?, a, p, self.piso, self.lado * self.flecha) {
+                        Ok(_) => self.feitos += 1,
+                        Err(e) => {
+                            s.echo(e);
+                            return Ok(Step::Continue);
+                        }
+                    }
+                }
+                self.anterior = Some(p);
+                Ok(Step::Continue)
+            }
+            _ => Ok(Step::Continue),
+        }
+    }
+}
+
+// ---------------------------------------------------------------- inserir pontos
+
+fn valores_de(cmd: &str, p: &Value) -> Result<Vec<(String, String)>> {
+    match p.get("valores") {
+        None | Some(Value::Null) => Ok(Vec::new()),
+        Some(Value::Object(m)) => m
+            .iter()
+            .map(|(k, v)| match v {
+                Value::String(t) => Ok((k.clone(), t.clone())),
+                Value::Number(n) => Ok((k.clone(), n.to_string())),
+                _ => Err(bad(cmd, format!("value of `{k}` must be text or a number"))),
+            })
+            .collect(),
+        Some(_) => Err(bad(cmd, "`valores` must be an object {TAG: value}")),
+    }
+}
+
+fn rotacao_de(cmd: &str, p: &Value) -> Result<f64> {
+    match p.get("rotacao") {
+        None | Some(Value::Null) => Ok(0.0),
+        Some(v) => v.as_f64().filter(|r| r.is_finite()).ok_or_else(|| bad(cmd, "`rotacao` must be a number (degrees)")),
+    }
+}
+
+fn run_ponto(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "eleponto";
+    let bloco = texto(CMD, p, "bloco")?;
+    let (rotacao, valores) = (rotacao_de(CMD, p)?, valores_de(CMD, p)?);
+    let lista = p.get("pontos").and_then(Value::as_array).ok_or_else(|| bad(CMD, "`pontos` ([[x, y]]) is required"))?;
+    let mut posicoes = Vec::new();
+    for v in lista {
+        match (v.get(0).and_then(Value::as_f64), v.get(1).and_then(Value::as_f64)) {
+            (Some(x), Some(y)) if x.is_finite() && y.is_finite() => posicoes.push([x, y]),
+            _ => return Err(bad(CMD, format!("`pontos` holds [x, y], got {v}"))),
+        }
+    }
+    let mut feitos = Vec::new();
+    for pos in posicoes {
+        feitos.push(ele::biblioteca::inserir(s.doc_mut()?, &bloco, pos, rotacao, &valores).map_err(erro)?.hex());
+    }
+    Ok(json!({ "pontos": feitos }))
+}
+
+fn run_blocos(s: &mut Session, _p: &Value) -> Result<Value> {
+    json_de(&ele::biblioteca::blocos(s.doc()?))
+}
+
+fn run_modelo(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "eletrica.ponto.modelo";
+    let bloco = texto(CMD, p, "bloco")?;
+    let blocos = ele::biblioteca::blocos(s.doc()?);
+    let b =
+        blocos.iter().find(|b| b.nome.eq_ignore_ascii_case(&bloco)).ok_or_else(|| bad(CMD, format!("the drawing has no point block `{bloco}`")))?;
+    let modelo = ele::biblioteca::Modelo { bloco: b.nome.clone(), rotacao: rotacao_de(CMD, p)?, valores: valores_de(CMD, p)? };
+    ele::biblioteca::definir_modelo(Some(modelo.clone()));
+    json_de(&modelo)
+}
+
+fn run_excluir_pontos(s: &mut Session, p: &Value) -> Result<Value> {
+    let hs = handles("eletrica.ponto.excluir", p, "pontos")?;
+    let n = ele::biblioteca::excluir(s.doc_mut()?, &hs).map_err(erro)?;
+    Ok(json!({ "excluidos": n }))
+}
+
+/// ELEPONTO digitado: o bloco (o escolhido na janela Inserir pontos, ou digitado), depois os
+/// pontos de inserção, um por clique, até Enter.
+#[derive(Default)]
+struct PontoM {
+    modelo: Option<ele::biblioteca::Modelo>,
+    pedindo_rotacao: bool,
+    feitos: usize,
+}
+
+impl Interactive for PontoM {
+    fn name(&self) -> &'static str {
+        "ELEPONTO"
+    }
+    fn begin(&mut self, s: &mut Session) -> Result<Step> {
+        let blocos = ele::biblioteca::blocos(s.doc()?);
+        if blocos.is_empty() {
+            s.echo("O desenho não tem blocos de ponto elétrico: insira o template FREE_ELETRICA_BLOCOS.dxf.");
+            return Ok(Step::Done);
+        }
+        self.modelo = ele::biblioteca::modelo().filter(|m| blocos.iter().any(|b| b.nome.eq_ignore_ascii_case(&m.bloco)));
+        Ok(Step::Continue)
+    }
+    fn prompt(&self, s: &Session) -> Prompt {
+        match &self.modelo {
+            None => {
+                let primeiro = s.doc().ok().and_then(|d| ele::biblioteca::blocos(d).into_iter().next()).map(|b| b.nome).unwrap_or_default();
+                Prompt::new("Nome do bloco do ponto", Accept::TEXT).default(primeiro)
+            }
+            Some(_) if self.pedindo_rotacao => Prompt::new("Rotação (graus)", Accept::TEXT),
+            Some(m) => Prompt::new(format!("Ponto de inserção de {} (Enter termina)", m.bloco), Accept::POINT).kw(&["Rotacao"]),
+        }
+    }
+    fn preview(&self, _s: &Session, cursor: Vec2) -> Vec<EntityKind> {
+        let Some(m) = &self.modelo else { return Vec::new() };
+        if self.pedindo_rotacao {
+            return Vec::new();
+        }
+        vec![EntityKind::Insert(cadcraft_doc::Insert {
+            block: m.bloco.clone(),
+            insert: cadcraft_doc::geom::Vec3::new(cursor.x, cursor.y, 0.0),
+            scale: cadcraft_doc::geom::Vec3::new(1.0, 1.0, 1.0),
+            rotation: m.rotacao.to_radians(),
+            attribs: Vec::new(),
+            cols: 1,
+            rows: 1,
+            col_spacing: 0.0,
+            row_spacing: 0.0,
+        })]
+    }
+    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        if matches!(i, Input::Cancel) {
+            return Ok(Step::Done);
+        }
+        let Some(m) = self.modelo.clone() else {
+            let nome = match &i {
+                Input::Text(t) | Input::Keyword(t) if !t.trim().is_empty() => t.trim().to_string(),
+                Input::Enter | Input::Text(_) => ele::biblioteca::blocos(s.doc()?).into_iter().next().map(|b| b.nome).unwrap_or_default(),
+                _ => return Ok(Step::Continue),
+            };
+            match ele::biblioteca::blocos(s.doc()?).into_iter().find(|b| b.nome.eq_ignore_ascii_case(&nome)) {
+                Some(b) => self.modelo = Some(ele::biblioteca::Modelo { bloco: b.nome, ..Default::default() }),
+                None => s.echo(format!("O desenho não tem o bloco de ponto \"{nome}\".")),
+            }
+            return Ok(Step::Continue);
+        };
+        if self.pedindo_rotacao {
+            self.pedindo_rotacao = false;
+            if let Input::Text(t) | Input::Keyword(t) = &i
+                && let Ok(r) = t.trim().replace(',', ".").parse::<f64>()
+                && r.is_finite()
+                && let Some(md) = &mut self.modelo
+            {
+                md.rotacao = r;
+            }
+            return Ok(Step::Continue);
+        }
+        match i {
+            Input::Point(p) => {
+                match ele::biblioteca::inserir(s.doc_mut()?, &m.bloco, [p.x, p.y], m.rotacao, &m.valores) {
+                    Ok(_) => self.feitos += 1,
+                    Err(e) => s.echo(e),
+                }
+                Ok(Step::Continue)
+            }
+            Input::Keyword(k) | Input::Text(k) if k.trim().to_ascii_lowercase().starts_with('r') => {
+                self.pedindo_rotacao = true;
+                Ok(Step::Continue)
+            }
+            Input::Enter => {
+                if self.feitos > 0 {
+                    s.echo(format!("{} ponto(s) {} inserido(s).", self.feitos, m.bloco));
                 }
                 Ok(Step::Done)
             }

@@ -40,7 +40,7 @@ pub const PREFS_KEY: &str = "freeeletrica.setup";
 /// A chave de quando o projeto se chamava CRAFT ELE: lida só quando a nova não existe.
 pub const PREFS_KEY_ANTIGA: &str = "craftele.setup";
 
-static JANELAS: Mutex<Janelas> = Mutex::new(Janelas { setup: None, conferencia: false, cargas: None });
+static JANELAS: Mutex<Janelas> = Mutex::new(Janelas { setup: None, conferencia: false, cargas: None, pontos: None });
 static ABRIR_AO_INICIAR: AtomicBool = AtomicBool::new(false);
 
 fn trava<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -54,6 +54,22 @@ struct Janelas {
     conferencia: bool,
     /// Quadro de cargas (com o roteamento da fiação).
     cargas: Option<Cargas>,
+    /// Inserir pontos.
+    pontos: Option<Pontos>,
+}
+
+/// A janela Inserir pontos: o filtro por tipo, o bloco escolhido e os valores dos atributos.
+#[derive(Clone, Default)]
+struct Pontos {
+    /// `None`: todos os tipos.
+    filtro: Option<TipoPonto>,
+    busca: String,
+    bloco: Option<String>,
+    /// Valores para a inserção: (tag, valor), os padrões do bloco ao escolhê-lo.
+    valores: Vec<(String, String)>,
+    rotacao: f64,
+    /// Ponto com a exclusão pedida, ou `Some(None)` para todos os filtrados (espera a confirmação).
+    excluir: Option<Option<Handle>>,
 }
 
 #[derive(Clone)]
@@ -147,7 +163,7 @@ pub fn open(app: &mut CadApp) -> Result<Value, String> {
             if let Some(raiz) = &app.ui.docking.layout.root
                 && caminho_da_paleta(raiz, &mut caminho)
             {
-                let acao = Action::<Panel>::ResizeSplit { path: caminho, size: SplitSize::FixedFirst(300.0) };
+                let acao = Action::<Panel>::ResizeSplit { path: caminho, size: SplitSize::FixedFirst(380.0) };
                 if let Ok(acao) = serde_json::to_value(acao) {
                     let _ = crate::docking::command(app, false, &json!({ "action": acao }));
                 }
@@ -199,6 +215,13 @@ pub fn route(app: &mut CadApp, id: &str, _params: &Value) -> Option<Result<Value
             Some(Ok(Value::Null))
         }
         // Rotear fiação vive dentro do Quadro de cargas; ELEROTEAR abre o quadro de cargas.
+        "ui.eletrica.pontos" | "elepontos" => {
+            let mut j = trava(&JANELAS);
+            if j.pontos.is_none() {
+                j.pontos = Some(Pontos::default());
+            }
+            Some(Ok(Value::Null))
+        }
         "ui.eletrica.cargas" | "elecargas" | "ui.eletrica.rotear" | "elerotear" => {
             let mut j = trava(&JANELAS);
             if j.cargas.is_none() {
@@ -311,6 +334,22 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
             {
                 comando = Some("ui.eletrica.setup");
             }
+            grupo(ui, &t, "Pontos e eletrodutos");
+            if ferramenta(ui, "Inserir pontos...", tem_desenho, "Blocos de ponto do desenho por tipo: inserir com os valores escolhidos, filtrar e excluir pontos (ELEPONTOS)")
+                .clicked()
+            {
+                comando = Some("ui.eletrica.pontos");
+            }
+            if ferramenta(
+                ui,
+                "Inserir eletroduto",
+                tem_desenho,
+                "Selecione os objetos em sequência: cada par é ligado por um eletroduto em arco (Piso/Teto, Inverter, Flecha) (ELEELETRODUTO)",
+            )
+            .clicked()
+            {
+                comando = Some("eleeletroduto");
+            }
             grupo(ui, &t, "Circuitos");
             if ferramenta(
                 ui,
@@ -371,6 +410,8 @@ struct Estado {
     /// (uid, revisão) do desenho analisado.
     chave: Option<(u64, u64)>,
     analise: Arc<ele::Analise>,
+    /// Os blocos de ponto do desenho.
+    blocos: Arc<Vec<ele::biblioteca::BlocoPonto>>,
     resumo: Option<(ChaveResumo, Arc<Result<ele::ResumoQuadro, String>>)>,
 }
 
@@ -382,6 +423,7 @@ impl Estado {
         }
         self.chave = chave;
         self.analise = Arc::new(app.session.state().map(|st| ele::analisar(&st.doc)).unwrap_or_default());
+        self.blocos = Arc::new(app.session.state().map(|st| ele::biblioteca::blocos(&st.doc)).unwrap_or_default());
     }
 
     fn resumo(&mut self, app: &CadApp, s: &Setup, quadro: Handle) -> Option<Arc<Result<ele::ResumoQuadro, String>>> {
@@ -410,15 +452,15 @@ pub fn janelas(app: &mut CadApp, ctx: &egui::Context) {
             let _ = open(app);
         }
     }
-    let (setup_aberta, mut conferencia, cargas) = {
+    let (setup_aberta, mut conferencia, cargas, pontos) = {
         let j = trava(&JANELAS);
-        (j.setup.is_some(), j.conferencia, j.cargas.clone())
+        (j.setup.is_some(), j.conferencia, j.cargas.clone(), j.pontos.clone())
     };
     let t = Tokens::get();
     if setup_aberta {
         janela_setup(ctx, &t);
     }
-    if !conferencia && cargas.is_none() {
+    if !conferencia && cargas.is_none() && pontos.is_none() {
         return;
     }
     let mut st: Estado = ctx.data_mut(|d| d.get_temp(id_estado())).unwrap_or_default();
@@ -487,10 +529,29 @@ pub fn janelas(app: &mut CadApp, ctx: &egui::Context) {
         aberta.then_some(c)
     });
 
+    let pontos = pontos.and_then(|mut p| {
+        let mut aberta = true;
+        egui::Window::new("Free Elétrica · Inserir pontos")
+            .id(egui::Id::new("ele-janela-pontos"))
+            .open(&mut aberta)
+            .default_pos(egui::pos2(300.0, 120.0))
+            .default_width(820.0)
+            .default_height(560.0)
+            .show(ctx, |ui| {
+                if !tem_desenho {
+                    ui.label(pequeno("Nenhum desenho aberto.", t.text_dim));
+                    return;
+                }
+                inserir_pontos(ui, &t, &st.analise, &st.blocos, &mut p, &mut selecionar, &mut acoes);
+            });
+        aberta.then_some(p)
+    });
+
     {
         let mut j = trava(&JANELAS);
         j.conferencia = conferencia;
         j.cargas = cargas;
+        j.pontos = pontos;
     }
     for a in acoes {
         match a {
@@ -832,6 +893,178 @@ fn escolher(ui: &mut egui::Ui, id: (&str, &String), valor: &mut Option<f64>, aut
                 *valor = Some(*o);
             }
         }
+    });
+}
+
+/// Os tipos do filtro da janela Inserir pontos, na ordem dos botões.
+const TIPOS_FILTRO: [TipoPonto; 7] = [
+    TipoPonto::Iluminacao,
+    TipoPonto::Tomada,
+    TipoPonto::TomadaEspecifica,
+    TipoPonto::Interruptor,
+    TipoPonto::Quadro,
+    TipoPonto::Caixa,
+    TipoPonto::Outro,
+];
+
+/// A janela Inserir pontos: filtro por tipo, os blocos de ponto do desenho, os valores para a
+/// inserção e os pontos já inseridos (selecionar, excluir).
+fn inserir_pontos(
+    ui: &mut egui::Ui,
+    t: &Tokens,
+    analise: &ele::Analise,
+    blocos: &[ele::biblioteca::BlocoPonto],
+    p: &mut Pontos,
+    selecionar: &mut Option<Vec<Handle>>,
+    acoes: &mut Vec<Acao>,
+) {
+    // Filtro por tipo e busca pelo nome.
+    ui.horizontal_wrapped(|ui| {
+        if ui.selectable_label(p.filtro.is_none(), format!("Todos ({})", analise.pontos.len())).clicked() {
+            p.filtro = None;
+            p.excluir = None;
+        }
+        for tipo in TIPOS_FILTRO {
+            let n = analise.contar(tipo);
+            let tem_bloco = blocos.iter().any(|b| b.tipo == tipo);
+            if (n > 0 || tem_bloco) && ui.selectable_label(p.filtro == Some(tipo), format!("{} ({n})", tipo.nome())).clicked() {
+                p.filtro = Some(tipo);
+                p.excluir = None;
+            }
+        }
+        ui.add_space(12.0);
+        ui.add(egui::TextEdit::singleline(&mut p.busca).hint_text("Buscar bloco ou TAG").desired_width(170.0));
+    });
+    ui.separator();
+    let busca = p.busca.trim().to_uppercase();
+    let combina = |texto: &str| busca.is_empty() || texto.to_uppercase().contains(&busca);
+    let filtro = p.filtro;
+    let do_tipo = |tipo: TipoPonto| filtro.is_none_or(|f| f == tipo);
+
+    if blocos.is_empty() {
+        ui.label(pequeno(
+            "O desenho não tem blocos de ponto elétrico (blocos com TIPO_PONTO, POTENCIA... na definição). Insira o template templates\\FREE_ELETRICA_BLOCOS.dxf no desenho para trazer os blocos.",
+            t.text_dim,
+        ));
+    }
+    if p.bloco.as_ref().is_some_and(|nome| !blocos.iter().any(|b| &b.nome == nome)) {
+        p.bloco = None;
+        p.valores.clear();
+    }
+
+    ui.horizontal_top(|ui| {
+        // Altura fixa: o separador vertical entre as colunas não pode crescer a janela.
+        ui.set_max_height(250.0);
+        // Blocos disponíveis.
+        ui.vertical(|ui| {
+            ui.set_width(300.0);
+            ui.label(RichText::new("Blocos").strong());
+            egui::ScrollArea::vertical().id_salt("ele-pontos-blocos").max_height(220.0).show(ui, |ui| {
+                for b in blocos.iter().filter(|b| do_tipo(b.tipo) && combina(&b.nome)) {
+                    let texto = format!("{}  ·  {}  ·  {} no desenho", b.nome, b.tipo.nome(), b.inseridos);
+                    if ui.selectable_label(p.bloco.as_deref() == Some(b.nome.as_str()), texto).clicked() {
+                        p.bloco = Some(b.nome.clone());
+                        p.valores = b.atributos.iter().filter(|a| !a.constante).map(|a| (a.tag.clone(), a.padrao.clone())).collect();
+                        p.excluir = None;
+                    }
+                }
+            });
+        });
+        ui.separator();
+        // Valores da inserção.
+        ui.vertical(|ui| {
+            let Some(nome) = p.bloco.clone() else {
+                ui.label(pequeno("Escolha um bloco para inserir.", t.text_dim));
+                return;
+            };
+            let prompts: Vec<(String, String)> = blocos
+                .iter()
+                .find(|b| b.nome == nome)
+                .map(|b| b.atributos.iter().map(|a| (a.tag.clone(), a.prompt.clone())).collect())
+                .unwrap_or_default();
+            ui.label(RichText::new(format!("Inserir {nome}")).strong());
+            egui::Grid::new("ele-pontos-valores").num_columns(2).spacing(vec2(10.0, 4.0)).show(ui, |ui| {
+                for (tag, valor) in &mut p.valores {
+                    let dica =
+                        prompts.iter().find(|(t, _)| t == tag).map(|(_, pr)| pr.clone()).filter(|pr| !pr.is_empty()).unwrap_or_else(|| tag.clone());
+                    ui.label(tag.as_str()).on_hover_text(dica);
+                    ui.add(egui::TextEdit::singleline(valor).desired_width(170.0));
+                    ui.end_row();
+                }
+                ui.label("Rotação");
+                ui.add(campo(&mut p.rotacao, -360.0..=360.0, 1.0, 0, "°"));
+                ui.end_row();
+            });
+            ui.add_space(4.0);
+            if ui.button("Inserir no desenho").on_hover_text("Clique no desenho onde vai cada ponto; Enter termina (ELEPONTO)").clicked() {
+                let valores: serde_json::Map<String, Value> = p.valores.iter().map(|(k, v)| (k.clone(), Value::String(v.clone()))).collect();
+                acoes.push(Acao::Rodar("eletrica.ponto.modelo", json!({ "bloco": nome, "rotacao": p.rotacao, "valores": valores })));
+                acoes.push(Acao::Iniciar("eleponto"));
+            }
+        });
+    });
+
+    // Pontos já inseridos, do tipo filtrado.
+    ui.separator();
+    let lista: Vec<&PontoEletrico> =
+        analise.pontos.iter().filter(|q| do_tipo(q.tipo) && (combina(&q.bloco) || q.tag.as_deref().is_some_and(combina))).collect();
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(format!("Pontos no desenho ({})", lista.len())).strong());
+        if !lista.is_empty() {
+            if ui.small_button("Selecionar todos").clicked() {
+                *selecionar = Some(lista.iter().map(|q| q.handle).collect());
+            }
+            if p.excluir == Some(None) {
+                if ui.small_button(RichText::new(format!("Excluir os {}?", lista.len())).color(COR_AVISO)).on_hover_text("Ctrl+Z desfaz").clicked() {
+                    let hs: Vec<String> = lista.iter().map(|q| q.handle.hex()).collect();
+                    acoes.push(Acao::Rodar("eletrica.ponto.excluir", json!({ "pontos": hs })));
+                    p.excluir = None;
+                }
+                if ui.small_button("Não").clicked() {
+                    p.excluir = None;
+                }
+            } else if ui.small_button("Excluir todos").clicked() {
+                p.excluir = Some(None);
+            }
+        }
+    });
+    let colunas: [(&str, f32, bool); 6] = [
+        ("Ponto", 150.0, false),
+        ("Bloco", 150.0, false),
+        ("Tipo", 100.0, false),
+        ("Circuito", 60.0, false),
+        ("Potência (VA)", 90.0, true),
+        ("", 90.0, false),
+    ];
+    egui::ScrollArea::vertical().id_salt("ele-pontos-lista").max_height(220.0).show(ui, |ui| {
+        egui::Grid::new("ele-pontos-tabela").num_columns(colunas.len()).striped(true).spacing(vec2(10.0, 2.0)).show(ui, |ui| {
+            cabecalho(ui, t, &colunas);
+            for q in &lista {
+                let link =
+                    ui.allocate_ui_with_layout(vec2(colunas[0].1, LINHA), Layout::left_to_right(Align::Center), |ui| ui.link(q.rotulo())).inner;
+                if link.on_hover_text("Selecionar no desenho").clicked() {
+                    *selecionar = Some(vec![q.handle]);
+                }
+                celula(ui, colunas[1].1, q.bloco.as_str(), false);
+                celula(ui, colunas[2].1, q.tipo.nome(), false);
+                celula(ui, colunas[3].1, q.circuito.as_deref().unwrap_or("-"), false);
+                celula(ui, colunas[4].1, numero(q.potencia.map_or("-".to_string(), |v| fixo(v, 0))), true);
+                ui.horizontal(|ui| {
+                    if p.excluir == Some(Some(q.handle)) {
+                        if ui.small_button(RichText::new("Excluir?").color(COR_AVISO)).clicked() {
+                            acoes.push(Acao::Rodar("eletrica.ponto.excluir", json!({ "pontos": [q.handle.hex()] })));
+                            p.excluir = None;
+                        }
+                        if ui.small_button("Não").clicked() {
+                            p.excluir = None;
+                        }
+                    } else if ui.small_button("Excluir").clicked() {
+                        p.excluir = Some(Some(q.handle));
+                    }
+                });
+                ui.end_row();
+            }
+        });
     });
 }
 

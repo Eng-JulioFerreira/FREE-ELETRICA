@@ -195,6 +195,97 @@ fn quadro_de_cargas_e_isolacao_por_comandos() {
     assert!(textos.iter().any(|t| t == "%%c20"), "{textos:?}");
 }
 
+/// Um bloco de tomada com atributos na definição, como os do template.
+fn bloco_tomada(d: &mut Drawing) {
+    let mut b = Block::new("TOM-SIM-BAIXA");
+    for (tag, valor, constante) in [("TIPO_PONTO", "TUG", true), ("POTENCIA", "100VA", false), ("CIRCUITO", "", false)] {
+        let mut a = atributo(tag, valor);
+        a.constant = constante;
+        b.entities.push(cadcraft_engine::doc::Entity::new(d.new_handle(), EntityKind::AttDef(a)));
+    }
+    d.blocks.insert("TOM-SIM-BAIXA".into(), Arc::new(b));
+}
+
+#[test]
+fn eletroduto_em_arco_por_comandos() {
+    let mut s = Session::new();
+    let (mut d, [qd, luz, int, tug]) = planta();
+    // Sem os eletrodutos retos da planta: só os em arco.
+    let retos: Vec<Handle> = d.model.iter().filter(|e| matches!(e.kind, EntityKind::Line(_))).map(|e| e.handle).collect();
+    for h in retos {
+        d.model.remove(h);
+    }
+    s.open_drawing(d, "Planta", None);
+    // JSON: do quadro à luz, no teto; e por coordenadas, no piso.
+    let r = s.execute("eleeletroduto", &json!({ "de": qd.hex(), "para": luz.hex() })).unwrap();
+    let h = Handle::parse_hex(r["eletroduto"].as_str().unwrap()).unwrap();
+    assert!(matches!(s.doc().unwrap().model.get(h).unwrap().kind, EntityKind::Spline(_)));
+    s.execute("eleeletroduto", &json!({ "de": [10.0, 10.0], "para": [12.0, 10.0], "piso": true, "flecha": 0 })).unwrap();
+    assert!(s.execute("eleeletroduto", &json!({ "de": qd.hex(), "para": qd.hex() })).is_err());
+    assert!(s.execute("eleeletroduto", &json!({ "de": qd.hex() })).is_err());
+    let camadas: Vec<String> =
+        s.doc().unwrap().model.iter().filter(|e| matches!(e.kind, EntityKind::Spline(_))).map(|e| e.common.layer.clone()).collect();
+    assert_eq!(camadas, ["ELE-ELETRODUTO-PVC-MEDIA-TETO", "ELE-ELETRODUTO-PVC-MEDIA-PISO"]);
+
+    // Interativo: luz, interruptor e tomada em sequência; Inverter muda o lado do próximo arco;
+    // um passo de desfazer.
+    let antes = s.doc().unwrap().model.len();
+    s.start("eleeletroduto").unwrap();
+    s.input(Input::Pick(vec![luz])).unwrap();
+    s.input(Input::Pick(vec![int])).unwrap();
+    s.input(Input::Keyword("Inverter".into())).unwrap();
+    s.input(Input::Pick(vec![tug])).unwrap();
+    s.input(Input::Enter).unwrap();
+    assert!(s.running.is_none());
+    assert_eq!(s.doc().unwrap().model.len(), antes + 2);
+    s.undo().unwrap();
+    assert_eq!(s.doc().unwrap().model.len(), antes);
+}
+
+#[test]
+fn inserir_e_excluir_pontos_por_comandos() {
+    let mut s = Session::new();
+    let (mut d, _) = planta();
+    bloco_tomada(&mut d);
+    s.open_drawing(d, "Planta", None);
+    let blocos = s.execute("eletrica.blocos", &json!({})).unwrap();
+    let nomes: Vec<&str> = blocos.as_array().unwrap().iter().map(|b| b["nome"].as_str().unwrap()).collect();
+    assert!(nomes.contains(&"TOM-SIM-BAIXA"), "{blocos}");
+    // JSON: duas tomadas de 600 VA no circuito 4.
+    let r = s
+        .execute(
+            "eleponto",
+            &json!({ "bloco": "TOM-SIM-BAIXA", "pontos": [[1.0, 2.0], [2.0, 2.0]], "valores": { "POTENCIA": "600VA", "CIRCUITO": 4 } }),
+        )
+        .unwrap();
+    let novos: Vec<String> = r["pontos"].as_array().unwrap().iter().map(|h| h.as_str().unwrap().to_string()).collect();
+    assert_eq!(novos.len(), 2);
+    let a = s.execute("eletrica.analisar", &json!({})).unwrap();
+    let c4 = a["circuitos"].as_array().unwrap().iter().find(|c| c["id"] == "4").unwrap();
+    assert_eq!(c4["potencia"].as_f64(), Some(1200.0));
+    assert!(s.execute("eleponto", &json!({ "bloco": "NENHUM", "pontos": [[0, 0]] })).is_err());
+    assert!(s.execute("eleponto", &json!({ "bloco": "TOM-SIM-BAIXA", "pontos": [[0, 0]], "valores": { "TIPO_PONTO": "TUE" } })).is_err());
+
+    // Interativo com o modelo escolhido antes (a janela Inserir pontos): dois cliques e Enter.
+    s.execute("eletrica.ponto.modelo", &json!({ "bloco": "tom-sim-baixa", "rotacao": 90, "valores": { "CIRCUITO": "5" } })).unwrap();
+    s.start("eleponto").unwrap();
+    s.input(Input::Point(cadcraft_engine::doc::geom::Vec2::new(3.0, 3.0))).unwrap();
+    s.input(Input::Point(cadcraft_engine::doc::geom::Vec2::new(4.0, 3.0))).unwrap();
+    s.input(Input::Enter).unwrap();
+    assert!(s.running.is_none());
+    let a = s.execute("eletrica.analisar", &json!({})).unwrap();
+    assert_eq!(a["pontos"].as_array().unwrap().iter().filter(|p| p["circuito"] == "5").count(), 2);
+    assert!(s.execute("eletrica.ponto.modelo", &json!({ "bloco": "PORTA" })).is_err());
+
+    // Excluir: os dois do circuito 4; um handle que não é ponto recusa tudo.
+    let linha = s.doc().unwrap().model.iter().find(|e| matches!(e.kind, EntityKind::Line(_))).unwrap().handle.hex();
+    assert!(s.execute("eletrica.ponto.excluir", &json!({ "pontos": [novos[0], linha] })).is_err());
+    let r = s.execute("eletrica.ponto.excluir", &json!({ "pontos": novos })).unwrap();
+    assert_eq!(r["excluidos"], 2);
+    let a = s.execute("eletrica.analisar", &json!({})).unwrap();
+    assert!(a["circuitos"].as_array().unwrap().iter().all(|c| c["id"] != "4"));
+}
+
 #[test]
 fn propriedades_do_circuito_e_demanda_por_comandos() {
     let mut s = Session::new();

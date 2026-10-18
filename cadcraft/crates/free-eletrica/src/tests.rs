@@ -924,6 +924,96 @@ fn tensoes_do_quadro_pelo_atributo() {
     assert!(perto(r.corrente_instalada, 1270.0 / 254.0, 1e-9));
 }
 
+// ------------------------------------------------------------------ eletroduto em arco e biblioteca de pontos
+
+#[test]
+fn arco_do_eletroduto() {
+    use eletroduto::pontos_do_arco;
+    let (a, b) = ([0.0, 0.0], [4.0, 0.0]);
+    let p = pontos_do_arco(a, b, 0.15, 5);
+    assert_eq!(p.len(), 5);
+    assert!(perto(p[0][0], 0.0, 1e-9) && perto(p[0][1], 0.0, 1e-9) && perto(p[4][0], 4.0, 1e-9) && perto(p[4][1], 0.0, 1e-9), "{p:?}");
+    // O meio fica a 15 % da corda (0,6 m) à esquerda de quem vai de A para B (y positivo).
+    assert!(perto(p[2][0], 2.0, 1e-9) && perto(p[2][1], 0.6, 1e-9), "{p:?}");
+    // Todos numa circunferência: raio (c²/4 + h²) / 2h, centro abaixo da corda.
+    let r = (4.0 + 0.36) / 1.2;
+    let centro = [2.0, 0.6 - r];
+    assert!(p.iter().all(|q| perto((q[0] - centro[0]).hypot(q[1] - centro[1]), r, 1e-9)), "{p:?}");
+    // Flecha negativa: para a direita. Zero: reta. Acima de meia corda: limitada.
+    assert!(perto(pontos_do_arco(a, b, -0.15, 5)[2][1], -0.6, 1e-9));
+    assert!(pontos_do_arco(a, b, 0.0, 5).iter().all(|q| q[1] == 0.0));
+    assert!(perto(pontos_do_arco(a, b, 3.0, 5)[2][1], 2.0, 1e-9));
+    assert!(pontos_do_arco(a, b, f64::NAN, 3).iter().all(|q| q[1] == 0.0));
+}
+
+#[test]
+fn eletroduto_em_arco_entra_no_roteamento_e_na_fiacao() {
+    let mut d = metros();
+    let qd = inserir(&mut d, "QD", 0.0, 0.0, &[("TIPO_PONTO", "QUADRO"), ("ALTURA", "1,50")]);
+    let tug = inserir(&mut d, "TUG", 4.0, 0.0, &[("TIPO_PONTO", "TUG"), ("POTENCIA", "600VA"), ("CIRCUITO", "1"), ("ALTURA", "0,30")]);
+    let (a, b) = (eletroduto::posicao(&d, qd).unwrap(), eletroduto::posicao(&d, tug).unwrap());
+    let h = eletroduto::inserir(&mut d, a, b, false, 0.15).unwrap();
+    assert!(matches!(&d.model.get(h).unwrap().kind, EntityKind::Spline(_)));
+    assert_eq!(d.model.get(h).unwrap().common.layer, eletroduto::CAMADA_TETO);
+    assert!(eletroduto::inserir(&mut d, a, a, false, 0.15).is_err(), "mesmo lugar");
+    // Comprimento: o arco (2φR = 4,237 m) mais a descida do quadro (1,30) e da tomada (2,50).
+    let r = rotear_quadro(&d, &analisar(&d), &Setup::default(), qd).unwrap();
+    let raio: f64 = (4.0 + 0.36) / 1.2;
+    let arco = 2.0 * (2.0 / raio).asin() * raio;
+    let c = r.linhas[0].comprimento.unwrap();
+    assert!(perto(c, arco + 1.3 + 2.5, 0.01), "{c} vs {}", arco + 3.8);
+    assert_eq!(r.linhas[0].fora_da_rede, 0);
+    // A fiação marca a curva uma vez só, no pedaço do meio.
+    let f = fiacao::calcular(&d, &analisar(&d), &Setup::default(), qd).unwrap();
+    assert_eq!(f.trechos.len(), 1, "{:?}", f.trechos);
+    let t = &f.trechos[0];
+    assert!(((t.a[0] + t.b[0]) / 2.0 - 2.0).abs() < 0.2 && t.a[1] > 0.5, "{t:?}");
+}
+
+/// Um bloco de tomada com atributos na definição (TIPO_PONTO constante).
+fn bloco_tomada(d: &mut Drawing) {
+    let mut b = Block::new("TOMADA-X");
+    for (tag, valor, constante) in
+        [("TIPO_PONTO", "TUG", true), ("POTENCIA", "100VA", false), ("CIRCUITO", "", false), ("TIPO_CARGA", "ILUM_TUG", false)]
+    {
+        b.entities.push(Entity::new(d.new_handle(), EntityKind::AttDef(atributo(tag, valor, constante))));
+    }
+    d.blocks.insert("TOMADA-X".into(), Arc::new(b));
+}
+
+#[test]
+fn biblioteca_lista_insere_e_exclui_pontos() {
+    let mut d = metros();
+    bloco_tomada(&mut d);
+    // Um bloco sem atributos elétricos não é ponto.
+    d.blocks.insert("PORTA".into(), Arc::new(Block::new("PORTA")));
+    let lista = biblioteca::blocos(&d);
+    assert_eq!(lista.len(), 1);
+    assert_eq!((lista[0].nome.as_str(), lista[0].tipo, lista[0].inseridos), ("TOMADA-X", TipoPonto::Tomada, 0));
+    assert!(lista[0].atributos.iter().any(|a| a.tag == "TIPO_PONTO" && a.constante));
+    // Inserir com valores por cima dos padrões.
+    let valores = [("POTENCIA".to_string(), "600VA".to_string()), ("CIRCUITO".to_string(), "3".to_string())];
+    let h = biblioteca::inserir(&mut d, "tomada-x", [2.0, 1.0], 90.0, &valores).unwrap();
+    let p = ponto::ler_ponto(&d, h).unwrap();
+    assert_eq!((p.tipo, p.potencia, p.circuito.as_deref(), p.posicao), (TipoPonto::Tomada, Some(600.0), Some("3"), [2.0, 1.0]));
+    assert_eq!(p.tipo_carga, Some(demanda::TipoCarga::IluminacaoTug));
+    assert_eq!(d.model.get(h).unwrap().common.layer, biblioteca::CAMADA_PONTOS);
+    assert_eq!(biblioteca::blocos(&d)[0].inseridos, 1);
+    // Atributo que o bloco não tem, ou constante: erro, nada é inserido.
+    assert!(biblioteca::inserir(&mut d, "TOMADA-X", [0.0, 0.0], 0.0, &[("COR".into(), "azul".into())]).is_err());
+    assert!(biblioteca::inserir(&mut d, "TOMADA-X", [0.0, 0.0], 0.0, &[("TIPO_PONTO".into(), "TUE".into())]).is_err());
+    assert!(biblioteca::inserir(&mut d, "NENHUM", [0.0, 0.0], 0.0, &[]).is_err());
+    assert!(biblioteca::inserir(&mut d, "TOMADA-X", [f64::NAN, 0.0], 0.0, &[]).is_err());
+    assert_eq!(biblioteca::blocos(&d)[0].inseridos, 1);
+    // Excluir: só pontos elétricos; um objeto que não é ponto recusa tudo.
+    let h2 = biblioteca::inserir(&mut d, "TOMADA-X", [5.0, 1.0], 0.0, &[]).unwrap();
+    let linha = d.add(&Space::Model, Common::default(), EntityKind::Line(Line { a: Vec3::ZERO, b: Vec3::new(1.0, 0.0, 0.0) })).unwrap();
+    assert!(biblioteca::excluir(&mut d, &[h, linha]).is_err());
+    assert_eq!(biblioteca::blocos(&d)[0].inseridos, 2);
+    assert_eq!(biblioteca::excluir(&mut d, &[h, h2]).unwrap(), 2);
+    assert_eq!(biblioteca::blocos(&d)[0].inseridos, 0);
+}
+
 #[test]
 fn xdata_do_nome_antigo_continua_lido() {
     // Desenho feito quando o projeto se chamava CRAFT ELE.

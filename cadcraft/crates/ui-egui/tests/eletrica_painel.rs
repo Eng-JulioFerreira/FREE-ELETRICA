@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use cadcraft_engine::doc::geom::Vec3;
+use cadcraft_engine::doc::geom::{Vec2, Vec3};
 use cadcraft_engine::doc::{Attrib, Block, Common, Drawing, EntityKind, HAlign, Handle, Insert, Line, Space, Text, VAlign};
 use cadcraft_engine::{Input, Session};
 use cadcraft_ui_egui::{CadApp, Services, docking::Panel};
@@ -69,6 +69,14 @@ fn planta() -> Drawing {
     // Sem circuito: entram pelas ferramentas.
     inserir(&mut d, "CAIXA_LUZ", 5.0, &[("TIPO_PONTO", "ILUM"), ("POTENCIA", "160VA"), ("TENSAO", "127V")]);
     inserir(&mut d, "INTERRUPTOR", 6.0, &[("TIPO_PONTO", "INTERRUPTOR"), ("POTENCIA", "0W")]);
+    // Um bloco de tomada com atributos na definição (como os do template), ainda não inserido.
+    let mut tom = Block::new("TOM-X");
+    for (tag, valor, constante) in [("TIPO_PONTO", "TUG", true), ("POTENCIA", "100VA", false), ("CIRCUITO", "", false)] {
+        let mut a = atributo(tag, valor);
+        a.constant = constante;
+        tom.entities.push(cadcraft_engine::doc::Entity::new(d.new_handle(), EntityKind::AttDef(a)));
+    }
+    d.blocks.insert("TOM-X".into(), Arc::new(tom));
     let c = Common { layer: "ELETRODUTO".into(), ..Default::default() };
     d.add(&Space::Model, c, EntityKind::Line(Line { a: Vec3::ZERO, b: Vec3::new(6.0, 0.0, 0.0) })).unwrap();
     d
@@ -111,7 +119,7 @@ fn paleta_ferramentas_e_fluxo_completo() {
     // Digitado, abre a paleta acima das Tool Sets, com altura fixa.
     assert!(app.cmdline("ELETRICA").is_none());
     let local = app.ui.docking.layout.location(&Panel::Eletrica).unwrap();
-    assert_eq!(local.size, Some(craft_ui::layout::SplitSize::FixedFirst(300.0)));
+    assert_eq!(local.size, Some(craft_ui::layout::SplitSize::FixedFirst(380.0)));
     assert_eq!(local.anchor, Some(Panel::ToolSets));
 
     let (qd, luz, int) = handles(app);
@@ -166,9 +174,16 @@ fn paleta_ferramentas_e_fluxo_completo() {
 
     h.run_steps(4);
     // A paleta só tem ferramentas.
-    for f in
-        ["Configurações...", "Quadro de cargas...", "Criar circuito", "Comandos e luminárias", "Conferir pontos e circuitos...", "Ajustar fiação"]
-    {
+    for f in [
+        "Configurações...",
+        "Inserir pontos...",
+        "Inserir eletroduto",
+        "Quadro de cargas...",
+        "Criar circuito",
+        "Comandos e luminárias",
+        "Conferir pontos e circuitos...",
+        "Ajustar fiação",
+    ] {
         h.get_by_label(f);
     }
     // Rotear fiação vive dentro do Quadro de cargas.
@@ -222,4 +237,33 @@ fn paleta_ferramentas_e_fluxo_completo() {
     assert!(h.state_mut().cmdline("ELEROTEAR").is_none());
     h.run_steps(3);
     assert_eq!(h.query_all_by_label("PAINEL: QD-01").count(), 1);
+
+    // Inserir pontos: filtrar por tipo, escolher o bloco, inserir com os valores e excluir.
+    h.get_by_label("Inserir pontos...").click();
+    h.run_steps(3);
+    h.get_by_label("Blocos");
+    h.get_by_label("TUG (1)").click();
+    h.run_steps(3);
+    h.get_by_label("Pontos no desenho (1)");
+    h.get_by_label("TOM-X  ·  TUG  ·  0 no desenho").click();
+    h.run_steps(3);
+    h.get_by_label("POTENCIA");
+    h.get_by_label("Inserir no desenho").click();
+    h.run_steps(3);
+    let app = h.state_mut();
+    assert!(app.session.running.is_some(), "ELEPONTO começou");
+    app.session.input(Input::Point(Vec2::new(9.0, 9.0))).unwrap();
+    app.session.input(Input::Enter).unwrap();
+    assert!(app.session.running.is_none());
+    let a = app.run("eletrica.analisar", json!({})).unwrap();
+    let novo = a["pontos"].as_array().unwrap().iter().find(|p| p["bloco"] == "TOM-X").expect("ponto inserido").clone();
+    assert_eq!((novo["potencia"].as_f64(), novo["posicao"][0].as_f64()), (Some(100.0), Some(9.0)));
+    h.run_steps(3);
+    h.get_by_label("Pontos no desenho (2)");
+    // Excluir pede confirmação na própria linha.
+    h.query_all_by_label("Excluir").next().unwrap().click();
+    h.run_steps(3);
+    h.get_by_label("Excluir?").click();
+    h.run_steps(3);
+    h.get_by_label("Pontos no desenho (1)");
 }

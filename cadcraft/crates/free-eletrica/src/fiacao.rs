@@ -313,6 +313,12 @@ pub fn calcular(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle)
     let trechos = por_aresta
         .into_iter()
         .filter_map(|(e, circuitos)| {
+            // Numa curva, só o pedaço do meio recebe as marcas.
+            if let Some((_, pedaco, pedacos)) = rede.curvas.get(&e)
+                && *pedaco != pedacos / 2
+            {
+                return None;
+            }
             let (na, nb, _) = *rede.arestas.get(e)?;
             let (a, b) = (*rede.nos.get(na)?, *rede.nos.get(nb)?);
             // Subidas entre piso e teto não têm desenho para marcar.

@@ -25,6 +25,8 @@ oferecer.
 | Ferramenta | Comando | O quê |
 | :--- | :--- | :--- |
 | Configurações | `ELECONFIG` | Setup do projeto: sistema (380/220 V padrão), pé-direito, temperatura (FCT), isolação padrão (PVC, EPR ou XLPE), queda admissível, cores das fases, seções omitidas, diâmetros externos dos condutores, tamanhos de eletroduto, camadas de eletroduto de teto e piso, catálogo de cabos de telecom com diâmetro, tabela de demanda da concessionária e tipo de edificação. |
+| Inserir pontos | `ELEPONTOS` | Janela com os blocos de ponto do desenho, filtrados por tipo (iluminação, TUG, TUE, interruptor, quadro, caixa): escolha o bloco, preencha os atributos e clique no desenho para cada ponto (`ELEPONTO`). Lista os pontos já inseridos do tipo, para selecionar ou excluir. |
+| Inserir eletroduto | `ELEELETRODUTO` | Selecione os objetos em sequência (pontos, quadros, caixas): cada par é ligado por um eletroduto em arco (spline). Opções: Piso/Teto, Inverter (lado do arco) e Flecha (curvatura). O roteamento e a fiação leem as curvas. |
 | Quadro de cargas | `ELECARGAS` (ou `ELEROTEAR`) | O menu central de um quadro, com a fiação já roteada pelos eletrodutos. Por circuito: descrição, pontos (adicionar, selecionar, juntar, excluir), tipo de carga e FP (lidos dos atributos TIPO_CARGA e FP dos blocos), tipo de cabo (PVC, EPR, XLPE), seção e disjuntor pré-selecionados (com sobrescrita), corrente, queda de tensão e potência por fase. Embaixo, a demanda pela tabela da concessionária (Equatorial NT.001 rev. 07), correntes instalada e demandada e o levantamento de cabos. |
 | Criar circuito | `ELECIRCUITO` | Clique no quadro, aceite o número do circuito e clique nos pontos. |
 | Comandos e luminárias | `ELECOMANDO` | Clique no interruptor e nas luminárias que ele comanda. |
@@ -34,7 +36,8 @@ oferecer.
 Tudo também responde em JSON pelo canal de controle e pelo `cadcraft-cli`:
 `eletrica.analisar`, `eletrica.rotear` (com a demanda), `eletrica.sobrescrever`,
 `eletrica.circuito.*` (criar, descrever, definir, juntar, excluir), `eletrica.quadro`,
-`eletrica.demanda.tabelas`, `eletrica.setup`, `elecircuito`, `elecomando`, `elefiacao`.
+`eletrica.demanda.tabelas`, `eletrica.blocos`, `eletrica.ponto.modelo`, `eletrica.ponto.excluir`,
+`eletrica.setup`, `elecircuito`, `elecomando`, `elefiacao`, `eleeletroduto`, `eleponto`.
 
 ## Começar
 

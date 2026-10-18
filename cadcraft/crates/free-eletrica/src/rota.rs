@@ -53,6 +53,9 @@ pub struct Rede {
     pub elevacao: Vec<f64>,
     /// Arestas: (nó, nó, comprimento em m).
     pub arestas: Vec<(usize, usize, f64)>,
+    /// Arestas que vêm de uma curva (spline): aresta → (entidade, pedaço, pedaços). A fiação
+    /// marca uma curva só no pedaço do meio.
+    pub curvas: HashMap<usize, (Handle, usize, usize)>,
     adj: Vec<Vec<(usize, usize)>>,
     pub ligacoes: HashMap<Handle, Ligacao>,
     /// Trechos de eletroduto lidos do desenho.
@@ -64,28 +67,37 @@ pub struct Rede {
 impl Rede {
     /// Monta a rede com os eletrodutos do espaço do modelo e liga os pontos a ela.
     pub fn montar(doc: &Drawing, setup: &Setup, pontos: &[PontoEletrico], metros: f64) -> Rede {
-        // (início, fim, no piso)
-        let mut segs: Vec<(P, P, bool)> = Vec::new();
+        let metros = if metros > 0.0 { metros } else { 1.0 };
+        // (início, fim, no piso, curva: (entidade, pedaço, pedaços))
+        let mut segs: Vec<(P, P, bool, Option<(Handle, usize, usize)>)> = Vec::new();
         for e in doc.model.iter() {
             if !setup.e_camada_eletroduto(&e.common.layer) {
                 continue;
             }
             let piso = setup.e_camada_piso(&e.common.layer);
             match &e.kind {
-                EntityKind::Line(l) => segs.push(([l.a.x, l.a.y], [l.b.x, l.b.y], piso)),
+                EntityKind::Line(l) => segs.push(([l.a.x, l.a.y], [l.b.x, l.b.y], piso, None)),
                 EntityKind::LwPolyline(pl) => {
                     let v: Vec<P> = pl.vertices.iter().map(|v| [v.p.x, v.p.y]).collect();
-                    segs.extend(v.windows(2).map(|w| (w[0], w[1], piso)));
+                    segs.extend(v.windows(2).map(|w| (w[0], w[1], piso, None)));
                     if pl.closed && v.len() > 2 {
-                        segs.push((v[v.len() - 1], v[0], piso));
+                        segs.push((v[v.len() - 1], v[0], piso, None));
                     }
+                }
+                // Curvas (o eletroduto em arco do ELEELETRODUTO): pedaços retos com até 5 mm
+                // de desvio da curva.
+                EntityKind::Spline(sp) => {
+                    let v: Vec<P> = sp.tessellate(0.005 / metros).iter().map(|p| [p.x, p.y]).collect();
+                    let n = v.len().saturating_sub(1);
+                    segs.extend(v.windows(2).enumerate().map(|(i, w)| (w[0], w[1], piso, Some((e.handle, i, n)))));
                 }
                 _ => {}
             }
         }
-        segs.retain(|(a, b, _)| dist(*a, *b) > 0.0);
+        segs.retain(|(a, b, _, _)| dist(*a, *b) > 0.0);
+        let segs_curva: Vec<Option<(Handle, usize, usize)>> = segs.iter().map(|s| s.3).collect();
+        let segs: Vec<(P, P, bool)> = segs.into_iter().map(|(a, b, piso, _)| (a, b, piso)).collect();
         let pe = setup.pe_direito;
-        let metros = if metros > 0.0 { metros } else { 1.0 };
         // Tolerância de encontro de pontas: 1 cm. Raio de captura dos pontos: das configurações.
         let eps = 0.01 / metros;
         let raio = setup.raio_captura / metros;
@@ -154,6 +166,9 @@ impl Rede {
                 if w[0] != w[1] {
                     let comprimento = dist(rede.nos[w[0]], rede.nos[w[1]]) * metros;
                     rede.ligar(w[0], w[1], comprimento);
+                    if let Some(c) = segs_curva.get(i).copied().flatten() {
+                        rede.curvas.insert(rede.arestas.len().saturating_sub(1), c);
+                    }
                 }
             }
         }
