@@ -40,6 +40,23 @@ aqui é um possível conflito ao atualizar o CADCraft.
 | `apps/cadcraft/src/main.rs` | carregar/gravar `freeeletrica.setup` e abrir a paleta ao iniciar |
 | `xtask/src/layers.rs` | `free-eletrica` na tabela de camadas |
 
+## Marca ArtCraft
+
+A licença da marca (`cadcraft/docs/brand/LICENSE-brand.txt`) pede que versões modificadas
+retirem os logos do ArtCraft e não se apresentem como produto ArtCraft; dizer em texto que o
+Free Elétrica é baseado no CADCraft da equipe ArtCraft é permitido. Os avisos de copyright
+(LICENSE-MIT, NOTICE, recursos do executável) ficam como estão. Mudanças feitas por isso:
+
+| Arquivo | O quê |
+| :--- | :--- |
+| `docs/brand/` | os arquivos de logo removidos; só o texto da licença fica |
+| `README.md`, `ATTRIBUTION.md` | sem as imagens do logo, com a nota de versão modificada |
+| `crates/ui-egui/src/dialogs.rs` | Sobre: "Free Elétrica, based on CADCraft by the ArtCraft team" e o link do Free Elétrica no lugar dos links do ArtCraft |
+| `apps/cadcraft/src/native_menu.rs` | sem o item "Join the ArtCraft Discord" (menu do macOS) |
+
+Ao atualizar o CADCraft, confira se a versão nova trouxe a marca de volta (logos novos, links
+para getartcraft.com ou o Discord do ArtCraft na interface).
+
 ## Como sair do fork um dia
 
 O caminho sem cópia é propor ao CADCraft um ponto de extensão genérico, útil para qualquer
