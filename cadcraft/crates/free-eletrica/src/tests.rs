@@ -1034,7 +1034,21 @@ fn setup_normaliza_a_concessionaria() {
 
 #[test]
 fn alvo_do_proximo_elecircuito() {
-    circuito::definir_alvo(Some((Handle(5), "3".into())));
-    assert_eq!(circuito::tomar_alvo(), Some((Handle(5), "3".into())));
-    assert_eq!(circuito::tomar_alvo(), None);
+    // O alvo é do desenho que o escolheu: outro desenho aberto (ou outra sessão) não o toma.
+    circuito::definir_alvo(901, Some((Handle(5), "3".into())));
+    assert_eq!(circuito::tomar_alvo(902), None);
+    assert_eq!(circuito::tomar_alvo(901), Some((Handle(5), "3".into())));
+    assert_eq!(circuito::tomar_alvo(901), None);
+}
+
+#[test]
+fn modelo_do_proximo_eleponto_e_do_desenho() {
+    let m = biblioteca::Modelo { bloco: "TOM".into(), ..Default::default() };
+    biblioteca::definir_modelo(911, Some(m.clone()));
+    assert_eq!(biblioteca::modelo(912), None);
+    // Fica para as próximas vezes no mesmo desenho.
+    assert_eq!(biblioteca::modelo(911), Some(m.clone()));
+    assert_eq!(biblioteca::modelo(911), Some(m));
+    biblioteca::definir_modelo(911, None);
+    assert_eq!(biblioteca::modelo(911), None);
 }

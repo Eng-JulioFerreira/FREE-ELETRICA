@@ -141,22 +141,27 @@ pub struct Modelo {
     pub valores: Vec<(String, String)>,
 }
 
-static MODELO: std::sync::Mutex<Option<Modelo>> = std::sync::Mutex::new(None);
+/// O modelo de cada desenho aberto (`uid` do desenho): outro desenho ou outra sessão no mesmo
+/// processo não usa o modelo deste.
+static MODELO: std::sync::Mutex<std::collections::BTreeMap<u64, Modelo>> = std::sync::Mutex::new(std::collections::BTreeMap::new());
 
-/// Escolhe o que o ELEPONTO insere (a janela Inserir pontos escolhe antes de começar o comando).
-pub fn definir_modelo(m: Option<Modelo>) {
-    match MODELO.lock() {
-        Ok(mut g) => *g = m,
-        Err(e) => *e.into_inner() = m,
+/// Escolhe (ou limpa) o que o ELEPONTO insere no desenho `desenho` (a janela Inserir pontos
+/// escolhe antes de começar o comando).
+pub fn definir_modelo(desenho: u64, m: Option<Modelo>) {
+    let mut g = MODELO.lock().unwrap_or_else(|e| e.into_inner());
+    match m {
+        Some(m) => {
+            g.insert(desenho, m);
+        }
+        None => {
+            g.remove(&desenho);
+        }
     }
 }
 
-/// O modelo escolhido (fica para as próximas vezes).
-pub fn modelo() -> Option<Modelo> {
-    match MODELO.lock() {
-        Ok(g) => g.clone(),
-        Err(e) => e.into_inner().clone(),
-    }
+/// O modelo escolhido para o desenho `desenho` (fica para as próximas vezes).
+pub fn modelo(desenho: u64) -> Option<Modelo> {
+    MODELO.lock().unwrap_or_else(|e| e.into_inner()).get(&desenho).cloned()
 }
 
 /// Exclui pontos elétricos do desenho. Recusa (sem excluir nada) se algum handle não for um

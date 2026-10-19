@@ -222,7 +222,7 @@ fn run_tabelas_demanda(_s: &mut Session, _p: &Value) -> Result<Value> {
 fn run_alvo(s: &mut Session, p: &Value) -> Result<Value> {
     let q = achar_quadro(&analise(s)?, p.get("quadro"))?;
     let id = texto("eletrica.circuito.alvo", p, "circuito")?;
-    ele::circuito::definir_alvo(Some((q, id.clone())));
+    ele::circuito::definir_alvo(s.state()?.uid, Some((q, id.clone())));
     Ok(json!({ "quadro": q.hex(), "circuito": id }))
 }
 
@@ -385,7 +385,7 @@ impl Interactive for CircuitoM {
         s.set_selection(Vec::new());
         // Escolhido antes (eletrica.circuito.alvo, o "adicionar pontos" do quadro de cargas):
         // vai direto à seleção dos pontos.
-        if let Some((q, c)) = ele::circuito::tomar_alvo()
+        if let Some((q, c)) = ele::circuito::tomar_alvo(s.state()?.uid)
             && let Some(p) = quadro_valido(s, q)?
         {
             self.quadro = Some((q, p.rotulo()));
@@ -752,7 +752,7 @@ fn run_modelo(s: &mut Session, p: &Value) -> Result<Value> {
     let b =
         blocos.iter().find(|b| b.nome.eq_ignore_ascii_case(&bloco)).ok_or_else(|| bad(CMD, format!("the drawing has no point block `{bloco}`")))?;
     let modelo = ele::biblioteca::Modelo { bloco: b.nome.clone(), rotacao: rotacao_de(CMD, p)?, valores: valores_de(CMD, p)? };
-    ele::biblioteca::definir_modelo(Some(modelo.clone()));
+    ele::biblioteca::definir_modelo(s.state()?.uid, Some(modelo.clone()));
     json_de(&modelo)
 }
 
@@ -781,7 +781,7 @@ impl Interactive for PontoM {
             s.echo("O desenho não tem blocos de ponto elétrico: insira o template FREE_ELETRICA_BLOCOS.dxf.");
             return Ok(Step::Done);
         }
-        self.modelo = ele::biblioteca::modelo().filter(|m| blocos.iter().any(|b| b.nome.eq_ignore_ascii_case(&m.bloco)));
+        self.modelo = ele::biblioteca::modelo(s.state()?.uid).filter(|m| blocos.iter().any(|b| b.nome.eq_ignore_ascii_case(&m.bloco)));
         Ok(Step::Continue)
     }
     fn prompt(&self, s: &Session) -> Prompt {

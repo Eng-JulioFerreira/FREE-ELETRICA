@@ -89,23 +89,26 @@ pub fn proxima_letra(pontos: &[PontoEletrico], quadro: Option<Handle>, circuito:
 }
 
 /// Quadro e circuito já escolhidos para o próximo ELECIRCUITO (o quadro de cargas usa para
-/// "adicionar pontos" sem perguntar de novo). Consumido pelo comando.
-static ALVO: std::sync::Mutex<Option<(Handle, String)>> = std::sync::Mutex::new(None);
+/// "adicionar pontos" sem perguntar de novo), por desenho (`uid` do desenho aberto): outro
+/// desenho ou outra sessão no mesmo processo não toma o alvo deste. Consumido pelo comando.
+static ALVO: std::sync::Mutex<std::collections::BTreeMap<u64, (Handle, String)>> = std::sync::Mutex::new(std::collections::BTreeMap::new());
 
-/// Escolhe (ou limpa) o quadro e o circuito do próximo ELECIRCUITO.
-pub fn definir_alvo(alvo: Option<(Handle, String)>) {
-    match ALVO.lock() {
-        Ok(mut g) => *g = alvo,
-        Err(e) => *e.into_inner() = alvo,
+/// Escolhe (ou limpa) o quadro e o circuito do próximo ELECIRCUITO no desenho `desenho`.
+pub fn definir_alvo(desenho: u64, alvo: Option<(Handle, String)>) {
+    let mut g = ALVO.lock().unwrap_or_else(|e| e.into_inner());
+    match alvo {
+        Some(a) => {
+            g.insert(desenho, a);
+        }
+        None => {
+            g.remove(&desenho);
+        }
     }
 }
 
-/// Toma o alvo escolhido (e o limpa).
-pub fn tomar_alvo() -> Option<(Handle, String)> {
-    match ALVO.lock() {
-        Ok(mut g) => g.take(),
-        Err(e) => e.into_inner().take(),
-    }
+/// Toma o alvo escolhido para o desenho `desenho` (e o limpa).
+pub fn tomar_alvo(desenho: u64) -> Option<(Handle, String)> {
+    ALVO.lock().unwrap_or_else(|e| e.into_inner()).remove(&desenho)
 }
 
 /// O próximo número de circuito livre no quadro: o maior número usado mais um.
