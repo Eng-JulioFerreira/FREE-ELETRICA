@@ -57,6 +57,16 @@ Free Elétrica é baseado no CADCraft da equipe ArtCraft é permitido. Os avisos
 Ao atualizar o CADCraft, confira se a versão nova trouxe a marca de volta (logos novos, links
 para getartcraft.com ou o Discord do ArtCraft na interface).
 
+## O fork no GitHub
+
+O repositório `Eng-JulioFerreira/cadcraft-free-eletrica` foi criado pelo botão de fork (API
+`POST /repos/storytold/cadcraft/forks`), então o GitHub o mostra ligado ao original. Ele não
+tem histórico próprio de desenvolvimento: cada publicação (`scripts\publicar_fork.ps1`) é um
+commit com a árvore de `cadcraft/` deste repositório. O primeiro commit tem como pai a Release
+0.9.0 do CADCraft; os seguintes têm como pai o commit anterior do fork e, quando o subtree foi
+atualizado, também o commit oficial novo (o `git-subtree-split` do squash), para o fork seguir
+ligado ao CADCraft.
+
 ## Como sair do fork um dia
 
 O caminho sem cópia é propor ao CADCraft um ponto de extensão genérico, útil para qualquer

@@ -23,7 +23,7 @@ clean-room, assets) são obrigatórias. As exceções estão no fim deste arquiv
 | `cadcraft/crates/ui-egui/tests/eletrica_painel.rs` | Testes da paleta e das janelas. |
 | `docs/` | Padrão de blocos, arquitetura do fork. |
 | `templates/` | Template de blocos e camadas (`FREE_ELETRICA_BLOCOS.dxf`) e a fonte dos símbolos. |
-| `scripts/` | `compilar.bat`, `iniciar.bat`, `testar.bat`, `gerar_template.py`. |
+| `scripts/` | `compilar.bat`, `iniciar.bat`, `testar.bat`, `publicar_fork.bat`, `gerar_template.py`. |
 
 Pontos de registro no código do CADCraft (as únicas linhas nossas fora dos nossos arquivos)
 estão listados em `docs/arquitetura.md`. Qualquer mudança nova num arquivo do CADCraft entra
@@ -83,6 +83,13 @@ inteiro). Commits atômicos em Conventional Commits (`feat:`, `fix:`, `docs:`, `
   o autosave do usuário); prefira os testes sem interface e o `cadcraft-cli`.
 - Não compile por cima do executável que o usuário está usando (o Windows bloqueia o arquivo):
   veja qual está aberto e use o outro perfil (release ou desenvolvimento).
+
+## Fork no GitHub
+
+`github.com/Eng-JulioFerreira/cadcraft-free-eletrica` é um fork de verdade do CADCraft com a
+pasta `cadcraft/` deste repositório. Depois de um commit que muda `cadcraft/` (portões passando e
+push do repositório principal), rode `scripts\publicar_fork.bat`: ele cria um commit no `main` do
+fork com a árvore exata de `cadcraft/`, sem `--force`. O fork não é editado direto.
 
 ## Atualizar o CADCraft
 

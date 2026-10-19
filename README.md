@@ -14,11 +14,18 @@ registro, porque o CADCraft ainda não tem como receber extensões. **A meta é 
 um projeto separado que só traz o próprio código e usa o CADCraft original sem modificá-lo.
 
 Isso depende de o CADCraft ganhar uma **API de extensão** (registrar comandos extras no motor e
-painéis e janelas extras na interface, carregados quando o programa inicia). O código do CRAFT
-ELE já está organizado para essa mudança: o motor fica numa biblioteca própria, os comandos e a
+painéis e janelas extras na interface, carregados quando o programa inicia), proposta em
+[storytold/cadcraft#1544](https://github.com/storytold/cadcraft/issues/1544). O código do Free
+Elétrica já está organizado para essa mudança: o motor fica numa biblioteca própria, os comandos e a
 paleta ficam em arquivos próprios, e as poucas linhas nos arquivos do CADCraft estão listadas em
 [docs/arquitetura.md](docs/arquitetura.md). Elas são exatamente o que a API de extensão precisaria
 oferecer.
+
+**Fork no GitHub:** [Eng-JulioFerreira/cadcraft-free-eletrica](https://github.com/Eng-JulioFerreira/cadcraft-free-eletrica)
+é um fork de verdade do CADCraft (aparece na rede de forks do projeto original) com o Free
+Elétrica dentro. Ele traz só a pasta `cadcraft/` deste repositório, publicada por
+`scripts\publicar_fork.bat`; o desenvolvimento, os templates, os scripts e a documentação ficam
+aqui.
 
 ## O que faz
 
