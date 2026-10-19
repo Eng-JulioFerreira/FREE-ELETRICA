@@ -1,6 +1,12 @@
-> **This copy of CADCraft is part of [Free Elétrica](../README.md), a modified version.** As
-> the ArtCraft brand terms require, the ArtCraft logos were removed from it. Free Elétrica is
-> based on CADCraft by the ArtCraft team and is not an ArtCraft product.
+> **This is a modified version of CADCraft that carries [Free Elétrica](https://github.com/Eng-JulioFerreira/FREE-ELETRICA),**
+> a GPL-3.0 add-on for low-voltage electrical design (Brazilian standard NBR 5410): the
+> Electrical palette, circuits, conduit routing, wiring symbols, load schedule and demand. The
+> add-on code is in `crates/free-eletrica`, `crates/engine/src/cmd/eletrica.rs` and
+> `crates/ui-egui/src/eletrica.rs`; templates, scripts and the user documentation live in the
+> [Free Elétrica repository](https://github.com/Eng-JulioFerreira/FREE-ELETRICA). As the ArtCraft
+> brand terms require, the ArtCraft logos were removed. Free Elétrica is based on CADCraft by the
+> ArtCraft team and is not an ArtCraft product. Proposal for an extension API so add-ons need no
+> fork: [storytold/cadcraft#1544](https://github.com/storytold/cadcraft/issues/1544).
 
 <h1 align="center">CADCraft</h1>
 
