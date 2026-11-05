@@ -32,7 +32,9 @@ Os pontos de registro no código do CADCraft estão em [arquitetura.md](arquitet
 - **Nós:** só blocos elétricos. **Arestas:** linhas, polilinhas abertas, arcos e splines abertas nas camadas de eletroduto.
 - Cada ponta vale pelo handle gravado (`from_handle`, `to_handle`), se o bloco está no raio de captura; senão, pelo bloco
   mais perto no raio. Sem bloco, o eletroduto fica solto e é apontado.
-- Cruzamento em X, derivação em T e bloco encostado no meio da linha não conectam.
+- Cruzamento em X e derivação em T sem bloco não conectam.
+- Um bloco no caminho de um eletroduto já é uma caixa: `eletroduto::encaixar` corta o trecho em `A -> bloco` e `bloco -> B`.
+  Vale a até 5 cm do traçado ao inserir, traçar, dimensionar, atualizar e ligar a inspeção; num bloco clicado, no raio de captura.
 - Comprimento da aresta = comprimento do traçado em planta + |cota - Z de A| + |cota - Z de B|. A cota é o pé-direito no
   teto, 0 no piso e o Z do bloco A na parede.
 - Sem caminho até o quadro, o comprimento é estimado por Manhattan 3D e marcado com `~`.
@@ -76,7 +78,7 @@ próprio `CommandSpec`.
 | Circuitos | `elecircuito`, `eleremoverponto`, `elecomando`, `eletrica.circuito.criar`, `.definir`, `.descrever`, `.juntar`, `.excluir`, `.alvo` |
 | Eletrodutos | `eleeletroduto`, `eletrica.eletroduto.modelo`, `.dividir`, `.definir`, `eletrica.eletrodutos` |
 | Cálculo | `eletrica.dimensionar`, `eletrica.rotear`, `eletrica.sobrescrever`, `eletrica.quadro`, `eletrica.quadro.equilibrar`, `eletrica.cargas`, `eletrica.demanda.tabelas`, `.salvar`, `.excluir`, `eletrica.setup` |
-| Documentação | `elefiacao`, `eleregen`, `elequadro_tabela`, `eletrica.unifilar`, `eletrica.materiais`, `eletrica.inspecionar`, `eletrica.analisar` |
+| Documentação | `elefiacao` (com `ancora` e `tag`: chamada a 45°), `eleregen`, `elequadro_tabela`, `eletrica.unifilar`, `eleunifilar`, `elelegenda`, `eletrica.materiais`, `eletrica.inspecionar`, `eletrica.analisar` |
 
 Comandos que só existem na interface, porque abrem janelas: `ELETRICA`, `ELECONFIG`, `ELEPONTOS`, `ELEBLOCOS`, `ELEATRIBUTOS`,
 `ELECARGAS`, `ELEROTEAR`, `ELEDIMENSIONAR`, `ELEMATERIAIS`, `ELECONFERIR`, `ELEINSPECAO`.

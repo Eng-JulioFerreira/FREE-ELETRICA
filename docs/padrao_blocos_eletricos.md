@@ -39,10 +39,23 @@ circuito (W / VA).
 ### Blocos base
 
 Na primeira ferramenta usada num desenho, entram sem perguntar as camadas e os blocos que faltam:
-`TOM-SIM-BAIXA`, `TOM-TUE`, `ILU-OCT`, `INT-SIM`, `INT-2S`, `INT-3S`, `INT-PAR`, `INT-INT`, `QDG`,
-`QDC`, `CX-PASSAGEM`. Um bloco com o mesmo nome já no desenho fica como está: é assim que se usa outro
-símbolo. Interruptores têm `TIPO_INTERRUPTOR` constante (`1S`, `2S`, `3S`, `PARALELO`,
-`INTERMEDIARIO`), que diz quantas teclas têm e como a fiação os liga.
+
+
+| Blocos | Símbolo | Altura |
+| :--- | :--- | :--- |
+| `TOM-SIM-BAIXA`, `TOM-DUP-BAIXA` | Um ou dois triângulos empilhados, sem hachura | 0,30 m |
+| `TOM-SIM-MEDIA`, `TOM-DUP-MEDIA` | Meia hachura | 1,20 m |
+| `TOM-SIM-ALTA`, `TOM-DUP-ALTA` | Hachura cheia | 2,10 m |
+| `INT-SIM`, `INT-2S`, `INT-3S` | Interruptor simples: 1, 2 ou 3 círculos vazados, tangentes | Ponto médio, 1,20 m |
+| `INT-PAR`, `INT-PAR-2S`, `INT-PAR-3S` | Paralelo (three-way): círculos cheios | Ponto médio |
+| `INT-INT`, `INT-INT-2S`, `INT-INT-3S` | Intermediário (four-way): círculos com meia hachura | Ponto médio |
+| Os nove interruptores com `-ALTO` no fim | Os mesmos | Ponto alto, 2,10 m |
+
+Também entram `TOM-TUE`, `ILU-OCT`, `QDG`, `QDC`, `RJ45`, `RACK` e `CX-PASSAGEM`. Um bloco com o mesmo nome já no desenho
+fica como está: é assim que se usa outro símbolo. Só o desenho padrão de uma versão anterior é trocado. Excluído na janela
+de blocos, um bloco de fábrica não volta sozinho; **Configurações > Geral** o traz de volta. Interruptores têm
+`TIPO_INTERRUPTOR` constante (`1S`, `2S`, `3S`, `PARALELO`, `PARALELO-2S`, `PARALELO-3S`, `INTERMEDIARIO`,
+`INTERMEDIARIO-2S`, `INTERMEDIARIO-3S`), que diz quantas teclas têm.
 
 ### Famílias
 
@@ -57,6 +70,10 @@ Cada definição de bloco pode ter uma família, gravada no XDATA do `BLOCK_RECO
 | `height_ref` | `LOW`, `MEDIUM`, `HIGH`, `CEILING`, `FLOOR`, `FIXED` (com `fixed_elevation_m`) |
 | `physical_box` | `NONE`, `4X2`, `4X4`, `OCTAGONAL`, `PULL_15X15`, `PULL_20X20`, `PULL_30X30` |
 | `power_va`, `power_factor`, `keys` | Potência, FP e teclas padrão |
+| `legend_name`, `material_desc` | Nome na Legenda de Símbolos e descrição na Lista de Materiais |
+
+Cada inserção herda os dois textos e pode ter os seus, nos atributos ou no XDATA `LEGENDA` e `DESC_MATERIAL`
+(`eletrica.ponto.documentacao`, ou o Inspetor de atributos). Vazio volta ao texto da família.
 
 A família manda sobre o nome do bloco e sobre `TIPO_PONTO`. `NONE` marca um bloco comum de CAD, que
 nunca é ponto, mesmo com atributos elétricos. Dados, racks e dispositivos especiais ficam fora dos
@@ -100,8 +117,10 @@ Configurações; os outros usam valores típicos de catálogo no código, a conf
 
 ### Tags de fiação
 
-`ELEFIACAO` põe em cada eletroduto escolhido uma tag, um bloco `ELE_TAG_FIACAO_<handle>` com uma
-marca por condutor, perpendicular ao trecho e agrupadas por circuito:
+`ELEFIACAO`, em dois cliques, põe no eletroduto uma tag com linha de chamada: 45° a partir do primeiro clique até o nível do
+segundo, e a base horizontal que as marcas atravessam. O XDATA guarda `leader_anchor_x/y` e `leader_tag_x/y`, e `ELEREGEN` refaz
+essa geometria. Em lote (Enter no começo, ou o JSON sem pontos), a tag fica perpendicular ao meio do trecho. A tag é um bloco
+`ELE_TAG_FIACAO_<handle>` com uma marca por condutor, agrupadas por circuito:
 
 - em cima, o número do circuito sobre a primeira marca e a letra sobre cada retorno (lado a
   lado leem `1b`);

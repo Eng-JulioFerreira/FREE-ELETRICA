@@ -260,3 +260,24 @@ Limites:
 - **Diagrama unifilar:** é um esquema simples do quadro, sem barras por fase e sem DPS desenhado.
 - **Padrões internos:** `sistema` e `caboPadrao` continuam no Setup, só por comando, para os quadros sem escolha e os desenhos antigos.
 - **`.AppImage`:** a regra de empacotar para Linux está em `CLAUDE.md`, mas o empacotamento ainda não existe.
+
+## Correções e padronização dos desenhos
+
+- **Destaque do circuito:** só existe com o Quadro de cargas aberto e usa um quadrado. Círculos e halos sobre o desenho são da inspeção.
+- **Bloco em linha:** um bloco no caminho do eletroduto corta o trecho, sem caixa nova nem aviso de erro.
+- **Excluir:** em blocos e famílias, pontos, circuitos, grupos DR, eletrodutos, perfis, cabos e tabelas de demanda.
+- **Legenda e materiais:** `LEGENDA` e `DESC_MATERIAL` em toda família e todo ponto; `ELELEGENDA` desenha a legenda da prancha.
+- **Famílias de fábrica:** 6 tomadas e 18 interruptores, com o preenchimento dizendo a altura ou a função.
+- **Eletrodutos:** a cor é do material e o tipo de linha é do caminhamento.
+- **Tag em dois cliques:** chamada a 45° com base, guardada no XDATA.
+- **Tabela do quadro:** tudo dentro de uma moldura, com cabeçalho, grade, total e rodapé dividido.
+- **Unifilar:** entrada com fase, neutro e terra, disjuntores curvos, barra com nós, DR com sub-barra e reservas.
+
+Limites desta etapa:
+
+- **Tolerância em linha:** sem clique, o bloco precisa estar a até 5 cm do traçado. Numa planta, um eletroduto do teto que passe
+  exatamente sobre uma tomada baixa também é cortado nela: confira esses cruzamentos.
+- **`TOM-TUE`:** continua com o triângulo cheio, o mesmo da tomada alta. Diferencie pela legenda ou redesenhe o bloco.
+- **Módulos:** a estimativa não conta o DPS.
+- **Blocos excluídos:** a marca vive nos dados do desenho e não foi testada depois de salvar e reabrir o DXF.
+- **Template:** `templates/FREE_ELETRICA_BLOCOS.dxf` ainda traz os símbolos antigos; só os blocos gerados pelo motor seguem o novo padrão.

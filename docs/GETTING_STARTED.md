@@ -57,7 +57,9 @@ Para mudar a curvatura ou o lado do arco, digite `Flecha` ou `Inverter` na linha
 
 - Um clique no vazio vira um desvio do trajeto, para contornar pilares.
 - Um clique no meio de um eletroduto insere uma caixa de passagem.
-- Cruzamentos e derivações sem caixa **não conectam**: cada eletroduto liga exatamente dois blocos.
+- Um clique num bloco que está no caminho de um eletroduto divide o trecho nele: o próprio bloco já é a caixa.
+- Cruzamentos sem bloco **não conectam**: cada eletroduto liga exatamente dois blocos.
+- A cor vem do material e o tipo de linha vem do caminhamento: contínua no teto, tracejada ou pontilhada na parede, traço e ponto no piso.
 
 ## 5. Dimensione
 
@@ -82,8 +84,12 @@ Depois de mudar algo, calcule e aplique de novo.
 
 ## 6. Documente
 
-- **Tags de fiação:** põe a simbologia nos eletrodutos. Mova a tag para onde quiser; ela fica lá.
-- **Tabela do quadro:** desenha o quadro de cargas num ponto da planta.
+- **Tags de fiação:** clique no eletroduto e depois onde os símbolos devem ficar. A chamada sai a 45° até a base. Enter no
+  começo põe uma tag no meio de todos os eletrodutos. Mova a tag para onde quiser; ela fica lá.
+- **Tabela do quadro:** desenha o quadro de cargas, todo dentro de uma moldura. Montagem, módulos, reservas e observações ficam
+  no Inspetor de atributos do quadro.
+- **Diagrama unifilar:** desenha o diagrama do quadro num ponto da planta, com os grupos de DR e as reservas.
+- **Legenda de símbolos:** desenha o símbolo e o **Nome na Legenda** de cada tipo de ponto usado.
 - **Atualizar tags e tabelas:** refaz o conteúdo das tags, tabelas e diagramas sem mudar as posições. Aplicar ao
   quadro também atualiza.
 - **Lista de materiais...:** cabos, eletrodutos, caixas, pontos e disjuntores. A **Folga de Cabos** fica no topo da janela.

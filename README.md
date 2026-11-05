@@ -20,7 +20,7 @@ primeira vez, o Windows pode avisar que o aplicativo é desconhecido: clique em 
 - **Dimensionamento pela NBR 5410:** corrente de projeto, FCT, FCA real por trecho, capacidade de condução,
   queda de tensão em 3D, seção e disjuntor, com travas para o que você escolher à mão.
 - **Eletrodutos que seguem a obra:** retos, a 45° ou em arco, com desvios e perfis que trazem o tipo de linha, a cor, o
-  caminhamento e os diâmetros. Cruzamento sem caixa não conecta, como na instalação real.
+  caminhamento e os diâmetros. Cruzamento sem bloco não conecta, como na instalação real; um bloco no caminho do eletroduto já é a caixa e divide o trecho.
 - **Cada quadro com o seu sistema:** sistema, tensão nominal, cabo padrão e quem o alimenta ficam no próprio quadro.
 - **Dimensionamento revisável:** esquema, cabo, curva e grupos de DR por circuito, com o resultado à vista antes de aplicar.
 - **Catálogos editáveis:** cabos elétricos e de telecom e perfis de eletroduto, com editar e excluir.

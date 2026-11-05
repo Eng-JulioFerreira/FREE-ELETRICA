@@ -45,7 +45,8 @@ divulgado para engenheiros e usuários finais: código em teste ou incompleto n�
 - **Persistência no desenho:** atributos dos blocos e XDATA `FREE_ELETRICA`, incluindo famílias no `BLOCK_RECORD` e o
   resultado do último cálculo nos quadros. As configurações do Setup ficam nas preferências do programa.
 - **Grafo 3D estrito de eletrodutos:** nós são só blocos elétricos, e cada eletroduto liga exatamente dois deles.
-  Cruzamento sem caixa não conecta. Comprimento = traçado + desníveis até os blocos.
+  Cruzamento sem bloco não conecta. Um bloco no caminho já é uma caixa: `eletroduto::encaixar` corta o trecho nele, a até
+  5 cm sem clique e no raio de captura quando clicado. Comprimento = traçado + desníveis até os blocos.
 - **Etapas separadas:** lançar não dimensiona. O cálculo, as tags e as tabelas só mudam com `ELEDIMENSIONAR` e `ELEREGEN`.
 - **Interface em janelas `egui` independentes, sem painel inferior fixo:** paleta no padrão das Tool Sets (abas Elétrica e
   Telecom, seções recolhíveis, ferramentas planas com ícone), mini-barra só enquanto um comando espera cliques, janelas sem
@@ -53,6 +54,10 @@ divulgado para engenheiros e usuários finais: código em teste ou incompleto n�
 - **Decisões por quadro e por circuito:** sistema, tensão nominal, cabo padrão e alimentação ficam em cada quadro; esquema,
   cabo, curva e grupo DR em cada circuito; classe e fator de demanda na família e no ponto. As Configurações guardam o que vale
   para o projeto todo: critérios, catálogos de cabos, perfis de eletroduto e tabelas de demanda.
+- **Eletroduto no desenho:** a cor é do material e o tipo de linha é do caminhamento (teto contínua, parede tracejada ou
+  pontilhada, piso traço e ponto).
+- **Toda janela que cria algo tem Excluir:** blocos e famílias, pontos, circuitos, grupos DR, eletrodutos, perfis, cabos e
+  tabelas de demanda, inclusive os de fábrica, que têm como restaurar.
 
 Os detalhes estão em `docs/SPECIFICATION.md`.
 
