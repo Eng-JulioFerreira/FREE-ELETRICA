@@ -1303,3 +1303,54 @@ fn excluir_por_comandos() {
     s.execute("eletrica.setup", &json!({ "tabelasExcluidas": [] })).unwrap();
     assert_eq!(s.execute("eletrica.demanda.tabelas", &json!({})).unwrap().as_array().unwrap().len(), antes);
 }
+
+#[test]
+fn tag_de_fiacao_em_dois_cliques() {
+    let _setup = trava_setup();
+    let mut s = Session::new();
+    let mut d = Drawing::new_metric();
+    d.header.set_i64("INSUNITS", 6);
+    s.open_drawing(d, "Tag", None);
+    s.execute("eletrica.bootstrap", &json!({})).unwrap();
+    let ponto = |s: &mut Session, b: &str, x: f64| {
+        s.execute("eleponto", &json!({ "bloco": b, "pontos": [[x, 0.0]] })).unwrap()["pontos"][0].as_str().unwrap().to_string()
+    };
+    let q = ponto(&mut s, "QDG", 0.0);
+    let f = ponto(&mut s, "TOM-SIM-BAIXA", 6.0);
+    let e = s.execute("eleeletroduto", &json!({ "de": q, "para": f, "tracado": "STRAIGHT" })).unwrap()["eletroduto"].as_str().unwrap().to_string();
+    let tag = |s: &Session, t: &str| s.doc().unwrap().model.get(Handle::parse_hex(t).unwrap()).unwrap().clone();
+    // Clicando: fora do eletroduto só avisa; a prévia mostra a chamada; os dois pontos ficam na tag.
+    s.start("elefiacao").unwrap();
+    s.input(Input::Point(Vec2::new(3.0, 5.0))).unwrap();
+    assert!(s.running.is_some());
+    s.input(Input::Point(Vec2::new(2.0, 0.0))).unwrap();
+    let previa = s.preview(Vec2::new(5.0, 2.0));
+    assert_eq!(previa.len(), 2);
+    s.input(Input::Point(Vec2::new(5.0, 2.0))).unwrap();
+    assert!(s.running.is_some(), "continua para o próximo eletroduto");
+    assert!(s.preview(Vec2::new(5.0, 2.0)).is_empty(), "a prévia some");
+    s.input(Input::Enter).unwrap();
+    assert!(s.running.is_none());
+    let (h, _) = free_eletrica::fiacao::tags(s.doc().unwrap())[0];
+    let EntityKind::Insert(i) = &tag(&s, &h.hex()).kind.clone() else { panic!("inserção") };
+    assert_eq!((i.insert.x, i.insert.y, i.rotation), (5.0, 2.0, 0.0));
+    // Por JSON, sem interface, e o erro não trava.
+    let r = s.execute("elefiacao", &json!({ "ancora": [4.0, 0.0], "tag": [6.0, 1.0] })).unwrap();
+    assert_eq!(r["tag"], h.hex(), "uma tag por eletroduto");
+    assert!(s.execute("elefiacao", &json!({ "ancora": [4.0, 0.0] })).is_err());
+    assert!(s.execute("elefiacao", &json!({ "tag": [4.0, 0.0] })).is_err());
+    assert!(s.execute("elefiacao", &json!({ "ancora": [40.0, 40.0], "tag": [6.0, 1.0] })).is_err());
+    assert!(s.execute("elefiacao", &json!({ "eletroduto": q, "ancora": [4.0, 0.0], "tag": [6.0, 1.0] })).is_err());
+    s.execute("elefiacao", &json!({ "eletroduto": e, "ancora": [4.0, 0.0], "tag": [7.0, 1.0] })).unwrap();
+    // ELEREGEN preserva.
+    s.execute("eleregen", &json!({})).unwrap();
+    let EntityKind::Insert(i) = &tag(&s, &h.hex()).kind.clone() else { panic!("inserção") };
+    assert_eq!((i.insert.x, i.insert.y), (7.0, 1.0));
+    // Esc no segundo clique cancela sem criar nada.
+    s.execute("elefiacao", &json!({ "limpar": true })).unwrap();
+    s.start("elefiacao").unwrap();
+    s.input(Input::Point(Vec2::new(2.0, 0.0))).unwrap();
+    s.input(Input::Cancel).unwrap();
+    assert!(s.running.is_none());
+    assert!(free_eletrica::fiacao::tags(s.doc().unwrap()).is_empty());
+}

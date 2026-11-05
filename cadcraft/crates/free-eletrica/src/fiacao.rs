@@ -11,9 +11,11 @@
 //!   four-way).
 //!
 //! **Tags não destrutivas:** cada eletroduto tem uma tag, um bloco próprio
-//! (`ELE_TAG_FIACAO_<handle>`) inserido no meio dele. Regenerar troca o conteúdo do bloco e mantém
-//! o deslocamento que o projetista deu à tag: basta movê-la com MOVE. Afastada do eletroduto, a
-//! tag ganha uma linha de chamada. O eletroduto de cada trecho é o menor do tipo do projeto que
+//! (`ELE_TAG_FIACAO_<handle>`). Com dois cliques ([`criar_chamada`]), ela nasce com uma linha de chamada:
+//! um trecho a 45° a partir do eletroduto até o nível do segundo clique e uma base horizontal, que as
+//! marcas atravessam. Os dois pontos ficam no XDATA, e regenerar refaz exatamente essa geometria.
+//! Criada em lote, a tag vai para o meio do eletroduto, e regenerar mantém o deslocamento que o
+//! projetista deu a ela; afastada, ganha uma linha de chamada reta. O eletroduto de cada trecho é o menor do tipo do projeto que
 //! comporta os condutores com a ocupação máxima da NBR 5410 (6.2.11.1.6), salvo se travado à mão.
 //!
 //! As marcas são blocos (`FIACAO-FASE`, `FIACAO-NEUTRO`, `FIACAO-RETORNO`, `FIACAO-PROTECAO`)
@@ -46,6 +48,11 @@ const CHAVE_OFFSET_X: &str = "user_offset_x";
 const CHAVE_OFFSET_Y: &str = "user_offset_y";
 const CHAVE_ANCORA_X: &str = "anchor_x";
 const CHAVE_ANCORA_Y: &str = "anchor_y";
+/// XDATA da tag com linha de chamada a 45°: o ponto no eletroduto e o ponto da tag.
+const CHAVE_LIDER_X: &str = "leader_anchor_x";
+const CHAVE_LIDER_Y: &str = "leader_anchor_y";
+const CHAVE_LIDER_TAG_X: &str = "leader_tag_x";
+const CHAVE_LIDER_TAG_Y: &str = "leader_tag_y";
 /// Prefixo do bloco de cada tag.
 pub const PREFIXO_TAG: &str = "ELE_TAG_FIACAO_";
 /// Quantos caracteres de `passing_wires` cabem num grupo 1000 do XDATA, com a chave.
@@ -97,6 +104,40 @@ const AFASTAMENTO_TEXTO: f64 = MEIA_MARCA + FOLGA + ALTURA_TEXTO / 2.0;
 const AFASTAMENTO_DIAMETRO: f64 = AFASTAMENTO_TEXTO + ALTURA_TEXTO / 2.0 + FOLGA + ALTURA_DIAMETRO / 2.0;
 /// A tag afastada mais que isto do eletroduto (m) ganha linha de chamada.
 const OFFSET_COM_CHAMADA: f64 = 0.02;
+/// Folga entre o joelho da chamada e os textos, e a sobra da base depois da última marca (m).
+const FOLGA_JOELHO: f64 = 0.04;
+
+/// A linha de chamada de uma tag: o ponto no eletroduto e o ponto da tag.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Chamada {
+    pub ancora: [f64; 2],
+    pub tag: [f64; 2],
+}
+
+impl Chamada {
+    /// Onde o trecho a 45° encontra o nível da tag, indo para o lado dela.
+    pub fn joelho(&self) -> [f64; 2] {
+        let lado = if self.tag[0] < self.ancora[0] { -1.0 } else { 1.0 };
+        [self.ancora[0] + lado * (self.tag[1] - self.ancora[1]).abs(), self.tag[1]]
+    }
+
+    /// As linhas da chamada, para a prévia do segundo clique.
+    pub fn linhas(&self) -> Vec<EntityKind> {
+        let v = |p: [f64; 2]| Vec3::new(p[0], p[1], 0.0);
+        let j = self.joelho();
+        vec![EntityKind::Line(Line { a: v(self.ancora), b: v(j) }), EntityKind::Line(Line { a: v(j), b: v(self.tag) })]
+    }
+}
+
+/// O que liga a tag ao eletroduto, em coordenadas locais do bloco.
+#[derive(Clone, Copy)]
+enum LigacaoLocal {
+    /// A linha reta da tag movida com MOVE.
+    Reta([f64; 2]),
+    /// A chamada a 45°: o ponto no eletroduto e o x do joelho, com a tag na origem.
+    Lider { ancora: [f64; 2], joelho_x: f64 },
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -653,15 +694,15 @@ fn faixa_do_grupo(k: &Condutores, grupo: &[(TipoCondutor, Option<&str>)], setup:
     (lo, hi)
 }
 
-/// O conteúdo do bloco de uma tag, em coordenadas locais: o eixo x segue o eletroduto. Sem
-/// circuitos, um aviso no lugar da fiação. `chamada`: o ponto do eletroduto, em coordenadas
-/// locais, quando a tag foi afastada dele.
+/// O conteúdo do bloco de uma tag, em coordenadas locais: o eixo x segue o eletroduto ou, com a chamada
+/// a 45°, a base dela. Sem circuitos, um aviso no lugar da fiação. Com a chamada, as marcas ficam do lado
+/// de lá do joelho, para o trecho a 45° não cortar os textos.
 fn bloco_da_tag(
     doc: &mut Drawing,
     nome: &str,
     circuitos: &[Condutores],
     diametro: Option<f64>,
-    chamada: Option<[f64; 2]>,
+    ligacao: Option<LigacaoLocal>,
     m: f64,
     setup: &Setup,
 ) -> Block {
@@ -672,7 +713,13 @@ fn bloco_da_tag(
     // de circuitos vizinhos não ficarem um sobre o outro.
     let faixas: Vec<(f64, f64)> = circuitos.iter().zip(&grupos).map(|(k, g)| faixa_do_grupo(k, g, setup)).collect();
     let largura: f64 = faixas.iter().map(|(lo, hi)| (hi - lo) / m).sum::<f64>() + faixas.len().saturating_sub(1) as f64 * entre;
-    let mut borda = -largura / 2.0;
+    let fora = largura / 2.0 + FOLGA_JOELHO / m;
+    let centro = match ligacao {
+        Some(LigacaoLocal::Lider { ancora, joelho_x }) if ancora[0] <= 0.0 => (joelho_x + fora).max(0.0),
+        Some(LigacaoLocal::Lider { joelho_x, .. }) => (joelho_x - fora).min(0.0),
+        _ => 0.0,
+    };
+    let mut borda = centro - largura / 2.0;
     let mut pecas: Vec<EntityKind> = Vec::new();
     for ((k, grupo), (lo, hi)) in circuitos.iter().zip(&grupos).zip(&faixas) {
         // A primeira marca fica a `-lo` da borda esquerda do grupo.
@@ -710,13 +757,20 @@ fn bloco_da_tag(
         }
     }
     if circuitos.is_empty() {
-        pecas.push(texto("?".into(), [0.0, acima], ALTURA_TEXTO / m));
+        pecas.push(texto("?".into(), [centro, acima], ALTURA_TEXTO / m));
     }
     // Na linha de baixo, centrado sob toda a simbologia: o diâmetro do eletroduto do trecho.
     let d = diametro.map_or_else(|| "%%c?".to_string(), |n| format!("%%c{}", br(n)));
-    pecas.push(texto(d, [0.0, -AFASTAMENTO_DIAMETRO / m], ALTURA_DIAMETRO / m));
-    if let Some(c) = chamada {
-        pecas.push(EntityKind::Line(Line { a: Vec3::new(0.0, 0.0, 0.0), b: Vec3::new(c[0], c[1], 0.0) }));
+    pecas.push(texto(d, [centro, -AFASTAMENTO_DIAMETRO / m], ALTURA_DIAMETRO / m));
+    let reta = |a: [f64; 2], b: [f64; 2]| EntityKind::Line(Line { a: Vec3::new(a[0], a[1], 0.0), b: Vec3::new(b[0], b[1], 0.0) });
+    match ligacao {
+        Some(LigacaoLocal::Reta(c)) => pecas.push(reta([0.0, 0.0], c)),
+        Some(LigacaoLocal::Lider { ancora, joelho_x }) => {
+            pecas.push(reta(ancora, [joelho_x, 0.0]));
+            let ponta = if ancora[0] <= 0.0 { centro + fora } else { centro - fora };
+            pecas.push(reta([joelho_x, 0.0], [ponta, 0.0]));
+        }
+        None => {}
     }
     for k in pecas {
         b.entities.push(Entity::new(doc.new_handle(), k));
@@ -767,6 +821,88 @@ fn gravar_no_eletroduto(doc: &mut Drawing, t: &Trecho, tag: Option<Handle>) {
         xdata::gravar(x, rota::CHAVE_TAG, Some(&h.hex()));
     }
     doc.model.replace(e);
+}
+
+fn gravar_chamada(xd: &mut Vec<cadcraft_doc::RawTag>, c: &Chamada) {
+    xdata::gravar(xd, CHAVE_LIDER_X, Some(&c.ancora[0].to_string()));
+    xdata::gravar(xd, CHAVE_LIDER_Y, Some(&c.ancora[1].to_string()));
+    xdata::gravar(xd, CHAVE_LIDER_TAG_X, Some(&c.tag[0].to_string()));
+    xdata::gravar(xd, CHAVE_LIDER_TAG_Y, Some(&c.tag[1].to_string()));
+}
+
+/// A chamada gravada numa tag. O ponto da tag é onde ela está agora: movê-la com MOVE vale.
+fn ler_chamada(doc: &Drawing, tag: Handle) -> Option<Chamada> {
+    let e = doc.model.get(tag)?;
+    let EntityKind::Insert(i) = &e.kind else { return None };
+    let xd = xdata::ler(&e.common.xdata);
+    Some(Chamada { ancora: [numero_do_xdata(&xd, CHAVE_LIDER_X)?, numero_do_xdata(&xd, CHAVE_LIDER_Y)?], tag: [i.insert.x, i.insert.y] })
+}
+
+/// O ponto da chamada volta para cima do eletroduto, se ele mudou de lugar, e a tag vai junto. Com o
+/// eletroduto no lugar, nada muda.
+fn ajustar_chamada(doc: &Drawing, eletroduto: Handle, c: Chamada, m: f64) -> Chamada {
+    let Some((q, d, _)) =
+        doc.model.get(eletroduto).and_then(|e| rota::tracado(&e.kind, 0.005 / m)).and_then(|t| rota::perto_do_tracado(&t, c.ancora))
+    else {
+        return c;
+    };
+    if d * m < 1e-6 {
+        return c;
+    }
+    let (dx, dy) = (q[0] - c.ancora[0], q[1] - c.ancora[1]);
+    Chamada { ancora: q, tag: [c.tag[0] + dx, c.tag[1] + dy] }
+}
+
+/// Põe a tag de um eletroduto com a linha de chamada a 45°: o primeiro clique (`ancora`, levado para cima
+/// do eletroduto) e o segundo (`tag`). Uma tag que já existe passa para essa geometria. Devolve a tag.
+pub fn criar_chamada(doc: &mut Drawing, setup: &Setup, eletroduto: Handle, ancora: [f64; 2], tag: [f64; 2]) -> Result<Handle, String> {
+    if !ancora.iter().chain(tag.iter()).all(|v| v.is_finite()) {
+        return Err("ponto inválido".into());
+    }
+    let (m, _) = setup.unidade.metros(doc.header.i64("INSUNITS", 0));
+    let m = if m > 0.0 { m } else { 1.0 };
+    let e = doc.model.get(eletroduto).filter(|e| setup.e_camada_eletroduto(&e.common.layer)).ok_or("o objeto não é um eletroduto")?;
+    let t = rota::tracado(&e.kind, 0.005 / m).ok_or("o objeto não é um eletroduto aberto")?;
+    let (q, _, _) = rota::perto_do_tracado(&t, ancora).ok_or("não achei o ponto no eletroduto")?;
+    garantir_blocos(doc, m);
+    let c = Chamada { ancora: q, tag };
+    let mut xd = Vec::new();
+    xdata::gravar(&mut xd, rota::CHAVE_ESQUEMA, Some(rota::VERSAO_ESQUEMA));
+    xdata::gravar(&mut xd, CHAVE_PAI, Some(&eletroduto.hex()));
+    gravar_chamada(&mut xd, &c);
+    let posicao = Vec3::new(tag[0], tag[1], 0.0);
+    let existente = tags(doc).into_iter().find(|(_, p)| *p == eletroduto).map(|(t, _)| t);
+    let h = match existente.and_then(|t| doc.model.get(t).map(|e| (**e).clone())) {
+        Some(mut e) => {
+            if let EntityKind::Insert(i) = &mut e.kind {
+                i.insert = posicao;
+                i.rotation = 0.0;
+            }
+            e.common.xdata = xd;
+            let h = e.handle;
+            doc.model.replace(e);
+            h
+        }
+        None => {
+            let nome = nome_do_bloco(eletroduto);
+            doc.blocks.insert(nome.clone(), Arc::new(Block::new(&nome)));
+            let ins = Insert {
+                block: nome,
+                insert: posicao,
+                scale: Vec3::new(1.0, 1.0, 1.0),
+                rotation: 0.0,
+                attribs: Vec::new(),
+                cols: 1,
+                rows: 1,
+                col_spacing: 0.0,
+                row_spacing: 0.0,
+            };
+            doc.add(&Space::Model, Common { layer: CAMADA.into(), xdata: xd, ..Common::default() }, EntityKind::Insert(ins))
+                .map_err(|e| e.to_string())?
+        }
+    };
+    regenerar(doc, setup, None)?;
+    Ok(h)
 }
 
 /// O que uma regeneração fez.
@@ -820,7 +956,9 @@ pub fn regenerar(doc: &mut Drawing, setup: &Setup, criar: Option<&[Handle]>) -> 
         if ja.is_none() && !criar.is_some_and(|l| l.contains(&h)) {
             continue;
         }
-        let rotacao = angulo_de_leitura(angulo);
+        // A chamada a 45° guarda os dois pontos: a base fica horizontal, em qualquer ângulo do eletroduto.
+        let lider = ja.and_then(|t| ler_chamada(doc, t)).map(|c| ajustar_chamada(doc, h, c, m));
+        let rotacao = if lider.is_some() { 0.0 } else { angulo_de_leitura(angulo) };
         // O deslocamento: o que o projetista moveu em relação ao meio do eletroduto na última
         // regeneração. Se o eletroduto mudou, a tag o acompanha.
         let offset = ja
@@ -835,18 +973,26 @@ pub fn regenerar(doc: &mut Drawing, setup: &Setup, criar: Option<&[Handle]>) -> 
         let afastada = offset[0].hypot(offset[1]) * m > OFFSET_COM_CHAMADA;
         let (s, c) = rotacao.sin_cos();
         // O ponto do eletroduto em coordenadas locais: -offset girado de -rotacao.
-        let chamada = afastada.then(|| [-offset[0] * c - offset[1] * s, offset[0] * s - offset[1] * c]);
+        let ligacao = match &lider {
+            Some(l) => Some(LigacaoLocal::Lider { ancora: [l.ancora[0] - l.tag[0], l.ancora[1] - l.tag[1]], joelho_x: l.joelho()[0] - l.tag[0] }),
+            None => afastada.then_some(LigacaoLocal::Reta([-offset[0] * c - offset[1] * s, offset[0] * s - offset[1] * c])),
+        };
         let nome = nome_do_bloco(h);
-        let bloco = bloco_da_tag(doc, &nome, &circuitos, diametro, chamada, m, setup);
+        let bloco = bloco_da_tag(doc, &nome, &circuitos, diametro, ligacao, m, setup);
         doc.blocks.insert(nome.clone(), Arc::new(bloco));
-        let posicao = Vec3::new(meio[0] + offset[0], meio[1] + offset[1], 0.0);
+        let posicao = lider.map_or(Vec3::new(meio[0] + offset[0], meio[1] + offset[1], 0.0), |l| Vec3::new(l.tag[0], l.tag[1], 0.0));
         let mut xd = Vec::new();
         xdata::gravar(&mut xd, rota::CHAVE_ESQUEMA, Some(rota::VERSAO_ESQUEMA));
         xdata::gravar(&mut xd, CHAVE_PAI, Some(&h.hex()));
-        xdata::gravar(&mut xd, CHAVE_ANCORA_X, Some(&meio[0].to_string()));
-        xdata::gravar(&mut xd, CHAVE_ANCORA_Y, Some(&meio[1].to_string()));
-        xdata::gravar(&mut xd, CHAVE_OFFSET_X, Some(&offset[0].to_string()));
-        xdata::gravar(&mut xd, CHAVE_OFFSET_Y, Some(&offset[1].to_string()));
+        match &lider {
+            Some(l) => gravar_chamada(&mut xd, l),
+            None => {
+                xdata::gravar(&mut xd, CHAVE_ANCORA_X, Some(&meio[0].to_string()));
+                xdata::gravar(&mut xd, CHAVE_ANCORA_Y, Some(&meio[1].to_string()));
+                xdata::gravar(&mut xd, CHAVE_OFFSET_X, Some(&offset[0].to_string()));
+                xdata::gravar(&mut xd, CHAVE_OFFSET_Y, Some(&offset[1].to_string()));
+            }
+        }
         let tag = match ja.and_then(|t| doc.model.get(t).map(|e| (**e).clone())) {
             Some(mut e) => {
                 if let EntityKind::Insert(i) = &mut e.kind {

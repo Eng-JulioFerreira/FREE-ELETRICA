@@ -39,8 +39,8 @@ pub fn specs() -> Vec<CommandSpec> {
             .params("{interruptor: hex, luminarias: [hex], comando?: letter (default: the next free key of the switch)} → {comando, circuito, luminarias}")
             .interactive(|_| Ok(Box::new(ComandoM::default()))),
         CommandSpec::new("elefiacao", "Wiring Tags", run_fiacao)
-            .params("{quadro?: hex | TAG, eletrodutos?: [hex], limpar?: bool (erase the tags)} (default: every conduit) → {tags, criadas, apagadas, tabelas, avisos}")
-            .interactive(|_| Ok(Box::new(FiacaoM))),
+            .params("{quadro?: hex | TAG, eletrodutos?: [hex], limpar?: bool (erase the tags), ancora?: [x, y] (the point on the conduit), tag?: [x, y] (where the wiring symbols go: draws the 45° leader and its base line), eletroduto?: hex (default: the conduit at `ancora`)} (default: every conduit, at its middle) → {tags, criadas, apagadas, tabelas, avisos} or {tag}")
+            .interactive(|_| Ok(Box::new(FiacaoM::default()))),
         CommandSpec::new("eleregen", "Regenerate Electrical Drawing", run_regen).params("{} → updates tags and tables in place, keeping their positions: {tags, apagadas, tabelas, avisos}"),
         CommandSpec::new("elequadro_tabela", "Load Schedule Table", run_tabela)
             .params("{quadro?: hex | TAG, ponto: [x, y]} → draws the load schedule as a block at the point (moves it if the board already has one): {tabela}")
@@ -678,6 +678,22 @@ fn regenerar_criando(s: &mut Session, criar: &[Handle]) -> Result<ele::fiacao::R
 
 fn run_fiacao(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "elefiacao";
+    if p.get("ancora").is_some() || p.get("tag").is_some() {
+        let ancora = p.get("ancora").and_then(ponto_de).ok_or_else(|| bad(CMD, "`ancora` ([x, y]) is required with `tag`"))?;
+        let tag = p.get("tag").and_then(ponto_de).ok_or_else(|| bad(CMD, "`tag` ([x, y]) is required with `ancora`"))?;
+        let e = match p.get("eletroduto").filter(|v| !v.is_null()) {
+            Some(_) => handle(CMD, p, "eletroduto")?,
+            None => {
+                let (setup, m) = (ele::setup::atual(), metros(s)?);
+                ele::eletroduto::eletroduto_em(s.doc()?, &setup, ancora, m)
+                    .map(|(h, _)| h)
+                    .ok_or_else(|| bad(CMD, "there is no conduit at `ancora`"))?
+            }
+        };
+        preparar(s)?;
+        let h = ele::fiacao::criar_chamada(s.doc_mut()?, &ele::setup::atual(), e, ancora, tag).map_err(|e| bad(CMD, e))?;
+        return Ok(json!({ "tag": h.hex() }));
+    }
     let lista: Option<Vec<Handle>> = match (p.get("eletrodutos"), p.get("quadro")) {
         (Some(_), _) => Some(handles(CMD, p, "eletrodutos")?),
         (None, Some(q)) if !q.is_null() => {
@@ -709,8 +725,14 @@ fn run_regen(s: &mut Session, _p: &Value) -> Result<Value> {
     Ok(v)
 }
 
-/// ELEFIACAO digitado: os quadros ou eletrodutos selecionados, ou Enter para todos.
-struct FiacaoM;
+/// ELEFIACAO digitado, em dois cliques: o ponto no eletroduto, onde a chamada nasce, e o ponto da planta
+/// onde os símbolos ficam, até Enter. Enter no começo põe uma tag no meio de todos os eletrodutos.
+#[derive(Default)]
+struct FiacaoM {
+    /// O primeiro clique: o eletroduto e o ponto nele.
+    ancora: Option<(Handle, [f64; 2])>,
+    feitas: usize,
+}
 
 impl FiacaoM {
     fn executar(s: &mut Session, lista: Vec<Handle>) -> Result<Step> {
@@ -737,14 +759,43 @@ impl Interactive for FiacaoM {
         Ok(Step::Continue)
     }
     fn prompt(&self, _s: &Session) -> Prompt {
-        Prompt::new("Selecione o quadro ou os eletrodutos", Accept::SELECT).default("Todos")
+        match (self.ancora, self.feitas) {
+            (Some(_), _) => Prompt::new("Clique onde os símbolos da fiação ficam", Accept::POINT),
+            (None, 0) => Prompt::new("Clique no eletroduto, onde a chamada nasce", Accept::POINT).default("Todos, no meio"),
+            (None, _) => Prompt::new("Clique no próximo eletroduto (Enter termina)", Accept::POINT),
+        }
+    }
+    fn preview(&self, _s: &Session, cursor: Vec2) -> Vec<EntityKind> {
+        self.ancora.map_or_else(Vec::new, |(_, a)| ele::fiacao::Chamada { ancora: a, tag: [cursor.x, cursor.y] }.linhas())
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
         match i {
             Input::Cancel => Ok(Step::Done),
+            Input::Enter if self.ancora.is_some() => {
+                self.ancora = None;
+                Ok(Step::Continue)
+            }
+            Input::Enter if self.feitas > 0 => Ok(Step::Done),
             Input::Enter => {
                 let todos = todos_os_eletrodutos(s)?;
                 Self::executar(s, todos)
+            }
+            Input::Point(q) => {
+                let q = [q.x, q.y];
+                match self.ancora.take() {
+                    None => {
+                        let (setup, m) = (ele::setup::atual(), metros(s)?);
+                        match ele::eletroduto::eletroduto_em(s.doc()?, &setup, q, m) {
+                            Some((h, p)) => self.ancora = Some((h, p)),
+                            None => s.echo("Clique num eletroduto."),
+                        }
+                    }
+                    Some((h, a)) => match ele::fiacao::criar_chamada(s.doc_mut()?, &ele::setup::atual(), h, a, q) {
+                        Ok(_) => self.feitas += 1,
+                        Err(e) => s.echo(e),
+                    },
+                }
+                Ok(Step::Continue)
             }
             Input::Pick(hs) => {
                 s.set_selection(Vec::new());

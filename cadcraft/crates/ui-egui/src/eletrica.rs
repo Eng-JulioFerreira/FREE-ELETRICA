@@ -705,7 +705,7 @@ const PALETA_ELETRICA: [Secao; 6] = [
                 Icone::Chamada,
                 "Tags de fiação",
                 "elefiacao",
-                "Põe a simbologia de fiação e o diâmetro nos eletrodutos; a posição que você der fica guardada (ELEFIACAO)",
+                "1º clique no eletroduto, 2º clique onde os símbolos ficam: a chamada sai a 45° até a base, e o resto dela fica guardado. Enter no começo: uma tag no meio de todos (ELEFIACAO)",
             ),
             ferr(Icone::Grade, "Tabela do quadro", "elequadro_tabela", "Desenha o quadro de cargas num ponto da planta (ELEQUADRO_TABELA)"),
             ferr(

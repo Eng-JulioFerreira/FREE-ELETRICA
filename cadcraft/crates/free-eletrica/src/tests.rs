@@ -2952,3 +2952,98 @@ fn excluir_blocos_eletrodutos_e_tabelas_de_fabrica() {
     }
     assert_eq!(s.tabelas_demanda().len(), total, "nunca sem nenhuma");
 }
+
+#[test]
+fn tag_com_chamada_a_45_graus_e_base() {
+    let setup = Setup::default();
+    let mut d = metros();
+    let q = qd(&mut d, 0.0, 0.0);
+    let t = tug(&mut d, 6.0, 0.0, "1");
+    let e = eletroduto::inserir(&mut d, q, t, rota::Instalacao::Teto, 0.0).unwrap();
+    editar::definir_sobrescrita(&mut d, q, "1", Some(2.5), None).unwrap();
+    assert!(fiacao::criar_chamada(&mut d, &setup, q, [1.0, 0.0], [2.0, 2.0]).is_err(), "o quadro não é eletroduto");
+    assert!(fiacao::criar_chamada(&mut d, &setup, e, [f64::NAN, 0.0], [2.0, 2.0]).is_err());
+    // O primeiro clique cai no eletroduto, mesmo um pouco fora.
+    let h = fiacao::criar_chamada(&mut d, &setup, e, [1.0, 0.02], [4.0, 2.0]).unwrap();
+    assert_eq!(fiacao::tags(&d), vec![(h, e)]);
+    let inserido = |d: &Drawing| match &d.model.get(h).unwrap().kind {
+        EntityKind::Insert(i) => (i.insert.x, i.insert.y, i.rotation, i.block.clone()),
+        _ => panic!("inserção"),
+    };
+    let (x, y, rot, nome) = inserido(&d);
+    assert_eq!((x, y, rot), (4.0, 2.0, 0.0));
+    // A diagonal, de (1, 0) até o joelho (3, 2), a 45°, e a base na altura da tag.
+    let linhas = |d: &Drawing| -> Vec<((f64, f64), (f64, f64))> {
+        d.blocks[&nome]
+            .entities
+            .iter()
+            .filter_map(|e| if let EntityKind::Line(l) = &e.kind { Some(((l.a.x, l.a.y), (l.b.x, l.b.y))) } else { None })
+            .collect()
+    };
+    let l = linhas(&d);
+    assert_eq!(l.len(), 2, "{l:?}");
+    assert!(perto(l[0].0.0, -3.0, 1e-9) && perto(l[0].0.1, -2.0, 1e-9) && perto(l[0].1.0, -1.0, 1e-9) && perto(l[0].1.1, 0.0, 1e-9), "{l:?}");
+    assert!(perto((l[0].1.1 - l[0].0.1).abs(), (l[0].1.0 - l[0].0.0).abs(), 1e-9), "45°");
+    assert!(perto(l[1].0.0, -1.0, 1e-9) && perto(l[1].0.1, 0.0, 1e-9) && perto(l[1].1.1, 0.0, 1e-9), "{l:?}");
+    // As marcas atravessam a base, depois do joelho; o circuito em cima, a bitola e o diâmetro embaixo.
+    let marcas: Vec<f64> =
+        d.blocks[&nome].entities.iter().filter_map(|e| if let EntityKind::Insert(i) = &e.kind { Some(i.insert.x) } else { None }).collect();
+    assert!(!marcas.is_empty() && marcas.iter().all(|x| *x > -1.0 && *x < l[1].1.0), "{marcas:?} {l:?}");
+    let textos: Vec<(String, f64, f64)> = d.blocks[&nome]
+        .entities
+        .iter()
+        .filter_map(|e| if let EntityKind::Text(t) = &e.kind { Some((t.value.clone(), t.insert.x, t.insert.y)) } else { None })
+        .collect();
+    let y_de = |v: &str| textos.iter().find(|(t, _, _)| t.starts_with(v)).map(|(_, _, y)| *y).unwrap_or_else(|| panic!("{v} em {textos:?}"));
+    assert!(y_de("1") > 0.0 && y_de("#") < 0.0 && y_de("%%c") < y_de("#"), "{textos:?}");
+    // Os dois pontos ficam no XDATA.
+    let xd = xdata::ler(&d.model.get(h).unwrap().common.xdata);
+    let valor = |k: &str| xd.iter().find(|(c, _)| c == k).unwrap().1.parse::<f64>().unwrap();
+    assert_eq!((valor("leader_anchor_x"), valor("leader_tag_x"), valor("leader_tag_y")), (1.0, 4.0, 2.0));
+    assert!(valor("leader_anchor_y").abs() < 1e-9);
+    // Regenerar mantém a geometria, mesmo com os dados mudando.
+    let antes = linhas(&d);
+    editar::definir_sobrescrita(&mut d, q, "1", Some(4.0), None).unwrap();
+    fiacao::regenerar(&mut d, &setup, None).unwrap();
+    // A diagonal e o joelho ficam iguais; a ponta da base acompanha a largura dos símbolos.
+    let depois = linhas(&d);
+    assert_eq!((depois[0], depois[1].0), (antes[0], antes[1].0));
+    assert_eq!(inserido(&d).0, 4.0);
+    assert!(d.blocks[&nome].entities.iter().any(|e| matches!(&e.kind, EntityKind::Text(t) if t.value == "#4")), "a bitola nova entra");
+    // A tag movida com MOVE fica onde foi, com a chamada refeita a partir do mesmo ponto no eletroduto.
+    let mut m = (**d.model.get(h).unwrap()).clone();
+    if let EntityKind::Insert(i) = &mut m.kind {
+        i.insert = Vec3::new(5.0, 3.0, 0.0);
+    }
+    d.model.replace(m);
+    fiacao::regenerar(&mut d, &setup, None).unwrap();
+    assert_eq!((inserido(&d).0, inserido(&d).1), (5.0, 3.0));
+    let l = linhas(&d);
+    assert!(perto(l[0].0.0, -4.0, 1e-9) && perto(l[0].0.1, -3.0, 1e-9), "{l:?}");
+    // Clicando perto, o joelho passa da tag: as marcas vão para depois dele, sem cortar os textos.
+    let h2 = fiacao::criar_chamada(&mut d, &setup, e, [1.0, 0.0], [1.5, 2.0]).unwrap();
+    assert_eq!(h2, h, "a tag é a mesma: uma por eletroduto");
+    let l = linhas(&d);
+    let joelho = l[0].1.0;
+    assert!(perto(joelho, 1.5, 1e-9), "{l:?}");
+    let marcas: Vec<f64> =
+        d.blocks[&nome].entities.iter().filter_map(|e| if let EntityKind::Insert(i) = &e.kind { Some(i.insert.x) } else { None }).collect();
+    assert!(marcas.iter().all(|x| *x > joelho), "{marcas:?} {joelho}");
+    // Para a esquerda, e o eletroduto no mesmo nível: sem diagonal útil, mas a base vai até o ponto.
+    let h3 = fiacao::criar_chamada(&mut d, &setup, e, [5.0, 0.0], [2.0, 1.0]).unwrap();
+    assert_eq!(h3, h);
+    let l = linhas(&d);
+    assert!(perto(l[0].1.0, 4.0 - 2.0, 1e-9), "joelho em x = 4 no desenho: {l:?}");
+    assert!(l[1].1.0 < l[1].0.0, "a base segue para a esquerda: {l:?}");
+    // O eletroduto se move: o ponto volta para cima dele e a tag acompanha.
+    let mut c = (**d.model.get(e).unwrap()).clone();
+    c.kind.transform(&cadcraft_doc::geom::Mat3::translate(cadcraft_doc::geom::Vec2::new(0.0, 0.1)));
+    d.model.replace(c);
+    let mut r = fiacao::regenerar(&mut d, &setup, None);
+    assert!(r.as_mut().is_ok());
+    assert!(perto(inserido(&d).1, 1.1, 1e-9), "{:?}", inserido(&d));
+    // Uma tag em lote continua no meio do eletroduto.
+    fiacao::limpar(&mut d, None);
+    fiacao::regenerar(&mut d, &setup, Some(&[e])).unwrap();
+    assert_eq!(fiacao::tags(&d).len(), 1);
+}
