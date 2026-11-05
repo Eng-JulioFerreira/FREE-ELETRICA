@@ -355,12 +355,28 @@ fn paleta_ferramentas_e_fluxo_completo() {
         h.render().unwrap().save(saida).unwrap();
     }
     let antes = h.state_mut().run("eletrica.analisar", json!({})).unwrap()["pontos"].as_array().unwrap().len();
+    // Um clique de mouse de verdade, pelo caminho do desenho: sobre a mini-barra não insere.
+    let clicar = |h: &mut Harness<'static, CadApp>, x: f32, y: f32| {
+        let pos = egui::pos2(x, y);
+        h.event(egui::Event::PointerMoved(pos));
+        h.run_steps(2);
+        for pressed in [true, false] {
+            h.event(egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE });
+            h.run_steps(2);
+        }
+    };
+    let contar = |h: &mut Harness<'static, CadApp>| h.state_mut().run("eletrica.analisar", json!({})).unwrap()["pontos"].as_array().unwrap().len();
+    clicar(&mut h, 265.0, 95.0);
+    assert_eq!(contar(&mut h), antes, "o clique na mini-barra não pode inserir");
+    clicar(&mut h, 1400.0, 500.0);
+    assert_eq!(contar(&mut h), antes + 1, "o clique no desenho insere");
+    assert_eq!(h.state().session.running.as_ref().map(|r| r.id.as_str()), Some("eleponto"), "e o comando continua");
     let app = h.state_mut();
     app.session.input(Input::Point(Vec2::new(9.0, 9.0))).unwrap();
     app.session.input(Input::Enter).unwrap();
     assert!(app.session.running.is_none());
     let a = app.run("eletrica.analisar", json!({})).unwrap();
-    assert_eq!(a["pontos"].as_array().unwrap().len(), antes + 1);
+    assert_eq!(a["pontos"].as_array().unwrap().len(), antes + 2);
     assert!(a["pontos"].as_array().unwrap().iter().any(|p| p["posicao"][0].as_f64() == Some(9.0)), "{a}");
     h.run_steps(3);
     assert!(h.query_by_label("Quadro pai").is_none(), "a mini-barra some com o comando");
@@ -372,15 +388,15 @@ fn paleta_ferramentas_e_fluxo_completo() {
     for filtro in ["Todos (", "Iluminação (", "Interruptores (", "Dados/Telecom (", "Quadros/Racks (", "Caixas ("] {
         assert!(h.query_all(egui_kittest::kittest::by().label_contains(filtro)).count() >= 1, "filtro {filtro}");
     }
-    h.get_by_label("Tomadas (2)").click();
+    h.get_by_label("Tomadas (3)").click();
     h.run_steps(3);
-    h.get_by_label("Pontos no desenho (2)");
+    h.get_by_label("Pontos no desenho (3)");
     // Excluir pede confirmação na própria linha.
     h.query_all_by_label("Excluir").next().unwrap().click();
     h.run_steps(3);
     h.get_by_label("Excluir?").click();
     h.run_steps(3);
-    h.get_by_label("Pontos no desenho (1)");
+    h.get_by_label("Pontos no desenho (2)");
     // O X também fecha: aqui, Esc.
     h.key_press(egui::Key::Escape);
     h.run_steps(3);
