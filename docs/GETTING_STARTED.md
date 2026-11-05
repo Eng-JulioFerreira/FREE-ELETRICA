@@ -79,10 +79,12 @@ Abra **Dimensionar projeto...** e escolha o quadro:
 
 Em **Quadro de cargas...**:
 
-- A aba **Resumo** mostra fases, grupo DR, cabo e disjuntor calculados. Um circuito que mudou depois do cálculo
-  aparece como **Desatualizado**.
-- A aba **Ficha de engenharia** mostra cada circuito: tipo de cabo, FCT, FCA, correntes, queda de tensão e as
-  travas de seção e disjuntor.
+- A tabela mostra fases, grupo DR, cabo e disjuntor calculados. Um circuito que mudou depois do cálculo aparece
+  como **Desatualizado**.
+- O menu **...** de cada linha adiciona e remove pontos, localiza o circuito, abre a ficha de engenharia (tipo de
+  cabo, FCT, FCA, correntes, queda de tensão e as travas de seção e disjuntor) e exclui o circuito.
+- **Configurações e dados do quadro** abre sistema, tensão, cabo padrão, alimentação, montagem, módulos, reservas e
+  observações.
 
 Depois de mudar algo, calcule e aplique de novo.
 

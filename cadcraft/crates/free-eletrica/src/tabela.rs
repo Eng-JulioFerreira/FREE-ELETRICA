@@ -191,12 +191,30 @@ fn pecas_da_tabela(r: &ResumoQuadro, m: f64) -> Vec<EntityKind> {
     let mut larg_totais = larguras_de(&totais);
     let (min_demanda, min_totais): (f64, f64) = (larg_demanda.iter().sum(), larg_totais.iter().sum());
 
-    // A largura total: a grade, o dobro da maior metade do rodapé e o título. A sobra vai para a descrição.
+    // O sub-cabeçalho: alimentação e alimentador; montagem e proteções; módulos e observações.
+    let a = &r.alimentador;
+    let sub_cabecalho: [[String; 2]; 3] = [
+        [
+            format!("ALIMENTAÇÃO: {}", r.alimentacao()),
+            format!("ALIMENTADOR / GERAL: Cabo #{} mm² | Disj. {} A", a.secao.map_or("-".to_string(), br), a.disjuntor.map_or("-".to_string(), br)),
+        ],
+        [
+            format!("MONTAGEM: {}", r.config.montagem.map_or("-", crate::quadro::Montagem::nome)),
+            format!("PROTEÇÕES: DR {} A / 30 mA | DPS Classe II, Uc >= {} V", a.dr.map_or("-".to_string(), br), fixo(a.dps_uc, 0)),
+        ],
+        [format!("Nº DE MÓDULOS DIN: {}", r.modulos()), format!("OBSERVAÇÕES: {}", r.config.observacoes.as_deref().unwrap_or("-"))],
+    ];
+    // As colunas cabem os textos, menos as observações, que quebram.
+    let maior_texto =
+        sub_cabecalho.iter().flatten().filter(|t| !t.starts_with("OBSERVAÇÕES")).map(|t| largura(t, ALTURA)).fold(0.0, f64::max) + ALTURA;
+    // A largura total: a grade, o dobro da maior metade do rodapé, o título e o sub-cabeçalho. A sobra vai
+    // para a descrição.
     let total = larguras
         .iter()
         .sum::<f64>()
         .max(2.0 * min_demanda.max(min_totais))
         .max(largura(&titulo, ALTURA * 1.5) + ALTURA)
+        .max(3.0 * maior_texto)
         .max(larguras.iter().take(primeira_fase).sum::<f64>().max(largura(rotulo_total, ALTURA) + ALTURA));
     let sobra = total - larguras.iter().sum::<f64>();
     if let Some(d) = larguras.get_mut(1) {
@@ -216,32 +234,23 @@ fn pecas_da_tabela(r: &ResumoQuadro, m: f64) -> Vec<EntityKind> {
     p.push(texto(&titulo, [u(total / 2.0), u(y - alto_titulo / 2.0)], u(ALTURA * 1.5), HAlign::Center));
     y -= alto_titulo;
     hor(&mut p, 0.0, total, y);
-    let a = &r.alimentador;
-    let especificacao = format!(
-        "ALIMENTADOR: {} mm² | DISJUNTOR GERAL: {} A | DR: {} A / 30 mA | DPS: classe II, Uc >= {} V",
-        a.secao.map_or("-".to_string(), br),
-        a.disjuntor.map_or("-".to_string(), br),
-        a.dr.map_or("-".to_string(), br),
-        fixo(a.dps_uc, 0)
-    );
-    let observacao = match &r.config.observacoes {
-        Some(o) => format!("Observações: {o}"),
-        None => "Observações:".to_string(),
-    };
-    let campos = [
-        format!("ALIMENTAÇÃO: {}", r.alimentacao()),
-        format!("NÚMERO DE MÓDULOS: {}", r.modulos()),
-        format!("MONTAGEM: {}", r.config.montagem.map_or("-", crate::quadro::Montagem::nome)),
-        observacao,
-        especificacao,
-    ];
-    for campo in &campos {
-        for l in quebrar(campo, total - ALTURA, ALTURA) {
-            esq(&mut p, &l, 0.0, y - LINHA / 2.0);
-            y -= LINHA;
+    // Uma caixa só, sem linhas por dentro: três colunas de dois textos.
+    let pad = ALTURA * 0.6;
+    let largura_coluna = total / 3.0;
+    let mut alto = 0usize;
+    for (k, coluna) in sub_cabecalho.iter().enumerate() {
+        let x = largura_coluna * k as f64;
+        let mut linhas = 0usize;
+        for texto in coluna {
+            for l in quebrar(texto, largura_coluna - ALTURA, ALTURA) {
+                esq(&mut p, &l, x, y - pad - LINHA * (linhas as f64 + 0.5));
+                linhas += 1;
+            }
         }
-        hor(&mut p, 0.0, total, y);
+        alto = alto.max(linhas);
     }
+    y -= 2.0 * pad + LINHA * alto as f64;
+    hor(&mut p, 0.0, total, y);
 
     // A grade dos circuitos.
     let topo = y;

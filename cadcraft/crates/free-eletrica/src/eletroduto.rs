@@ -69,7 +69,7 @@ pub fn garantir_camada(doc: &mut Drawing, i: Instalacao) {
 }
 
 /// A escala que dá ao tipo de linha um traço de [`TRACO`] no desenho.
-fn escala_de_linha(doc: &Drawing, nome: &str) -> f64 {
+pub(crate) fn escala_de_linha(doc: &Drawing, nome: &str) -> f64 {
     let (metros, _) = crate::setup::atual().unidade.metros(doc.header.i64("INSUNITS", 0));
     let metros = if metros > 0.0 { metros } else { 1.0 };
     let traco = doc.linetype(nome).and_then(|l| l.pattern.iter().map(|p| p.length.abs()).find(|c| *c > 0.0));
@@ -167,7 +167,7 @@ pub fn inserir_percurso(
 }
 
 /// Garante o tipo de linha no desenho, com a definição da biblioteca padrão.
-fn garantir_tipo_de_linha(doc: &mut Drawing, nome: &str) {
+pub(crate) fn garantir_tipo_de_linha(doc: &mut Drawing, nome: &str) {
     if doc.linetype(nome).is_some() {
         return;
     }

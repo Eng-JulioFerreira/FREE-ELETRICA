@@ -1470,6 +1470,9 @@ fn alturas(s: &Setup) -> [(&'static str, f64); 5] {
     [("Piso", 0.0), ("Baixa", 0.30), ("Média", 1.20), ("Alta", 2.10), ("Teto", s.pe_direito)]
 }
 
+/// A altura de todos os controles da barra de contexto.
+const ALTURA_BARRA: f32 = 22.0;
+
 /// A barra sobre o desenho, enquanto o comando espera cliques. Não rouba o comando: o que ela muda
 /// vale no próximo clique.
 fn barra_de_contexto(app: &CadApp, ctx: &egui::Context, xf: &crate::canvas::Xf, comando: &str, st: &Estado, s: &Setup, acoes: &mut Vec<Acao>) {
@@ -1477,6 +1480,8 @@ fn barra_de_contexto(app: &CadApp, ctx: &egui::Context, xf: &crate::canvas::Xf, 
     egui::Area::new(egui::Id::new("ele-barra-contexto")).order(egui::Order::Middle).fixed_pos(xf.rect.left_top() + vec2(8.0, 8.0)).show(ctx, |ui| {
         egui::Frame::popup(ui.style()).show(ui, |ui| {
             ui.set_max_width((xf.rect.width() - 32.0).max(120.0));
+            // Rótulos, campos e caixas de escolha na mesma altura e no mesmo eixo.
+            ui.spacing_mut().interact_size.y = ALTURA_BARRA;
             ui.horizontal_wrapped(|ui| match comando {
                 "eleponto" => {
                     let mut filtro = trava(&JANELAS).filtro_barra;
@@ -1524,10 +1529,10 @@ fn barra_ponto(ui: &mut egui::Ui, uid: u64, st: &Estado, s: &Setup, filtro: &mut
             }
         }
     });
-    ui.label("Bloco");
+    ui.label("Bloco").on_hover_text(
+        "Cada tomada e cada tecla é um módulo, com o seu circuito e o seu comando. Clique sobre um ponto de parede para empilhar na caixa dele",
+    );
     let nome_de = |nome: &str| TIPOS_BARRA.iter().find(|(_, b)| b.eq_ignore_ascii_case(nome)).map_or(nome, |(n, _)| n).to_string();
-    ui.label(RichText::new("Clique sobre um ponto de parede para empilhar na caixa dele").weak())
-        .on_hover_text("Cada tomada e cada tecla é um módulo, com o seu circuito e o seu comando");
     egui::ComboBox::from_id_salt("ele-barra-tipo").selected_text(nome_de(&bloco.nome)).width(210.0).show_ui(ui, |ui| {
         for b in st.blocos.iter().filter(|b| filtro.aceita(b.tipo)) {
             if ui.selectable_label(bloco.nome == b.nome, nome_de(&b.nome)).on_hover_text(b.nome.as_str()).clicked() {
@@ -1539,7 +1544,7 @@ fn barra_ponto(ui: &mut egui::Ui, uid: u64, st: &Estado, s: &Setup, filtro: &mut
         ui.separator();
         ui.label("Potência");
         let mut va = ele::ponto::numero(valor("POTENCIA").trim_end_matches(|c: char| c.is_alphabetic()).trim()).unwrap_or(0.0);
-        if ui.add(campo(&mut va, 0.0..=100_000.0, 10.0, 0, " VA")).changed() {
+        if ui.add_sized(vec2(80.0, ALTURA_BARRA), campo(&mut va, 0.0..=100_000.0, 10.0, 0, " VA")).changed() {
             enviar(acoes, &bloco.nome, &com("POTENCIA", format!("{}VA", fixo(va, 0))), m.quadro);
         }
     }
@@ -1547,11 +1552,15 @@ fn barra_ponto(ui: &mut egui::Ui, uid: u64, st: &Estado, s: &Setup, filtro: &mut
     ui.label("Altura");
     let legenda = bloco.altura_padrao(s);
     let mut altura = Some(valor("ALTURA")).filter(|v| !v.trim().is_empty()).and_then(|v| ele::ponto::altura_m(&v)).unwrap_or(legenda);
-    if ui.add(campo(&mut altura, 0.0..=50.0, 0.01, 2, " m")).on_hover_text(format!("Legenda do projeto: {} m", fixo(legenda, 2))).changed() {
+    if ui
+        .add_sized(vec2(64.0, ALTURA_BARRA), campo(&mut altura, 0.0..=50.0, 0.01, 2, " m"))
+        .on_hover_text(format!("Legenda do projeto: {} m", fixo(legenda, 2)))
+        .changed()
+    {
         enviar(acoes, &bloco.nome, &com("ALTURA", fixo(altura, 2)), m.quadro);
     }
     let atual = alturas(s).into_iter().find(|(_, a)| (a - altura).abs() < 0.005).map_or("Outra", |(n, _)| n);
-    egui::ComboBox::from_id_salt("ele-barra-altura").selected_text(atual).width(64.0).show_ui(ui, |ui| {
+    egui::ComboBox::from_id_salt("ele-barra-altura").selected_text(atual).width(64.0).height(ALTURA_BARRA * 8.0).show_ui(ui, |ui| {
         for (nome, a) in alturas(s) {
             if ui.selectable_label((a - altura).abs() < 0.005, format!("{nome} ({} m)", fixo(a, 2))).clicked() {
                 enviar(acoes, &bloco.nome, &com("ALTURA", fixo(a, 2)), m.quadro);
@@ -1689,13 +1698,10 @@ fn aba_cargas(
         }
     });
     let Some(q) = c.quadro else { return };
-    ui.horizontal(|ui| {
-        for (aba, nome) in [(AbaCargas::Resumo, "Resumo"), (AbaCargas::Ficha, "Ficha de engenharia")] {
-            if ui.selectable_label(c.aba == aba, nome).clicked() {
-                c.aba = aba;
-            }
-        }
-    });
+    // A ficha de um circuito abre pelo menu "..." da linha dele; daqui se volta ao quadro.
+    if c.aba == AbaCargas::Ficha && ui.button("← Voltar ao quadro").clicked() {
+        c.aba = AbaCargas::Resumo;
+    }
     ui.separator();
     let Some(resumo) = st.resumo(app, s, q) else { return };
     match resumo.as_ref() {
@@ -2099,6 +2105,11 @@ fn janela_blocos(ui: &mut egui::Ui, t: &Tokens, st: &Estado, b: &mut Blocos, tem
     });
 }
 
+/// Os campos do quadro numa grade de 2 linhas por 4 pares (rótulo e campo), sem cortar na borda.
+fn grade_do_quadro(ui: &mut egui::Ui, id: egui::Id, campos: impl FnOnce(&mut egui::Ui)) {
+    egui::Grid::new(id).num_columns(8).spacing(vec2(10.0, 6.0)).show(ui, campos);
+}
+
 /// O sistema, a tensão nominal, o cabo padrão e quem alimenta um quadro: ficam na inserção dele.
 fn campos_do_quadro(ui: &mut egui::Ui, q: &PontoEletrico, analise: &ele::Analise, s: &Setup, acoes: &mut Vec<Acao>) {
     use ele::quadro::{CONCESSIONARIA, SistemaQuadro, TensaoNominal, config_do_quadro};
@@ -2158,6 +2169,7 @@ fn campos_do_quadro(ui: &mut egui::Ui, q: &PontoEletrico, analise: &ele::Analise
             }
         }
     });
+    ui.end_row();
     ui.label("Montagem");
     egui::ComboBox::from_id_salt(("ele-quadro-montagem", q.handle))
         .selected_text(c.montagem.map_or("Não definida", ele::quadro::Montagem::nome))
@@ -2275,7 +2287,7 @@ fn janela_atributos(ui: &mut egui::Ui, app: &CadApp, t: &Tokens, acoes: &mut Vec
             let analise = ele::analisar(doc);
             let s = setup();
             if let Some(q) = analise.ponto(h) {
-                ui.horizontal_wrapped(|ui| campos_do_quadro(ui, q, &analise, &s, acoes));
+                grade_do_quadro(ui, egui::Id::new(("ele-atributos-grade", q.handle)), |ui| campos_do_quadro(ui, q, &analise, &s, acoes));
                 ui.separator();
             }
         }
@@ -2429,13 +2441,15 @@ fn quadro_de_cargas(
         ui.label(format!("Alimentação: {}", r.alimentacao()));
     });
     if let Some(p) = analise.ponto(q) {
-        ui.horizontal_wrapped(|ui| campos_do_quadro(ui, p, analise, s, acoes));
+        egui::CollapsingHeader::new("Configurações e dados do quadro").id_salt(("ele-cargas-config", q)).show(ui, |ui| {
+            grade_do_quadro(ui, egui::Id::new(("ele-cargas-grade", q)), |ui| campos_do_quadro(ui, p, analise, s, acoes));
+        });
     }
     ui.add_space(2.0);
     ui.horizontal(|ui| {
         let proximo = ele::circuito::proximo_circuito(&analise.pontos, q);
         ui.add(egui::TextEdit::singleline(&mut c.nova_descricao).hint_text(format!("Descrição do circuito {proximo}")).desired_width(200.0));
-        if ui.button("Novo circuito").on_hover_text("Cria o circuito vazio; depois use \"+ Pontos\" na linha dele").clicked() {
+        if ui.button("Novo circuito").on_hover_text("Cria o circuito vazio; depois use Adicionar pontos no menu \"...\" da linha dele").clicked() {
             acoes.push(Acao::Rodar("eletrica.circuito.criar", json!({ "quadro": q.hex(), "descricao": c.nova_descricao.trim() })));
             c.nova_descricao.clear();
         }
@@ -2476,8 +2490,7 @@ fn quadro_de_cargas(
     let fases = usize::from(r.fases_quadro.clamp(1, 3));
     let mut colunas: Vec<Coluna> = vec![
         ("Circ.", 34.0, false),
-        ("", 262.0, false),
-        ("Descrição", 150.0, false),
+        ("Descrição", 180.0, false),
         ("Esquema", 56.0, false),
         ("Pontos", 44.0, true),
         ("Potência (VA)", 80.0, true),
@@ -2488,9 +2501,15 @@ fn quadro_de_cargas(
         colunas.push((nome, 66.0, true));
     }
     /// A primeira coluna de carga por fase.
-    const F0: usize = 8;
+    const F0: usize = 7;
     let fim = F0 + fases;
-    colunas.extend_from_slice(&[("Fases", 78.0, false), ("Grupo DR", 76.0, false), ("Cabo / disjuntor", 106.0, false), ("Situação", 92.0, false)]);
+    colunas.extend_from_slice(&[
+        ("Fases", 78.0, false),
+        ("Grupo DR", 76.0, false),
+        ("Cabo / disjuntor", 106.0, false),
+        ("Situação", 92.0, false),
+        ("", 90.0, false),
+    ]);
     let largura = |i: usize| colunas.get(i).map_or(60.0, |c| c.1);
     let todos: Vec<(String, String)> = r
         .linhas
@@ -2512,13 +2531,12 @@ fn quadro_de_cargas(
                 *destaque = if destacado { None } else { Some((q, id.clone())) };
             }
             let lugares: Vec<[f64; 2]> = analise.pontos.iter().filter(|p| k.pontos.contains(&p.handle)).map(|p| p.posicao).collect();
-            acoes_do_circuito(ui, c, q, id, &k.pontos, &lugares, &todos, destaque, acoes);
-            campo_descricao(ui, c, q, id, &l.descricao, largura(2), acoes);
-            celula(ui, largura(3), l.esquema.codigo(), false);
-            celula(ui, largura(4), numero(k.pontos.len().to_string()), true);
-            celula(ui, largura(5), numero(fixo(k.potencia, 0)), true);
-            celula(ui, largura(6), numero(fixo(l.potencia_w, 0)), true);
-            celula(ui, largura(7), numero(fixo(l.escolha.ib, 2)), true);
+            campo_descricao(ui, c, q, id, &l.descricao, largura(1), acoes);
+            celula(ui, largura(2), l.esquema.codigo(), false);
+            celula(ui, largura(3), numero(k.pontos.len().to_string()), true);
+            celula(ui, largura(4), numero(fixo(k.potencia, 0)), true);
+            celula(ui, largura(5), numero(fixo(l.potencia_w, 0)), true);
+            celula(ui, largura(6), numero(fixo(l.escolha.ib, 2)), true);
             for f in 0..fases {
                 let v = l.carga_fase.get(f).copied().unwrap_or(0.0);
                 celula(ui, largura(F0 + f), numero(if v > 0.0 { fixo(v, 0) } else { String::new() }), true);
@@ -2573,32 +2591,32 @@ fn quadro_de_cargas(
                         .on_hover_text(avisos.join("\n"));
                 }
             }
+            acoes_do_circuito(ui, c, q, id, &k.pontos, &lugares, &todos, destaque, acoes);
             ui.end_row();
         }
         // Circuitos criados ainda sem pontos.
         for v in &r.vazios {
             celula(ui, largura(0), v.id.as_str(), false);
-            acoes_do_circuito(ui, c, q, &v.id, &[], &[], &todos, destaque, acoes);
-            campo_descricao(ui, c, q, &v.id, &v.descricao, largura(2), acoes);
-            celula(ui, largura(3), pequeno("vazio", t.text_dim), false);
-            for i in 4..=fim + 3 {
+            campo_descricao(ui, c, q, &v.id, &v.descricao, largura(1), acoes);
+            celula(ui, largura(2), pequeno("vazio", t.text_dim), false);
+            for i in 3..=fim + 3 {
                 celula(ui, largura(i), "", false);
             }
+            acoes_do_circuito(ui, c, q, &v.id, &[], &[], &todos, destaque, acoes);
             ui.end_row();
         }
         // Linha de total.
         celula(ui, largura(0), "", false);
-        celula(ui, largura(1), "", false);
-        celula(ui, largura(2), RichText::new("TOTAL").strong(), false);
+        celula(ui, largura(1), RichText::new("TOTAL").strong(), false);
+        celula(ui, largura(2), "", false);
         celula(ui, largura(3), "", false);
-        celula(ui, largura(4), "", false);
-        celula(ui, largura(5), numero(fixo(r.potencia_total, 0)).strong(), true);
-        celula(ui, largura(6), numero(fixo(r.linhas.iter().map(|l| l.potencia_w).sum::<f64>(), 0)).strong(), true);
-        celula(ui, largura(7), "", false);
+        celula(ui, largura(4), numero(fixo(r.potencia_total, 0)).strong(), true);
+        celula(ui, largura(5), numero(fixo(r.linhas.iter().map(|l| l.potencia_w).sum::<f64>(), 0)).strong(), true);
+        celula(ui, largura(6), "", false);
         for f in 0..fases {
             celula(ui, largura(F0 + f), numero(fixo(r.carga_por_fase.get(f).copied().unwrap_or(0.0), 0)).strong(), true);
         }
-        for i in fim..=fim + 3 {
+        for i in fim..=fim + 4 {
             celula(ui, largura(i), "", false);
         }
         ui.end_row();
@@ -2830,8 +2848,8 @@ fn campo_descricao(ui: &mut egui::Ui, c: &mut Cargas, q: Handle, id: &str, grava
     }
 }
 
-/// Os botões de um circuito (adicionar e remover pontos, localizar) e o menu "..." (selecionar,
-/// juntar, excluir), com a confirmação da exclusão na própria linha.
+/// O menu "..." de um circuito: adicionar e remover pontos, localizar, a ficha de engenharia, selecionar,
+/// juntar e excluir, com a confirmação da exclusão na própria linha.
 #[allow(clippy::too_many_arguments)]
 fn acoes_do_circuito(
     ui: &mut egui::Ui,
@@ -2855,29 +2873,30 @@ fn acoes_do_circuito(
             }
             return;
         }
-        if ui.small_button("Detalhes").on_hover_text("Abre a ficha de engenharia deste circuito").clicked() {
-            acoes.push(Acao::Ficha(q, id.to_string()));
-        }
-        if ui.small_button("+ Pontos").on_hover_text("Adicionar pontos: clique neles no desenho; Enter termina").clicked() {
-            acoes.push(Acao::Rodar("eletrica.circuito.alvo", json!({ "quadro": q.hex(), "circuito": id })));
-            acoes.push(Acao::Iniciar("elecircuito"));
-        }
-        if ui
-            .add_enabled(!pontos.is_empty(), egui::Button::new("- Ponto").small())
-            .on_hover_text("Remover ponto: clique nos que saem do circuito; Enter termina")
-            .clicked()
-        {
-            acoes.push(Acao::Iniciar("eleremoverponto"));
-        }
-        if ui
-            .add_enabled(!lugares.is_empty(), egui::Button::new("Localizar").small())
-            .on_hover_text("Destaca o circuito e enquadra na tela")
-            .clicked()
-        {
-            *destaque = Some((q, id.to_string()));
-            acoes.push(Acao::Localizar(lugares.to_vec()));
-        }
         ui.menu_button("...", |ui| {
+            if ui.button("Adicionar pontos na planta").on_hover_text("Clique nos pontos no desenho; Enter termina").clicked() {
+                acoes.push(Acao::Rodar("eletrica.circuito.alvo", json!({ "quadro": q.hex(), "circuito": id })));
+                acoes.push(Acao::Iniciar("elecircuito"));
+                ui.close();
+            }
+            if ui
+                .add_enabled(!pontos.is_empty(), egui::Button::new("Remover ponto da planta"))
+                .on_hover_text("Clique nos que saem do circuito; Enter termina")
+                .clicked()
+            {
+                acoes.push(Acao::Iniciar("eleremoverponto"));
+                ui.close();
+            }
+            if ui.add_enabled(!lugares.is_empty(), egui::Button::new("Localizar / Destacar pontos")).clicked() {
+                *destaque = Some((q, id.to_string()));
+                acoes.push(Acao::Localizar(lugares.to_vec()));
+                ui.close();
+            }
+            if ui.add_enabled(!pontos.is_empty(), egui::Button::new("Mais detalhes e ficha de engenharia...")).clicked() {
+                acoes.push(Acao::Ficha(q, id.to_string()));
+                ui.close();
+            }
+            ui.separator();
             if ui.add_enabled(!pontos.is_empty(), egui::Button::new("Selecionar pontos")).clicked() {
                 acoes.push(Acao::Selecionar(pontos.to_vec()));
                 ui.close();
@@ -2895,7 +2914,9 @@ fn acoes_do_circuito(
                 c.excluir = Some(id.to_string());
                 ui.close();
             }
-        });
+        })
+        .response
+        .on_hover_text("Ações do circuito");
     });
 }
 

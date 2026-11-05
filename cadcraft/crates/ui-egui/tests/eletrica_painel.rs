@@ -316,8 +316,14 @@ fn paleta_ferramentas_e_fluxo_completo() {
     h.run_steps(3);
     assert!(!h.state().ui.docking.layout.contains(&Panel::QuadroCargas));
     h.get_by_label("PAINEL: QD-01");
-    // O sistema, a tensão, o cabo padrão e quem alimenta ficam em cada quadro.
-    for campo in ["Sistema do Quadro", "Tensão Nominal", "Tipo de Cabo Padrão do Quadro", "Alimentado por"] {
+    // Os dados do quadro ficam num grupo recolhível, e a tabela é o foco; sem abas Resumo e Ficha.
+    assert!(h.query_by_label("Sistema do Quadro").is_none());
+    assert!(h.query_by_label("Resumo").is_none() && h.query_by_label("Ficha de engenharia").is_none());
+    h.get_by_label("Configurações e dados do quadro").click();
+    h.run_steps(3);
+    for campo in
+        ["Sistema do Quadro", "Tensão Nominal", "Tipo de Cabo Padrão do Quadro", "Alimentado por", "Montagem", "Módulos", "Reservas", "Observações"]
+    {
         h.get_by_label(campo);
     }
     for coluna in ["Descrição", "Esquema", "Pontos", "Potência (VA)", "Ib (A)", "Fase R (VA)", "Fases", "Grupo DR", "Cabo / disjuntor", "Situação"]
@@ -333,11 +339,24 @@ fn paleta_ferramentas_e_fluxo_completo() {
     assert!(h.query_all_by_label("A dimensionar").count() >= 2);
     let r = h.state_mut().run("eletrica.rotear", json!({})).unwrap();
     assert!(r["linhas"].as_array().unwrap().iter().all(|l| l["calculado"].is_null()), "{r}");
-    // Os botões da linha do circuito.
-    assert!(h.query_all_by_label("Detalhes").count() >= 2);
-    assert!(h.query_all_by_label("+ Pontos").count() >= 2);
-    assert!(h.query_all_by_label("- Ponto").count() >= 2);
-    assert!(h.query_all_by_label("Localizar").count() >= 2);
+    // As ações de cada circuito ficam no menu "..." da linha, e não em botões soltos.
+    for fora in ["Detalhes", "+ Pontos", "- Ponto", "Localizar"] {
+        assert!(h.query_by_label(fora).is_none(), "{fora}");
+    }
+    assert!(h.query_all_by_label("...").count() >= 2);
+    h.query_all_by_label("...").next().unwrap().click();
+    h.run_steps(3);
+    for item in [
+        "Adicionar pontos na planta",
+        "Remover ponto da planta",
+        "Localizar / Destacar pontos",
+        "Mais detalhes e ficha de engenharia...",
+        "Excluir circuito",
+    ] {
+        h.get_by_label(item);
+    }
+    h.key_press(egui::Key::Escape);
+    h.run_steps(3);
     // Novo circuito cria o próximo número (4) vazio, listado na tabela.
     h.get_by_label("Novo circuito").click();
     h.run_steps(3);
@@ -356,7 +375,9 @@ fn paleta_ferramentas_e_fluxo_completo() {
 
     // Localizar enquadra o circuito e o destaca, sem travar.
     let antes = h.state().session.state().unwrap().view().center;
-    h.query_all_by_label("Localizar").next().unwrap().click();
+    h.query_all_by_label("...").next().unwrap().click();
+    h.run_steps(3);
+    h.get_by_label("Localizar / Destacar pontos").click();
     h.run_steps(3);
     assert_ne!(antes, h.state().session.state().unwrap().view().center);
     // Equilibrar destrava as fases.
@@ -367,8 +388,10 @@ fn paleta_ferramentas_e_fluxo_completo() {
     let r = h.state_mut().run("eletrica.rotear", json!({})).unwrap();
     assert!(r["linhas"].as_array().unwrap().iter().all(|l| l["fasesTravadas"] == false), "{r}");
 
-    // Detalhes abre a ficha, na mesma janela: a engenharia do circuito, com as travas.
-    h.query_all_by_label("Detalhes").next().unwrap().click();
+    // Mais detalhes abre a ficha, na mesma janela: a engenharia do circuito, com as travas.
+    h.query_all_by_label("...").next().unwrap().click();
+    h.run_steps(3);
+    h.get_by_label("Mais detalhes e ficha de engenharia...").click();
     h.run_steps(3);
     for campo in [
         "Método de instalação",
@@ -396,7 +419,7 @@ fn paleta_ferramentas_e_fluxo_completo() {
     assert!(r["linhas"][0]["sobrescrita"]["secao"].is_number(), "{r}");
     h.state_mut().session.undo().unwrap();
     h.run_steps(3);
-    h.get_by_label("Resumo").click();
+    h.get_by_label("← Voltar ao quadro").click();
     h.run_steps(3);
     // Na paleta e no resumo.
     assert!(h.query_all_by_label("Dimensionar projeto...").count() >= 2);

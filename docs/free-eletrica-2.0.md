@@ -293,3 +293,9 @@ Limites dos módulos empilhados:
 - **Blocos antigos:** `TOM-DUP-*` e os interruptores de 2 e 3 seções saem do desenho na primeira ferramenta usada nele. Cada
   inserção vira os módulos de agora, empilhados no mesmo lugar: o primeiro fica com os atributos, o XDATA e a camada; os outros,
   com o mesmo circuito, uma letra de comando cada e a potência da família.
+
+Ajustes de interface e de prancha:
+
+- **Quadro de cargas:** sem abas; as ações de cada circuito ficam no menu "..." da linha, e os dados do quadro num grupo recolhível.
+- **Tabela no desenho:** o sub-cabeçalho é uma caixa só, sem linhas internas, com os dados em 3 colunas.
+- **Unifilar:** tudo na cor do diagrama, um risco por polo no disjuntor, e a moldura tracejada do quadro ligada ao terra (PE).

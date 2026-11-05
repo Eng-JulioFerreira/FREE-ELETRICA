@@ -1662,7 +1662,7 @@ fn tabela_do_quadro_no_desenho_se_refaz_no_mesmo_lugar() {
     };
     let t = textos(&d);
     assert!(t.contains(&"PAINEL: QD-01".to_string()) && t.contains(&"CIRCUITO".to_string()) && t.contains(&"FASE T (VA)".to_string()), "{t:?}");
-    assert!(t.iter().any(|x| x.starts_with("ALIMENTADOR:")) && t.iter().any(|x| x.starts_with("DEMANDA:")), "{t:?}");
+    assert!(t.iter().any(|x| x.starts_with("ALIMENTADOR / GERAL:")) && t.iter().any(|x| x.starts_with("DEMANDA:")), "{t:?}");
     assert_eq!(analisar(&d).pontos.len(), 8, "a tabela não é ponto elétrico");
     // O projetista move a tabela e muda uma descrição: ela se refaz sem sair do lugar.
     let mut e = (**d.model.get(h).unwrap()).clone();
@@ -3084,10 +3084,11 @@ fn tabela_do_quadro_fica_toda_dentro_da_moldura() {
     for v in [
         "PAINEL: QD-01",
         "ALIMENTAÇÃO:",
-        "NÚMERO DE MÓDULOS:",
+        "Nº DE MÓDULOS DIN:",
         "MONTAGEM: Embutir",
-        "Observações: Quadro de PVC",
-        "ALIMENTADOR:",
+        "OBSERVAÇÕES: Quadro de PVC",
+        "ALIMENTADOR / GERAL: Cabo #",
+        "PROTEÇÕES: DR",
         "CIRCUITO",
         "DESCRIÇÃO",
         "CORRENTE (A)",
@@ -3114,6 +3115,20 @@ fn tabela_do_quadro_fica_toda_dentro_da_moldura() {
     ] {
         assert!(tem(v), "falta {v}: {textos:?}");
     }
+    // Entre o título e a grade, uma caixa só: nenhuma linha horizontal fatiando os textos, que ficam em 3
+    // colunas com folga das bordas.
+    let y_de = |v: &str| textos.iter().find(|(t, ..)| t.starts_with(v)).unwrap().2;
+    let (titulo, grade) = (y_de("PAINEL:"), y_de("CIRCUITO"));
+    let no_meio = d.blocks[&nome]
+        .entities
+        .iter()
+        .filter(|e| matches!(&e.kind, EntityKind::Line(l) if (l.a.y - l.b.y).abs() < 1e-9 && l.a.y < titulo - 0.16 && l.a.y > grade + 0.11))
+        .count();
+    assert_eq!(no_meio, 0);
+    let colunas: Vec<f64> =
+        ["ALIMENTAÇÃO:", "MONTAGEM:", "Nº DE MÓDULOS"].iter().map(|v| textos.iter().find(|(t, ..)| t.starts_with(v)).unwrap().1).collect();
+    assert!(colunas[0] < colunas[1] && colunas[1] < colunas[2], "{colunas:?}");
+    assert!(perto(y_de("ALIMENTAÇÃO:"), y_de("MONTAGEM:"), 1e-9) && y_de("ALIMENTADOR /") < y_de("ALIMENTAÇÃO:"));
     // O rodapé fica dividido ao meio: os totais à direita.
     let totais = textos.iter().find(|(t, ..)| t == "TOTAIS DO PAINEL").unwrap();
     assert!(perto(totais.1, x1 * 0.75, 1e-9), "{} em {x1}", totais.1);
@@ -3184,13 +3199,25 @@ fn diagrama_unifilar_com_entrada_barra_dr_e_reservas() {
     assert_eq!(reservas.len(), 2, "o mínimo da NBR 5410");
     assert!(reservas.iter().all(|r| r.2 < secao.2), "as reservas vêm no fim");
     assert!(reservas.iter().any(|r| r.0 == "4 - RESERVA"), "{reservas:?}");
-    // Fase vermelha, neutro azul e terra verde, nos traços.
-    // As marcas são as mesmas das tags da prancha, na camada delas, sem cor avulsa.
+    // As marcas são as mesmas das tags da prancha, na cor e na camada do diagrama.
     let marcas: Vec<_> =
         d.blocks[&nome].entities.iter().filter(|e| matches!(&e.kind, EntityKind::Insert(i) if i.block.starts_with("FIACAO-"))).collect();
-    assert!(marcas.len() >= 6 && marcas.iter().all(|e| e.common.layer == fiacao::CAMADA), "{}", marcas.len());
+    assert!(marcas.len() >= 6 && marcas.iter().all(|e| e.common.layer != fiacao::CAMADA), "{}", marcas.len());
     assert!(d.blocks[&nome].entities.iter().all(|e| e.common.color == Color::ByLayer || matches!(e.common.color, Color::ByBlock)));
-    // O disjuntor da NBR: dois terminais e o traço em T no topo, além do arco.
+    // A moldura tracejada do quadro, aterrada: três traços decrescentes embaixo.
+    let molduras: Vec<_> = d.blocks[&nome].entities.iter().filter(|e| matches!(&e.kind, EntityKind::LwPolyline(p) if p.closed)).collect();
+    assert_eq!(molduras.len(), 1);
+    assert_eq!(molduras[0].common.linetype, "DASHED");
+    let EntityKind::LwPolyline(moldura) = &molduras[0].kind else { panic!("moldura") };
+    let baixo = moldura.vertices.iter().map(|v| v.p.y).fold(f64::MAX, f64::min);
+    let terra: Vec<f64> = d.blocks[&nome]
+        .entities
+        .iter()
+        .filter_map(|e| if let EntityKind::Line(l) = &e.kind { (l.a.y == l.b.y && l.a.y < baixo).then_some((l.b.x - l.a.x).abs()) } else { None })
+        .collect();
+    assert_eq!(terra.len(), 3, "{terra:?}");
+    assert!(terra[0] > terra[1] && terra[1] > terra[2]);
+    // O disjuntor da NBR: dois terminais, além do arco, e um risco por polo; sem o T.
     let circulos = d.blocks[&nome].entities.iter().filter(|e| matches!(e.kind, EntityKind::Circle(_))).count();
     assert!(circulos >= 2 * (3 + 2 + 1), "{circulos}");
     // O disjuntor é curvo; a barra tem nós; a caixa fica alinhada à direita.
@@ -3377,4 +3404,39 @@ fn blocos_antigos_de_varios_modulos_saem_e_viram_modulos_empilhados() {
     // De novo não muda nada.
     assert!(!biblioteca::falta_base(&d));
     assert_eq!(biblioteca::migrar_antigos(&mut d, &setup, 1.0), 0);
+}
+
+#[test]
+fn disjuntor_do_unifilar_tem_um_risco_por_polo() {
+    let setup = Setup::default();
+    let mut d = metros();
+    let q = qd(&mut d, 0.0, 0.0);
+    let a = tug(&mut d, 3.0, 0.0, "1");
+    eletroduto::inserir(&mut d, q, a, rota::Instalacao::Teto, 0.0).unwrap();
+    editar::definir_reservas(&mut d, q, Some(0)).unwrap();
+    // Monopolar no circuito; o geral tem os polos do quadro.
+    let an = analisar(&d);
+    unifilar::gerar(&mut d, &an, &setup, q, Some([0.0, 0.0])).unwrap();
+    let nome = format!("{}{}", unifilar::PREFIXO, q.hex());
+    let arcos: Vec<(f64, f64, f64)> = d.blocks[&nome]
+        .entities
+        .iter()
+        .filter_map(|e| if let EntityKind::Arc(a) = &e.kind { Some((a.center.x, a.center.y, a.radius)) } else { None })
+        .collect();
+    assert_eq!(arcos.len(), 2);
+    let riscos = |c: (f64, f64, f64)| {
+        d.blocks[&nome]
+            .entities
+            .iter()
+            .filter(|e| {
+                matches!(&e.kind, EntityKind::Line(l) if l.a.y < c.1 + c.2 && l.b.y > c.1 + c.2 && (l.a.x + l.b.x) / 2.0 > c.0 - c.2 && (l.a.x + l.b.x) / 2.0 < c.0 + c.2)
+            })
+            .count()
+    };
+    let fases_quadro = quadro::rotear(&d, &analisar(&d), &setup, q).unwrap().fases_quadro;
+    let mut contagem: Vec<usize> = arcos.iter().map(|c| riscos(*c)).collect();
+    contagem.sort_unstable();
+    let mut esperado = vec![1, usize::from(fases_quadro.clamp(1, 3))];
+    esperado.sort_unstable();
+    assert_eq!(contagem, esperado);
 }
