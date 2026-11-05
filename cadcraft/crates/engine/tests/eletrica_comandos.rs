@@ -1095,7 +1095,7 @@ fn perfil_de_eletroduto_por_comando() {
         .unwrap()
         .to_string();
     let e = s.doc().unwrap().model.get(Handle::parse_hex(&h).unwrap()).unwrap().clone();
-    assert_eq!((e.common.linetype.as_str(), e.common.layer.as_str()), ("DASHED", free_eletrica::eletroduto::CAMADA_PISO));
+    assert_eq!((e.common.linetype.as_str(), e.common.layer.as_str()), ("DASHDOT", free_eletrica::eletroduto::CAMADA_PISO));
     // A mini-barra: o perfil traz o tipo e o caminhamento; escolher um tipo à mão sai do perfil.
     let m = s.execute("eletrica.eletroduto.modelo", &json!({ "perfil": nome })).unwrap();
     assert_eq!((m["perfil"].as_str(), m["instalacao"].as_str(), m["tipo"].as_str()), (Some(nome), Some("piso"), Some("peadCorrugado")));
@@ -1118,7 +1118,8 @@ fn perfil_de_eletroduto_por_comando() {
     // Aplicar um perfil a um trecho existente.
     s.execute("eletrica.eletroduto.definir", &json!({ "eletroduto": h, "perfil": "Eletroduto Aço Galvanizado" })).unwrap();
     let e = s.doc().unwrap().model.get(Handle::parse_hex(&h).unwrap()).unwrap().clone();
-    assert_eq!(e.common.linetype, "DASHDOT");
+    // O aço galvanizado de fábrica corre no teto: linha contínua.
+    assert_eq!(e.common.linetype, "Continuous");
 }
 
 #[test]

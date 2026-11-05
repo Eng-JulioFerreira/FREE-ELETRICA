@@ -2120,9 +2120,10 @@ fn perfis_de_eletroduto_aplicam_linha_cor_caminhamento_e_diametros() {
     let a = tug(&mut d, 4.0, 0.0, "1");
     let h = eletroduto::inserir_com_perfil(&mut d, q, a, &Percurso { tracado: Tracado::Reto, ..Percurso::default() }, &perfil).unwrap();
     let e = d.model.get(h).unwrap();
-    assert_eq!((e.common.linetype.as_str(), e.common.layer.as_str()), ("DASHED", eletroduto::CAMADA_PISO));
+    // No piso a linha é traço e ponto, mesmo que o perfil peça outra.
+    assert_eq!((e.common.linetype.as_str(), e.common.layer.as_str()), ("DASHDOT", eletroduto::CAMADA_PISO));
     assert_eq!(e.common.color, cadcraft_doc::color::Color::Index(5));
-    assert!(d.linetype("DASHED").is_some(), "o tipo de linha entra no desenho");
+    assert!(d.linetype("DASHDOT").is_some(), "o tipo de linha entra no desenho");
     let (m, _) = s.unidade.metros(d.header.i64("INSUNITS", 0));
     let rede = rota::Rede::montar(&d, &s, &analisar(&d).pontos, m);
     assert_eq!(
@@ -2146,7 +2147,7 @@ fn perfis_de_eletroduto_aplicam_linha_cor_caminhamento_e_diametros() {
     eletroduto::dividir(&mut d, &s, h, [2.0, 0.0], m).unwrap();
     let partes: Vec<_> = d.model.iter().filter(|e| e.common.layer == eletroduto::CAMADA_PISO).collect();
     assert_eq!(partes.len(), 2);
-    assert!(partes.iter().all(|e| e.common.linetype == "DASHED" && e.common.color == cadcraft_doc::color::Color::Index(5)));
+    assert!(partes.iter().all(|e| e.common.linetype == "DASHDOT" && e.common.color == cadcraft_doc::color::Color::Index(5)));
     // Preferências hostis: nome vazio ou repetido sai, diâmetro inválido sai; nunca fica sem perfil.
     let mut h1 = Setup::default();
     h1.perfis_eletroduto.push(PerfilEletroduto { nome: "  ".into(), ..PerfilEletroduto::default() });
@@ -2648,4 +2649,63 @@ fn bloco_em_linha_corta_o_eletroduto_sem_caixa_nova() {
         rede.arestas.iter().filter(|x| x.de == n || x.para == n).count()
     };
     assert_eq!(ligados(b1) + ligados(b2), 4);
+}
+
+#[test]
+fn material_define_a_cor_e_o_caminhamento_define_a_linha() {
+    use cadcraft_doc::color::Color;
+    use rota::{Instalacao as I, TipoEletroduto as E};
+    use setup::TipoLinha;
+    // Os perfis de fábrica: o PVC flexível tem uma cor só e cada caminhamento a sua linha.
+    let s = Setup::default();
+    let de = |n: &str| s.perfis_eletroduto.iter().find(|p| p.nome.contains(n)).unwrap();
+    assert_eq!(de("Flexível - Teto").cor, de("Flexível - Parede").cor);
+    assert_ne!(de("Flexível - Teto").cor, de("PEAD").cor);
+    assert_eq!(de("Flexível - Teto").tipo_linha, TipoLinha::Continua);
+    assert_eq!(de("Flexível - Parede").tipo_linha, TipoLinha::Tracejada);
+    assert_eq!(de("PEAD").tipo_linha, TipoLinha::TracoPonto);
+    assert_eq!(de("Aço").tipo_linha, TipoLinha::Continua);
+    // Normalizar: a primeira cor do material vale para os outros; a linha errada volta à do caminhamento.
+    let mut n = Setup::default();
+    n.perfis_eletroduto[1].cor = 2;
+    n.perfis_eletroduto[1].tipo_linha = TipoLinha::Continua;
+    n.normalizar();
+    assert_eq!(n.perfis_eletroduto[1].cor, n.perfis_eletroduto[0].cor);
+    assert_eq!(n.perfis_eletroduto[1].tipo_linha, TipoLinha::Tracejada);
+    // Pontilhada também vale na parede.
+    n.perfis_eletroduto[1].tipo_linha = TipoLinha::Pontilhada;
+    n.normalizar();
+    assert_eq!(n.perfis_eletroduto[1].tipo_linha, TipoLinha::Pontilhada);
+    n.definir_cor_do_material(E::CorrugadoLeve, 2);
+    assert_eq!((n.perfis_eletroduto[0].cor, n.perfis_eletroduto[1].cor), (2, 2));
+    assert_ne!(n.perfis_eletroduto[2].cor, 2);
+    // Sem perfil: a mesma cor em qualquer cota e a linha muda junto com a cota.
+    let mut d = metros();
+    let q = qd(&mut d, 0.0, 0.0);
+    let a = tug(&mut d, 4.0, 0.0, "1");
+    let b = tug(&mut d, 8.0, 0.0, "1");
+    let t = eletroduto::inserir_com_tipo(&mut d, q, a, I::Teto, 0.0, E::CorrugadoLeve).unwrap();
+    let p = eletroduto::inserir_com_tipo(&mut d, a, b, I::Piso, 0.0, E::CorrugadoLeve).unwrap();
+    let (et, ep) = (d.model.get(t).unwrap(), d.model.get(p).unwrap());
+    assert_eq!(et.common.color, ep.common.color);
+    assert_eq!((et.common.linetype.as_str(), ep.common.linetype.as_str()), ("Continuous", "DASHDOT"));
+    eletroduto::definir_instalacao(&mut d, t, I::Parede).unwrap();
+    assert_eq!(d.model.get(t).unwrap().common.linetype, "DASHED");
+    eletroduto::definir_tipo(&mut d, t, E::PeadCorrugado).unwrap();
+    assert_eq!(d.model.get(t).unwrap().common.color, Color::Index(E::PeadCorrugado.cor_padrao()));
+    // Num desenho em metros, o traço fica com 20 cm, e não com o padrão em milímetros.
+    let e = d.model.get(t).unwrap();
+    let traco = d.linetype("DASHED").unwrap().pattern[0].length.abs() * e.common.ltscale;
+    assert!(perto(traco, 0.20, 1e-9), "{traco}");
+    // As camadas não diferem pela cor.
+    let cor = |n: &str| d.layer(n).unwrap().color;
+    assert_eq!(cor(eletroduto::CAMADA_TETO), cor(eletroduto::CAMADA_PISO));
+    // Um desenho antigo entra no padrão ao atualizar.
+    let mut e = (**d.model.get(p).unwrap()).clone();
+    e.common.color = Color::Index(4);
+    e.common.linetype = "Continuous".into();
+    d.model.replace(e);
+    assert_eq!(eletroduto::padronizar(&mut d, &s), 1);
+    assert_eq!(d.model.get(p).unwrap().common.linetype, "DASHDOT");
+    assert_eq!(eletroduto::padronizar(&mut d, &s), 0);
 }

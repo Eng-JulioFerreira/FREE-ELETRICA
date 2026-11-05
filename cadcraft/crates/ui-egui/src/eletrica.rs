@@ -3373,6 +3373,7 @@ fn aba_eletrodutos(ui: &mut egui::Ui, t: &Tokens, s: &mut Setup) {
         }
     });
     let mut excluir = None;
+    let mut cor_nova: Option<(TipoEletroduto, u8)> = None;
     egui::ScrollArea::vertical().id_salt("ele-setup-perfis").max_height(380.0).show(ui, |ui| {
         ui.set_min_width(580.0);
         for (i, p) in s.perfis_eletroduto.iter_mut().enumerate() {
@@ -3393,8 +3394,9 @@ fn aba_eletrodutos(ui: &mut egui::Ui, t: &Tokens, s: &mut Setup) {
                     ui.end_row();
                     ui.label("Tipo de Linha");
                     egui::ComboBox::from_id_salt(("ele-perfil-linha", i)).selected_text(p.tipo_linha.nome()).width(200.0).show_ui(ui, |ui| {
-                        for l in TipoLinha::TODOS {
-                            ui.selectable_value(&mut p.tipo_linha, l, l.nome());
+                        // É o tipo de linha que diz por onde o eletroduto corre.
+                        for l in TipoLinha::do_caminhamento_opcoes(p.caminhamento) {
+                            ui.selectable_value(&mut p.tipo_linha, *l, l.nome());
                         }
                     });
                     ui.end_row();
@@ -3406,7 +3408,9 @@ fn aba_eletrodutos(ui: &mut egui::Ui, t: &Tokens, s: &mut Setup) {
                         ui.painter().rect_filled(r, 2.0, Color32::from_rgb(rgb[0], rgb[1], rgb[2]));
                         egui::ComboBox::from_id_salt(("ele-perfil-cor", i)).selected_text(nome).width(110.0).show_ui(ui, |ui| {
                             for (c, n, _) in CORES_DE_LINHA {
-                                ui.selectable_value(&mut p.cor, c, n);
+                                if ui.selectable_label(p.cor == c, n).on_hover_text("Vale para todos os perfis deste material").clicked() {
+                                    cor_nova = Some((p.tipo, c));
+                                }
                             }
                         });
                     });
@@ -3468,10 +3472,14 @@ fn aba_eletrodutos(ui: &mut egui::Ui, t: &Tokens, s: &mut Setup) {
     if let Some(i) = excluir {
         s.perfis_eletroduto.remove(i);
     }
+    if let Some((tipo, cor)) = cor_nova {
+        s.definir_cor_do_material(tipo, cor);
+    }
+    s.padronizar_perfis();
     ui.set_max_width(600.0);
     ui.add(
         egui::Label::new(pequeno(
-            "Cada trecho desenhado guarda o perfil. As tags de fiação escolhem, em cada trecho, o menor diâmetro da tabela do perfil, a partir do mínimo, que comporta os condutores: ocupação máxima de 53 % com um condutor, 31 % com dois e 40 % com três ou mais (NBR 5410, 6.2.11.1.6). Diâmetros internos típicos de catálogo; confira com o fabricante. Mudar a linha ou a cor de um perfil vale para os próximos trechos.",
+            "Cada trecho desenhado guarda o perfil. As tags de fiação escolhem, em cada trecho, o menor diâmetro da tabela do perfil, a partir do mínimo, que comporta os condutores: ocupação máxima de 53 % com um condutor, 31 % com dois e 40 % com três ou mais (NBR 5410, 6.2.11.1.6). Diâmetros internos típicos de catálogo; confira com o fabricante. A cor é do material, igual em qualquer cota; o tipo de linha é do caminhamento: contínua no teto, tracejada ou pontilhada na parede, traço e ponto no piso. Atualizar tags e tabelas leva o padrão aos trechos que já existem.",
             t.text_dim,
         ))
         .wrap(),

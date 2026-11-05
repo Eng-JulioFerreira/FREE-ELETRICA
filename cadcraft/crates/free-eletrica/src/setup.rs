@@ -395,6 +395,26 @@ impl TipoLinha {
         }
     }
 
+    /// O padrão do caminhamento: contínua no teto, tracejada na parede, traço e ponto no piso.
+    pub fn do_caminhamento(i: crate::rota::Instalacao) -> Self {
+        use crate::rota::Instalacao as I;
+        match i {
+            I::Teto => Self::Continua,
+            I::Parede => Self::Tracejada,
+            I::Piso => Self::TracoPonto,
+        }
+    }
+
+    /// Os tipos de linha de um caminhamento: é o tipo de linha que diz por onde o eletroduto corre.
+    pub fn do_caminhamento_opcoes(i: crate::rota::Instalacao) -> &'static [TipoLinha] {
+        use crate::rota::Instalacao as I;
+        match i {
+            I::Teto => &[Self::Continua],
+            I::Parede => &[Self::Tracejada, Self::Pontilhada],
+            I::Piso => &[Self::TracoPonto],
+        }
+    }
+
     /// O nome do tipo de linha no desenho.
     pub fn no_desenho(self) -> &'static str {
         match self {
@@ -434,22 +454,33 @@ pub struct PerfilEletroduto {
     pub diametros: Vec<TamanhoEletroduto>,
 }
 
+impl PerfilEletroduto {
+    /// O tipo de linha que vale: o do perfil, se o caminhamento aceita; senão, o padrão do caminhamento.
+    pub fn linha_efetiva(&self) -> TipoLinha {
+        if TipoLinha::do_caminhamento_opcoes(self.caminhamento).contains(&self.tipo_linha) {
+            self.tipo_linha
+        } else {
+            TipoLinha::do_caminhamento(self.caminhamento)
+        }
+    }
+}
+
 /// Os perfis de fábrica. Os diâmetros internos são típicos de catálogo: confira com o fabricante.
 pub fn perfis_padrao() -> Vec<PerfilEletroduto> {
     use crate::rota::{Instalacao as I, TipoEletroduto as E};
     let s = Setup { perfis_eletroduto: Vec::new(), ..Setup::default_sem_perfis() };
     [
-        ("Eletroduto PVC Flexível - Teto", E::CorrugadoReforcado, TipoLinha::Continua, 4, I::Teto),
-        ("Eletroduto PVC Flexível - Parede", E::CorrugadoLeve, TipoLinha::Tracejada, 3, I::Parede),
-        ("Eletroduto PEAD - Piso", E::PeadCorrugado, TipoLinha::Tracejada, 6, I::Piso),
-        ("Eletroduto Aço Galvanizado", E::AcoEletrolitico, TipoLinha::TracoPonto, 1, I::Teto),
+        ("Eletroduto PVC Flexível - Teto", E::CorrugadoReforcado, I::Teto),
+        ("Eletroduto PVC Flexível - Parede", E::CorrugadoLeve, I::Parede),
+        ("Eletroduto PEAD - Piso", E::PeadCorrugado, I::Piso),
+        ("Eletroduto Aço Galvanizado", E::AcoEletrolitico, I::Teto),
     ]
     .into_iter()
-    .map(|(nome, tipo, tipo_linha, cor, caminhamento)| PerfilEletroduto {
+    .map(|(nome, tipo, caminhamento)| PerfilEletroduto {
         nome: nome.into(),
         tipo,
-        tipo_linha,
-        cor,
+        tipo_linha: TipoLinha::do_caminhamento(caminhamento),
+        cor: tipo.cor_padrao(),
         caminhamento,
         diametros: s.tamanhos_de(tipo),
     })
@@ -748,6 +779,7 @@ impl Setup {
         if self.perfis_eletroduto.is_empty() {
             self.perfis_eletroduto = perfis_padrao();
         }
+        self.padronizar_perfis();
         if self.diametros_condutor.is_empty() {
             self.diametros_condutor = diametros_padrao();
         }
@@ -771,6 +803,26 @@ impl Setup {
         let (id, edificacao) = (tabela.id.clone(), tabela.edificacao(&self.edificacao).nome.clone());
         self.concessionaria = id;
         self.edificacao = edificacao;
+    }
+
+    /// Eletrodutos do mesmo material têm a mesma cor, a do primeiro perfil dele, e o tipo de linha segue
+    /// o caminhamento.
+    pub fn padronizar_perfis(&mut self) {
+        let mut cores: Vec<(crate::rota::TipoEletroduto, u8)> = Vec::new();
+        for p in &mut self.perfis_eletroduto {
+            p.tipo_linha = p.linha_efetiva();
+            match cores.iter().find(|(t, _)| t.mesma_familia(p.tipo)) {
+                Some((_, c)) => p.cor = *c,
+                None => cores.push((p.tipo, p.cor.max(1))),
+            }
+        }
+    }
+
+    /// Muda a cor de um material em todos os perfis dele.
+    pub fn definir_cor_do_material(&mut self, tipo: crate::rota::TipoEletroduto, cor: u8) {
+        for p in self.perfis_eletroduto.iter_mut().filter(|p| p.tipo.mesma_familia(tipo)) {
+            p.cor = cor.max(1);
+        }
     }
 
     /// A tabela de demanda escolhida: uma própria ou uma de fábrica.

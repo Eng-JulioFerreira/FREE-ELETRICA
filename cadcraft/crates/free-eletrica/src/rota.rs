@@ -97,6 +97,22 @@ impl TipoEletroduto {
     pub const TODOS: [TipoEletroduto; 6] =
         [Self::CorrugadoLeve, Self::CorrugadoReforcado, Self::PvcRigido, Self::PeadCorrugado, Self::AcoEletrolitico, Self::AcoFogo];
 
+    /// A cor (índice do CAD) do material: o mesmo no teto, na parede e no piso. Leve e reforçado são o
+    /// mesmo PVC flexível, e os dois aços são o mesmo aço galvanizado.
+    pub fn cor_padrao(self) -> u8 {
+        match self {
+            Self::CorrugadoLeve | Self::CorrugadoReforcado => 3,
+            Self::PvcRigido => 5,
+            Self::PeadCorrugado => 6,
+            Self::AcoEletrolitico | Self::AcoFogo => 1,
+        }
+    }
+
+    /// Os dois tipos são da mesma família de material: têm a mesma cor.
+    pub fn mesma_familia(self, outro: Self) -> bool {
+        self.cor_padrao() == outro.cor_padrao()
+    }
+
     /// O código gravado no XDATA.
     pub fn codigo(self) -> &'static str {
         match self {

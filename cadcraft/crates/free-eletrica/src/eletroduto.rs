@@ -13,7 +13,7 @@ use cadcraft_doc::{Common, Drawing, Entity, EntityKind, Handle, Line, Lineweight
 use crate::biblioteca;
 use crate::ponto::ler_ponto;
 use crate::rota::{self, Instalacao, TipoEletroduto};
-use crate::setup::{PerfilEletroduto, Setup};
+use crate::setup::{PerfilEletroduto, Setup, TipoLinha};
 use crate::xdata;
 
 /// Camadas do eletroduto.
@@ -40,21 +40,47 @@ pub fn camada(i: Instalacao) -> &'static str {
     }
 }
 
-/// Cria a camada com a cor padrão, se ela ainda não existe.
+/// A cor das camadas de eletroduto: a do PVC flexível. Cada trecho grava a cor do material dele.
+const COR_DA_CAMADA: u8 = 3;
+/// O comprimento (m) de um traço no desenho: a escala da linha faz o padrão aparecer em qualquer unidade.
+const TRACO: f64 = 0.20;
+
+/// Cria a camada com a cor padrão, se ela ainda não existe. As camadas não diferem pela cor: só pelo
+/// tipo de linha do caminhamento. Uma camada com a cor padrão das versões anteriores é corrigida.
 pub fn garantir_camada(doc: &mut Drawing, i: Instalacao) {
     let nome = camada(i);
-    if doc.ensure_layer(nome)
-        && let Some(l) = doc.layer_mut(nome)
+    let linha = TipoLinha::do_caminhamento(i).no_desenho();
+    let (cor_antiga, descricao) = match i {
+        Instalacao::Teto => (4, "Eletroduto embutido no teto/laje"),
+        Instalacao::Piso => (6, "Eletroduto embutido no piso"),
+        Instalacao::Parede => (3, "Eletroduto embutido na parede"),
+    };
+    let nova = doc.ensure_layer(nome);
+    garantir_tipo_de_linha(doc, linha);
+    if let Some(l) = doc.layer_mut(nome)
+        && (nova || l.color == Color::Index(cor_antiga))
     {
-        let (cor, descricao) = match i {
-            Instalacao::Teto => (4, "Eletroduto embutido no teto/laje"),
-            Instalacao::Piso => (6, "Eletroduto embutido no piso"),
-            Instalacao::Parede => (3, "Eletroduto embutido na parede"),
-        };
-        l.color = Color::Index(cor);
+        l.color = Color::Index(COR_DA_CAMADA);
+        l.linetype = linha.into();
         l.lineweight = Lineweight::Mm100(30);
         l.description = descricao.into();
     }
+}
+
+/// A escala que dá ao tipo de linha um traço de [`TRACO`] no desenho.
+fn escala_de_linha(doc: &Drawing, nome: &str) -> f64 {
+    let (metros, _) = crate::setup::atual().unidade.metros(doc.header.i64("INSUNITS", 0));
+    let metros = if metros > 0.0 { metros } else { 1.0 };
+    let traco = doc.linetype(nome).and_then(|l| l.pattern.iter().map(|p| p.length.abs()).find(|c| *c > 0.0));
+    traco.map_or(1.0, |c| TRACO / metros / c)
+}
+
+/// Grava no eletroduto a cor e o tipo de linha.
+fn pintar(doc: &Drawing, c: &mut Common, cor: u8, linha: TipoLinha) {
+    let nome = linha.no_desenho();
+    c.color = Color::Index(cor.max(1));
+    c.linetype = nome.into();
+    c.ltscale = escala_de_linha(doc, nome);
 }
 
 /// Pontos de um arco de circunferência de `a` a `b` (ambos incluídos). `flecha` é fração da
@@ -134,7 +160,8 @@ pub fn inserir_percurso(
     garantir_camada(doc, instalacao);
     let mut xdata_novo = xdata_do_eletroduto(de, para, instalacao);
     xdata::gravar(&mut xdata_novo, rota::CHAVE_TIPO, Some(tipo.codigo()));
-    let common = Common { layer: camada(instalacao).into(), xdata: xdata_novo, ..Common::default() };
+    let mut common = Common { layer: camada(instalacao).into(), xdata: xdata_novo, ..Common::default() };
+    pintar(doc, &mut common, tipo.cor_padrao(), TipoLinha::do_caminhamento(instalacao));
     doc.add(&Space::Model, common, percurso.entidade(a, b)).map_err(|e| e.to_string())
 }
 
@@ -151,14 +178,13 @@ fn garantir_tipo_de_linha(doc: &mut Drawing, nome: &str) {
 /// Aplica um perfil a um eletroduto: o tipo, o caminhamento, a camada, o tipo de linha e a cor.
 pub fn aplicar_perfil(doc: &mut Drawing, h: Handle, perfil: &PerfilEletroduto) -> Result<(), String> {
     garantir_camada(doc, perfil.caminhamento);
-    garantir_tipo_de_linha(doc, perfil.tipo_linha.no_desenho());
+    garantir_tipo_de_linha(doc, perfil.linha_efetiva().no_desenho());
     let mut e = doc.model.get(h).map(|e| (**e).clone()).ok_or("eletroduto não encontrado")?;
     xdata::gravar(&mut e.common.xdata, rota::CHAVE_PERFIL, Some(&perfil.nome));
     xdata::gravar(&mut e.common.xdata, rota::CHAVE_TIPO, Some(perfil.tipo.codigo()));
     xdata::gravar(&mut e.common.xdata, rota::CHAVE_INSTALACAO, Some(perfil.caminhamento.codigo()));
     e.common.layer = camada(perfil.caminhamento).into();
-    e.common.linetype = perfil.tipo_linha.no_desenho().into();
-    e.common.color = Color::Index(perfil.cor.max(1));
+    pintar(doc, &mut e.common, perfil.cor, perfil.linha_efetiva());
     doc.model.replace(e);
     Ok(())
 }
@@ -551,6 +577,7 @@ pub fn definir_tipo(doc: &mut Drawing, h: Handle, tipo: TipoEletroduto) -> Resul
     xdata::gravar(&mut e.common.xdata, rota::CHAVE_TIPO, Some(tipo.codigo()));
     // O tipo escolhido à mão sai do perfil: a tabela de diâmetros passa a ser a do tipo.
     xdata::gravar(&mut e.common.xdata, rota::CHAVE_PERFIL, None);
+    e.common.color = Color::Index(tipo.cor_padrao());
     doc.model.replace(e);
     Ok(())
 }
@@ -561,6 +588,40 @@ pub fn definir_instalacao(doc: &mut Drawing, h: Handle, instalacao: Instalacao) 
     let mut e = doc.model.get(h).map(|e| (**e).clone()).ok_or("eletroduto não encontrado")?;
     xdata::gravar(&mut e.common.xdata, rota::CHAVE_INSTALACAO, Some(instalacao.codigo()));
     e.common.layer = camada(instalacao).into();
+    let linha = TipoLinha::do_caminhamento(instalacao);
+    let cor = match e.common.color {
+        Color::Index(c) => c,
+        _ => COR_DA_CAMADA,
+    };
+    pintar(doc, &mut e.common, cor, linha);
     doc.model.replace(e);
     Ok(())
+}
+
+/// Aplica o padrão aos eletrodutos que já estão no desenho: a cor do material (a do perfil, se houver) e
+/// o tipo de linha do caminhamento. Devolve quantos mudaram.
+pub fn padronizar(doc: &mut Drawing, setup: &Setup) -> usize {
+    let hs: Vec<Handle> = doc.model.iter().filter(|e| setup.e_camada_eletroduto(&e.common.layer)).map(|e| e.handle).collect();
+    let mut n = 0;
+    for h in hs {
+        let Some(mut e) = doc.model.get(h).map(|e| (**e).clone()) else { continue };
+        let xd = xdata::ler(&e.common.xdata);
+        let valor = |k: &str| xd.iter().find(|(c, _)| c.eq_ignore_ascii_case(k)).map(|(_, v)| v.as_str());
+        let tipo = valor(rota::CHAVE_TIPO).and_then(rota::TipoEletroduto::de_codigo).unwrap_or_default();
+        let perfil = valor(rota::CHAVE_PERFIL).and_then(|p| setup.perfil(p)).filter(|p| p.tipo.mesma_familia(tipo));
+        let instalacao = rota::instalacao_de(&xd, &e.common.layer, setup);
+        let (cor, linha) = match perfil {
+            Some(p) if p.caminhamento == instalacao => (p.cor, p.linha_efetiva()),
+            Some(p) => (p.cor, TipoLinha::do_caminhamento(instalacao)),
+            None => (tipo.cor_padrao(), TipoLinha::do_caminhamento(instalacao)),
+        };
+        garantir_tipo_de_linha(doc, linha.no_desenho());
+        let antes = (e.common.color, e.common.linetype.clone());
+        pintar(doc, &mut e.common, cor, linha);
+        if antes != (e.common.color, e.common.linetype.clone()) {
+            doc.model.replace(e);
+            n += 1;
+        }
+    }
+    n
 }
