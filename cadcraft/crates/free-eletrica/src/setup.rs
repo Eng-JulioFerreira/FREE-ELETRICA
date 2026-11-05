@@ -393,6 +393,10 @@ pub struct Setup {
     pub cabos_telecom: Vec<CaboTelecom>,
     /// O cabo de um circuito novo; cada circuito pode ter o seu.
     pub cabo_padrao: TipoCabo,
+    /// Circuitos no mesmo eletroduto podem dividir um condutor de proteção, da maior seção entre eles.
+    pub compartilhar_pe: bool,
+    /// FCA fixo para todos os circuitos. `None`: o real de cada trecho (NBR 5410, tabela 42).
+    pub fca_manual: Option<f64>,
     /// Diâmetros externos dos condutores, por seção.
     pub diametros_condutor: Vec<DiametroCondutor>,
     /// Nome do tipo de eletroduto do projeto.
@@ -428,6 +432,8 @@ impl Default for Setup {
             raio_captura: 0.30,
             cabos_telecom: cabos_padrao(),
             cabo_padrao: TipoCabo::default(),
+            compartilhar_pe: false,
+            fca_manual: None,
             diametros_condutor: diametros_padrao(),
             tipo_eletroduto: "PVC rígido roscável, linha média".into(),
             eletrodutos: eletrodutos_padrao(),
@@ -564,6 +570,7 @@ impl Setup {
         self.queda_admissivel = self.queda_admissivel.clamp(0.5, 10.0);
         self.queda_iluminacao = self.queda_iluminacao.clamp(0.5, 10.0);
         self.queda_alimentador = self.queda_alimentador.clamp(0.1, 10.0);
+        self.fca_manual = self.fca_manual.filter(|f| f.is_finite()).map(|f| f.clamp(0.1, 1.0));
         self.fator_materiais = self.fator_materiais.clamp(1.0, 2.0);
         self.raio_captura = self.raio_captura.clamp(0.01, 5.0);
         self.secoes_omitidas.sort_by(f64::total_cmp);

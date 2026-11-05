@@ -201,3 +201,28 @@ Limites:
 - **Legenda:** a metragem por tipo e diâmetro está na lista de materiais. Ainda não existe uma legenda
   desenhada na planta.
 - **Cabos de 0,6/1 kV:** usam a mesma coluna de diâmetro; LSZH segue a coluna da tensão dele.
+
+## Especificação atualizada: traçados, dimensionamento, blocos e pacote
+
+- **Traçado do eletroduto:** reto, ortogonal e arco, na mini-barra. Um clique no vazio vira um desvio do
+  trajeto. O comprimento real e a ocupação valem para todos.
+- **`ELEDIMENSIONAR`:** janela com as premissas e **Processar cálculo**, que grava em cada quadro o resultado
+  de cada circuito (`DIM.<circuito>`) e atualiza tags e tabelas. O resumo do quadro de cargas mostra o que foi
+  gravado e acusa **Desatualizado** quando o projeto muda depois. As edições não regeneram mais as tags
+  sozinhas: isso substitui o gatilho automático pedido na primeira especificação.
+- **Quadro de cargas em duas abas:** resumo e ficha de engenharia, que substituem a janela de detalhes.
+- **PE compartilhado:** num trecho com vários circuitos, fica o PE de maior seção; a marca, a ocupação e a compra
+  de cabo acompanham.
+- **Blocos:** janela com **+ Criar novo bloco elétrico** e o **Inspetor de atributos** das inserções.
+- **Pacote:** `cargo xtask dist` gera a pasta e o `.zip` em `dist/`, com executável, template, manuais e licenças.
+
+Limites:
+
+- **Ficha e inspeção:** mostram o cálculo de agora como prévia; a ficha avisa quando ele difere do gravado. A conta
+  só roda com a janela ou a inspeção aberta, nunca ao clicar na planta.
+- **Premissas:** PE compartilhado, FCA fixo, temperatura e os outros valores do Setup ficam nas preferências do
+  programa, não no DXF. O resultado do cálculo fica no DXF.
+- **Inspetor:** edita atributos de blocos inseridos. Os da definição do bloco se editam no editor de blocos.
+- **Grupo DR:** organiza os circuitos e entra na lista de materiais, sem dimensionar o DR de cada grupo.
+- **Método de instalação:** segue fixo em B1.
+- **Pacote:** o executável não é assinado, e o Windows pode avisar na primeira vez.

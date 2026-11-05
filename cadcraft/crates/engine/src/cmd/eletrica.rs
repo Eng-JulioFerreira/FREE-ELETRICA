@@ -15,7 +15,8 @@
 //! Na primeira ferramenta usada num desenho virgem, as camadas e os blocos base entram sem
 //! perguntar (`ele::biblioteca::garantir_base`). Os valores vão para os atributos do bloco quando
 //! existem e, senão, para o XDATA `FREE_ELETRICA` (`ele::editar`). Cada comando é um passo de
-//! desfazer, e o que muda o quadro atualiza as tags e as tabelas que já existem.
+//! desfazer. Lançar não dimensiona: o cálculo, as tags e as tabelas só mudam com
+//! `eletrica.dimensionar` e ELEREGEN.
 //!
 //! Os comandos `eletrica.*` dão em JSON tudo o que a paleta e os painéis mostram: o motor inteiro é
 //! acessível sem a interface (linha de comando, scripts, canal de controle, `cadcraft-cli`, MCP).
@@ -45,7 +46,7 @@ pub fn specs() -> Vec<CommandSpec> {
             .params("{quadro?: hex | TAG, ponto: [x, y]} → draws the load schedule as a block at the point (moves it if the board already has one): {tabela}")
             .interactive(|_| Ok(Box::new(TabelaM::default()))),
         CommandSpec::new("eleeletroduto", "Insert Conduit", run_eletroduto)
-            .params("{de: hex | [x, y], para: hex | [x, y], instalacao?: \"CEILING\" | \"FLOOR\" | \"WALL\", tipo?: PVC_CORR_LIGHT | PVC_CORR_HEAVY | PVC_RIGID | HDPE_CORR | STEEL_ELECTRO | STEEL_HOT_DIP, flecha?: number (arc bulge as a fraction of the chord: + left, - right, 0 straight; default 0.15)} (a point on a conduit splits it with a pull box) → {eletroduto}")
+            .params("{de: hex | [x, y], para: hex | [x, y], instalacao?: \"CEILING\" | \"FLOOR\" | \"WALL\", tipo?: PVC_CORR_LIGHT | PVC_CORR_HEAVY | PVC_RIGID | HDPE_CORR | STEEL_ELECTRO | STEEL_HOT_DIP, tracado?: STRAIGHT | ORTHOGONAL | ARC, desvios?: [[x, y]], verticalPrimeiro?: bool, flecha?: number (arc bulge as a fraction of the chord: + left, - right, 0 straight; default 0.15)} (a point on a conduit splits it with a pull box) → {eletroduto}")
             .interactive(|_| Ok(Box::new(EletrodutoM::default()))),
         CommandSpec::new("eleponto", "Insert Electrical Point", run_ponto)
             .params("{bloco, pontos: [[x, y]], rotacao?: degrees, rotacaoAuto?: bool (align to the nearest wall), altura?: m, quadro?: hex | TAG, valores?: {TAG: value}} → {pontos: [hex]}")
@@ -71,9 +72,14 @@ pub fn specs() -> Vec<CommandSpec> {
             .params("{} → {cabos: [{secao, tipo, metros}], eletrodutos: [{tipo, diametro, metros}], caixas, pontos, disjuntores, pontosSemCaixa, eletrodutosSoltos, avisos}")
             .noundo(),
         CommandSpec::new("eletrica.dimensionar", "Size Board", run_dimensionar)
-            .params("{quadro?: hex | TAG} → sizes the board's circuits and updates tags and tables: {circuitos, avisos}"),
+            .params("{quadro?: hex | TAG (default: every board), compartilharPe?: bool, temperaturaAmbiente?: °C, fcaManual?: number | null} → applies the options, sizes the circuits, stores the result on the boards and updates tags and tables: {quadros: [{tag, circuitos, avisos}], circuitos, avisos}"),
         CommandSpec::new("eletrica.quadro.equilibrar", "Balance Phases", run_equilibrar)
             .params("{quadro?: hex | TAG} → unlocks the phases of every circuit, so the balancing applies to all: {destravados, desequilibrio}"),
+        CommandSpec::new("eletrica.atributos", "Block Attributes", run_atributos)
+            .params("{ponto: hex} → [{tag, valor, visivel, x, y, constante}]")
+            .noundo(),
+        CommandSpec::new("eletrica.atributo.definir", "Edit Block Attribute", run_atributo_definir)
+            .params("{ponto: hex, tag, valor?: text, visivel?: bool, posicao?: [x, y]} (ALTURA follows the project's height rule) → {ponto, tag}"),
         CommandSpec::new("eletrica.bootstrap", "Prepare Electrical Drawing", run_bootstrap).params("{} → creates the missing base layers and blocks: {mudou}"),
         CommandSpec::new("eletrica.blocos", "Electrical Point Blocks", run_blocos)
             .params("{} → [{nome, tipo, inseridos, atributos: [{tag, padrao, prompt, constante}]}]")
@@ -83,7 +89,7 @@ pub fn specs() -> Vec<CommandSpec> {
             .noundo(),
         CommandSpec::new("eletrica.ponto.excluir", "Delete Electrical Points", run_excluir_pontos).params("{pontos: [hex]} → {excluidos}"),
         CommandSpec::new("eletrica.eletroduto.modelo", "Conduit Template", run_modelo_eletroduto)
-            .params("{instalacao?: \"CEILING\" | \"FLOOR\" | \"WALL\", tipo?: PVC_CORR_LIGHT | PVC_CORR_HEAVY | PVC_RIGID | HDPE_CORR | STEEL_ELECTRO | STEEL_HOT_DIP, flecha?: number} → what ELEELETRODUTO uses, also while it runs")
+            .params("{instalacao?: \"CEILING\" | \"FLOOR\" | \"WALL\", tipo?: PVC_CORR_LIGHT | PVC_CORR_HEAVY | PVC_RIGID | HDPE_CORR | STEEL_ELECTRO | STEEL_HOT_DIP, tracado?: STRAIGHT | ORTHOGONAL | ARC, flecha?: number} → what ELEELETRODUTO uses, also while it runs")
             .noundo(),
         CommandSpec::new("eletrica.eletroduto.dividir", "Split Conduit", run_dividir).params("{eletroduto: hex, ponto: [x, y]} → splits it with a pull box: {caixa}"),
         CommandSpec::new("eletrica.eletroduto.definir", "Conduit Properties", run_definir_eletroduto)
@@ -111,7 +117,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("eletrica.circuito.juntar", "Merge Circuits", run_juntar)
             .params("{quadro?: hex | TAG, de, para} (the points of `de` go to `para`) → {quadro, de, para, pontos}"),
         CommandSpec::new("eletrica.circuito.definir", "Circuit Properties", run_definir).params(
-            "{quadro?: hex | TAG, circuito, cabo?: FLEX_PVC_70 | UNI_PVC_70 | HEPR_XLPE_90 | LSZH_70 | LSZH_HEPR_90 | null, isolacao?: \"PVC\" | \"EPR\" | \"XLPE\" | null, esquema?: \"F+N\" | \"F+N+T\" | \"2F+T\" | \"3F+N+T\" | null, tensao?: V | null, fases?: \"R\" | \"RS\" ... | null (a value locks the phases), descricao?} (null: back to automatic) → {quadro, circuito}. Load type and power factor come from the block attributes TIPO_CARGA and FP.",
+            "{quadro?: hex | TAG, circuito, grupoDr?: text | null, cabo?: FLEX_PVC_70 | UNI_PVC_70 | HEPR_XLPE_90 | LSZH_70 | LSZH_HEPR_90 | null, isolacao?: \"PVC\" | \"EPR\" | \"XLPE\" | null, esquema?: \"F+N\" | \"F+N+T\" | \"2F+T\" | \"3F+N+T\" | null, tensao?: V | null, fases?: \"R\" | \"RS\" ... | null (a value locks the phases), descricao?} (null: back to automatic) → {quadro, circuito}. Load type and power factor come from the block attributes TIPO_CARGA and FP.",
         ),
         CommandSpec::new("eletrica.demanda.tabelas", "Demand Tables", run_tabelas_demanda)
             .params("{} → the utilities' demand tables (id, nome, fonte, edificacoes, aparelhos, arCondicionado, bombas)")
@@ -154,19 +160,6 @@ fn preparar(s: &mut Session) -> Result<bool> {
     }
     let m = metros(s)?;
     Ok(ele::biblioteca::garantir_base(s.doc_mut()?, &ele::setup::atual(), m))
-}
-
-/// O gatilho das edições: atualiza as tags e as tabelas que já existem, sem mexer na posição delas.
-/// Um erro aqui não desfaz a edição: é avisado na linha de comando.
-fn atualizar_gerados(s: &mut Session) -> Result<()> {
-    let doc = s.doc()?;
-    if ele::fiacao::tags(doc).is_empty() && ele::tabela::tabelas(doc).is_empty() {
-        return Ok(());
-    }
-    if let Err(e) = ele::fiacao::regenerar_se_houver(s.doc_mut()?, &ele::setup::atual()) {
-        s.echo(format!("Fiação e tabelas não atualizadas: {e}"));
-    }
-    Ok(())
 }
 
 /// O quadro por handle ou TAG; sem nada, o primeiro do desenho.
@@ -217,6 +210,10 @@ fn tipo_de(cmd: &str, v: &Value) -> Result<ele::rota::TipoEletroduto> {
         .ok_or_else(|| bad(cmd, "`tipo` must be PVC_CORR_LIGHT, PVC_CORR_HEAVY, PVC_RIGID, HDPE_CORR, STEEL_ELECTRO or STEEL_HOT_DIP"))
 }
 
+fn tracado_de(cmd: &str, v: &Value) -> Result<ele::eletroduto::Tracado> {
+    v.as_str().and_then(ele::eletroduto::Tracado::de_codigo).ok_or_else(|| bad(cmd, "`tracado` must be STRAIGHT, ORTHOGONAL or ARC"))
+}
+
 fn numero_finito(cmd: &str, v: &Value, k: &str) -> Result<f64> {
     v.as_f64().filter(|f| f.is_finite()).ok_or_else(|| bad(cmd, format!("`{k}` must be a number")))
 }
@@ -255,7 +252,6 @@ fn run_sobrescrever(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("eletrica.sobrescrever", format!("section {sec} mm² is not in the table")));
     }
     ele::editar::definir_sobrescrita(s.doc_mut()?, q, &circuito, num("secao"), num("disjuntor")).map_err(erro)?;
-    atualizar_gerados(s)?;
     Ok(json!({ "quadro": q.hex(), "circuito": circuito }))
 }
 
@@ -270,7 +266,6 @@ fn run_quadro(s: &mut Session, p: &Value) -> Result<Value> {
         ),
     };
     ele::editar::definir_isolacao(s.doc_mut()?, q, isolacao).map_err(erro)?;
-    atualizar_gerados(s)?;
     Ok(json!({ "quadro": q.hex(), "isolacao": isolacao.map(|i| i.codigo()) }))
 }
 
@@ -292,7 +287,6 @@ fn run_criar(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let descricao = p.get("descricao").and_then(Value::as_str).unwrap_or("");
     ele::editar::definir_descricao(s.doc_mut()?, q, &id, Some(descricao)).map_err(erro)?;
-    atualizar_gerados(s)?;
     Ok(json!({ "quadro": q.hex(), "circuito": id }))
 }
 
@@ -301,7 +295,6 @@ fn run_descrever(s: &mut Session, p: &Value) -> Result<Value> {
     let id = texto("eletrica.circuito.descrever", p, "circuito")?;
     let descricao = p.get("descricao").and_then(Value::as_str).unwrap_or("");
     ele::editar::definir_descricao(s.doc_mut()?, q, &id, Some(descricao)).map_err(erro)?;
-    atualizar_gerados(s)?;
     Ok(json!({ "quadro": q.hex(), "circuito": id }))
 }
 
@@ -309,7 +302,6 @@ fn run_excluir(s: &mut Session, p: &Value) -> Result<Value> {
     let q = achar_quadro(&analise(s)?, p.get("quadro"))?;
     let id = texto("eletrica.circuito.excluir", p, "circuito")?;
     let n = ele::editar::excluir_circuito(s.doc_mut()?, q, &id).map_err(erro)?;
-    atualizar_gerados(s)?;
     Ok(json!({ "quadro": q.hex(), "circuito": id, "pontos": n }))
 }
 
@@ -318,7 +310,6 @@ fn run_juntar(s: &mut Session, p: &Value) -> Result<Value> {
     let de = texto("eletrica.circuito.juntar", p, "de")?;
     let para = texto("eletrica.circuito.juntar", p, "para")?;
     let n = ele::editar::juntar_circuitos(s.doc_mut()?, q, &de, &para).map_err(erro)?;
-    atualizar_gerados(s)?;
     Ok(json!({ "quadro": q.hex(), "de": de, "para": para, "pontos": n }))
 }
 
@@ -328,6 +319,7 @@ fn run_juntar(s: &mut Session, p: &Value) -> Result<Value> {
 struct Propriedades {
     isolacao: Option<Option<ele::nbr5410::Isolacao>>,
     cabo: Option<Option<ele::nbr5410::TipoCabo>>,
+    grupo_dr: Option<Option<String>>,
     esquema: Option<Option<ele::nbr5410::Esquema>>,
     tensao: Option<Option<f64>>,
     fases: Option<Option<String>>,
@@ -355,6 +347,12 @@ impl Propriedades {
                         .and_then(ele::nbr5410::TipoCabo::de_codigo)
                         .ok_or_else(|| bad(cmd, "`cabo` must be FLEX_PVC_70, UNI_PVC_70, HEPR_XLPE_90, LSZH_70 or LSZH_HEPR_90"))?,
                 ),
+            });
+        }
+        if let Some(v) = p.get("grupoDr") {
+            d.grupo_dr = Some(match v {
+                Value::Null => None,
+                v => Some(v.as_str().ok_or_else(|| bad(cmd, "`grupoDr` must be text or null"))?.to_string()),
             });
         }
         if let Some(v) = p.get("esquema") {
@@ -390,6 +388,7 @@ impl Propriedades {
     fn vazio(&self) -> bool {
         self.isolacao.is_none()
             && self.cabo.is_none()
+            && self.grupo_dr.is_none()
             && self.esquema.is_none()
             && self.tensao.is_none()
             && self.fases.is_none()
@@ -403,6 +402,9 @@ impl Propriedades {
         }
         if let Some(c) = self.cabo {
             ele::editar::definir_cabo_circuito(doc, q, id, c).map_err(erro)?;
+        }
+        if let Some(g) = &self.grupo_dr {
+            ele::editar::definir_grupo_dr(doc, q, id, g.as_deref()).map_err(erro)?;
         }
         if let Some(e) = self.esquema {
             ele::editar::definir_esquema(doc, q, id, e).map_err(erro)?;
@@ -430,10 +432,9 @@ fn run_definir(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let d = Propriedades::ler(CMD, p)?;
     if d.vazio() {
-        return Err(bad(CMD, "give `cabo`, `isolacao`, `esquema`, `tensao`, `fases` or `descricao`"));
+        return Err(bad(CMD, "give `cabo`, `grupoDr`, `isolacao`, `esquema`, `tensao`, `fases` or `descricao`"));
     }
     d.gravar(s, q, &id)?;
-    atualizar_gerados(s)?;
     Ok(json!({ "quadro": q.hex(), "circuito": id }))
 }
 
@@ -442,18 +443,68 @@ fn run_materiais(s: &mut Session, _p: &Value) -> Result<Value> {
 }
 
 fn run_dimensionar(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "eletrica.dimensionar";
     let a = analise(s)?;
-    let q = achar_quadro(&a, p.get("quadro"))?;
-    let r = ele::rotear_quadro(s.doc()?, &a, &ele::setup::atual(), q).map_err(erro)?;
-    let avisos: usize = r.avisos.len() + r.linhas.iter().map(|l| l.escolha.avisos.len()).sum::<usize>();
-    atualizar_gerados(s)?;
-    Ok(json!({ "quadro": q.hex(), "circuitos": r.linhas.len(), "avisos": avisos }))
+    let quadro = match p.get("quadro").filter(|q| !q.is_null()) {
+        Some(q) => Some(achar_quadro(&a, Some(q))?),
+        None => None,
+    };
+    if a.quadros().is_empty() {
+        return Err(erro("nenhum quadro no desenho: nada a dimensionar"));
+    }
+    // As premissas valem daqui em diante, como as das configurações.
+    let mut opcoes = serde_json::Map::new();
+    for k in ["compartilharPe", "temperaturaAmbiente", "fcaManual"] {
+        if let Some(v) = p.get(k) {
+            opcoes.insert(k.to_string(), v.clone());
+        }
+    }
+    if !opcoes.is_empty() {
+        ele::setup::json(&Value::Object(opcoes)).map_err(|e| bad(CMD, e))?;
+    }
+    let feitos = ele::editar::processar_calculo(s.doc_mut()?, &ele::setup::atual(), quadro).map_err(erro)?;
+    let circuitos: usize = feitos.iter().map(|f| f.circuitos).sum();
+    let avisos: usize = feitos.iter().map(|f| f.avisos.len()).sum();
+    Ok(json!({ "quadros": json_de(&feitos)?, "circuitos": circuitos, "avisos": avisos }))
+}
+
+fn run_atributos(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "eletrica.atributos";
+    let h = handle(CMD, p, "ponto")?;
+    json_de(&ele::editar::atributos_de(s.doc()?, h).ok_or_else(|| bad(CMD, "`ponto` is not a block"))?)
+}
+
+fn run_atributo_definir(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "eletrica.atributo.definir";
+    let h = handle(CMD, p, "ponto")?;
+    let tag = texto(CMD, p, "tag")?;
+    let valor = match p.get("valor") {
+        None => None,
+        Some(v) => Some(
+            v.as_str()
+                .map(str::to_string)
+                .or_else(|| v.as_f64().map(|n| n.to_string()))
+                .ok_or_else(|| bad(CMD, "`valor` must be text or a number"))?,
+        ),
+    };
+    let visivel = match p.get("visivel") {
+        None => None,
+        Some(v) => Some(v.as_bool().ok_or_else(|| bad(CMD, "`visivel` must be true or false"))?),
+    };
+    let posicao = match p.get("posicao") {
+        None => None,
+        Some(v) => Some(ponto_de(v).ok_or_else(|| bad(CMD, "`posicao` must be [x, y]"))?),
+    };
+    if valor.is_none() && visivel.is_none() && posicao.is_none() {
+        return Err(bad(CMD, "give `valor`, `visivel` or `posicao`"));
+    }
+    ele::editar::editar_atributo(s.doc_mut()?, h, &tag, valor.as_deref(), visivel, posicao, &ele::setup::atual()).map_err(|e| bad(CMD, e))?;
+    Ok(json!({ "ponto": h.hex(), "tag": tag }))
 }
 
 fn run_equilibrar(s: &mut Session, p: &Value) -> Result<Value> {
     let q = achar_quadro(&analise(s)?, p.get("quadro"))?;
     let n = ele::editar::liberar_fases(s.doc_mut()?, q).map_err(erro)?;
-    atualizar_gerados(s)?;
     let a = analise(s)?;
     let r = ele::rotear_quadro(s.doc()?, &a, &ele::setup::atual(), q).map_err(erro)?;
     Ok(json!({ "quadro": q.hex(), "destravados": n, "desequilibrio": r.desequilibrio }))
@@ -711,7 +762,6 @@ fn run_circuito(s: &mut Session, p: &Value) -> Result<Value> {
             feitos.push(h.hex());
         }
     }
-    atualizar_gerados(s)?;
     Ok(json!({ "circuito": circuito, "pontos": feitos }))
 }
 
@@ -745,7 +795,6 @@ impl CircuitoM {
 
     fn terminar(s: &mut Session) -> Result<Step> {
         ele::circuito::definir_ativo(s.state()?.uid, None);
-        atualizar_gerados(s)?;
         Ok(Step::Done)
     }
 
@@ -873,7 +922,6 @@ impl Interactive for CircuitoM {
 fn run_remover(s: &mut Session, p: &Value) -> Result<Value> {
     let hs = handles("eleremoverponto", p, "pontos")?;
     let n = ele::editar::remover_do_circuito(s.doc_mut()?, &hs).map_err(erro)?;
-    atualizar_gerados(s)?;
     Ok(json!({ "removidos": n }))
 }
 
@@ -896,13 +944,9 @@ impl Interactive for RemoverM {
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
         match i {
-            Input::Cancel => {
-                atualizar_gerados(s)?;
-                Ok(Step::Done)
-            }
+            Input::Cancel => Ok(Step::Done),
             Input::Enter => {
                 s.echo(format!("{} ponto(s) sem circuito.", self.feitos));
-                atualizar_gerados(s)?;
                 Ok(Step::Done)
             }
             Input::Pick(hs) => {
@@ -992,7 +1036,6 @@ fn run_comando(s: &mut Session, p: &Value) -> Result<Value> {
             feitos.push(l.hex());
         }
     }
-    atualizar_gerados(s)?;
     Ok(json!({ "comando": sw.letra, "circuito": sw.circuito, "luminarias": feitos }))
 }
 
@@ -1034,10 +1077,7 @@ impl Interactive for ComandoM {
             return Ok(Step::Continue);
         }
         match i {
-            Input::Cancel => {
-                atualizar_gerados(s)?;
-                Ok(Step::Done)
-            }
+            Input::Cancel => Ok(Step::Done),
             Input::Keyword(k) | Input::Text(k) if self.interruptor.is_some() && k.trim().eq_ignore_ascii_case("letra") => {
                 self.pedindo_letra = true;
                 Ok(Step::Continue)
@@ -1069,7 +1109,6 @@ impl Interactive for ComandoM {
                 if let Some(sw) = &self.interruptor {
                     s.echo(format!("{} luminária(s) no comando {}.", self.feitos, sw.letra));
                 }
-                atualizar_gerados(s)?;
                 Ok(Step::Done)
             }
             _ => Ok(Step::Continue),
@@ -1130,8 +1169,24 @@ fn run_eletroduto(s: &mut Session, p: &Value) -> Result<Value> {
     preparar(s)?;
     let de = ponta(s, CMD, p, "de")?;
     let para = ponta(s, CMD, p, "para")?;
-    let h = ele::eletroduto::inserir_com_tipo(s.doc_mut()?, de, para, instalacao, flecha, tipo).map_err(erro)?;
-    atualizar_gerados(s)?;
+    let tracado = match p.get("tracado").filter(|v| !v.is_null()) {
+        Some(v) => tracado_de(CMD, v)?,
+        // Com flecha zero pedida, o arco de sempre vira reta.
+        None if p.get("flecha").is_some() && flecha.abs() < 1e-9 => ele::eletroduto::Tracado::Reto,
+        None => modelo.tracado,
+    };
+    let desvios = match p.get("desvios").filter(|v| !v.is_null()) {
+        None => Vec::new(),
+        Some(v) => v
+            .as_array()
+            .ok_or_else(|| bad(CMD, "`desvios` must be [[x, y]]"))?
+            .iter()
+            .map(|q| ponto_de(q).ok_or_else(|| bad(CMD, "`desvios` must be [[x, y]]")))
+            .collect::<Result<Vec<_>>>()?,
+    };
+    let vertical_primeiro = p.get("verticalPrimeiro").and_then(Value::as_bool).unwrap_or(false);
+    let percurso = ele::eletroduto::Percurso { tracado, flecha, desvios, vertical_primeiro };
+    let h = ele::eletroduto::inserir_percurso(s.doc_mut()?, de, para, instalacao, &percurso, tipo).map_err(erro)?;
     Ok(json!({ "eletroduto": h.hex(), "de": de.hex(), "para": para.hex() }))
 }
 
@@ -1144,6 +1199,9 @@ fn run_modelo_eletroduto(s: &mut Session, p: &Value) -> Result<Value> {
     }
     if let Some(v) = p.get("tipo").filter(|v| !v.is_null()) {
         m.tipo = tipo_de(CMD, v)?;
+    }
+    if let Some(v) = p.get("tracado").filter(|v| !v.is_null()) {
+        m.tracado = tracado_de(CMD, v)?;
     }
     if let Some(v) = p.get("flecha").filter(|v| !v.is_null()) {
         m.flecha = numero_finito(CMD, v, "flecha")?.clamp(-ele::eletroduto::FLECHA_MAXIMA, ele::eletroduto::FLECHA_MAXIMA);
@@ -1158,7 +1216,6 @@ fn run_dividir(s: &mut Session, p: &Value) -> Result<Value> {
     let q = p.get("ponto").and_then(ponto_de).ok_or_else(|| bad(CMD, "`ponto` ([x, y]) is required"))?;
     let m = metros(s)?;
     let caixa = ele::eletroduto::dividir(s.doc_mut()?, &ele::setup::atual(), e, q, m).map_err(erro)?;
-    atualizar_gerados(s)?;
     Ok(json!({ "caixa": caixa.hex() }))
 }
 
@@ -1187,7 +1244,6 @@ fn run_definir_eletroduto(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(i) = instalacao {
         ele::eletroduto::definir_instalacao(s.doc_mut()?, e, i).map_err(erro)?;
     }
-    atualizar_gerados(s)?;
     Ok(json!({ "eletroduto": e.hex() }))
 }
 
@@ -1195,6 +1251,10 @@ fn run_definir_eletroduto(s: &mut Session, p: &Value) -> Result<Value> {
 /// caixa de passagem); cada um é ligado ao anterior, até Enter.
 struct EletrodutoM {
     pedindo_tipo: bool,
+    /// Os pontos de passagem do trecho em andamento.
+    desvios: Vec<[f64; 2]>,
+    /// No ortogonal, sobe antes de andar.
+    vertical_primeiro: bool,
     anterior: Option<Handle>,
     /// Lado do arco: 1 à esquerda de quem vai do anterior ao próximo, -1 à direita.
     lado: f64,
@@ -1204,17 +1264,46 @@ struct EletrodutoM {
 
 impl Default for EletrodutoM {
     fn default() -> Self {
-        EletrodutoM { pedindo_tipo: false, anterior: None, lado: 1.0, pedindo_flecha: false, feitos: 0 }
+        EletrodutoM {
+            pedindo_tipo: false,
+            desvios: Vec::new(),
+            vertical_primeiro: false,
+            anterior: None,
+            lado: 1.0,
+            pedindo_flecha: false,
+            feitos: 0,
+        }
     }
 }
 
 impl EletrodutoM {
+    /// O percurso do trecho em andamento, pelo modelo.
+    fn percurso(&self, m: &ele::eletroduto::ModeloEletroduto) -> ele::eletroduto::Percurso {
+        ele::eletroduto::Percurso {
+            tracado: m.tracado,
+            flecha: self.lado * m.flecha,
+            desvios: self.desvios.clone(),
+            vertical_primeiro: self.vertical_primeiro,
+        }
+    }
+
+    /// O clique não acertou nem bloco nem eletroduto: é um ponto de passagem.
+    fn ponto_vazio(&self, s: &Session, q: [f64; 2]) -> Result<bool> {
+        let (setup, m) = (ele::setup::atual(), metros(s)?);
+        let doc = s.doc()?;
+        Ok(ele::eletroduto::bloco_em(doc, &setup, q, m).is_none() && ele::eletroduto::eletroduto_em(doc, &setup, q, m).is_none())
+    }
+
     /// Liga o bloco ao anterior.
     fn clicar(&mut self, s: &mut Session, h: Handle) -> Result<Step> {
         if let Some(a) = self.anterior {
             let m = ele::eletroduto::modelo(s.state()?.uid);
-            match ele::eletroduto::inserir_com_tipo(s.doc_mut()?, a, h, m.instalacao, self.lado * m.flecha, m.tipo) {
-                Ok(_) => self.feitos += 1,
+            let percurso = self.percurso(&m);
+            match ele::eletroduto::inserir_percurso(s.doc_mut()?, a, h, m.instalacao, &percurso, m.tipo) {
+                Ok(_) => {
+                    self.feitos += 1;
+                    self.desvios.clear();
+                }
                 Err(e) => {
                     s.echo(e);
                     return Ok(Step::Continue);
@@ -1249,9 +1338,9 @@ impl Interactive for EletrodutoM {
             Some(_) => format!("Clique no próximo bloco ou no meio de um eletroduto ({onde}; Enter termina)"),
         };
         let chaves: &[&str] = if self.anterior.is_some() {
-            &["Teto", "Piso", "Parede", "Tipo", "Inverter", "Flecha"]
+            &["Reto", "Ortogonal", "Arco", "Teto", "Piso", "Parede", "Tipo", "Inverter", "Flecha"]
         } else {
-            &["Teto", "Piso", "Parede", "Tipo", "Flecha"]
+            &["Reto", "Ortogonal", "Arco", "Teto", "Piso", "Parede", "Tipo", "Flecha"]
         };
         Prompt::new(msg, Accept::POINT).kw(chaves)
     }
@@ -1260,10 +1349,8 @@ impl Interactive for EletrodutoM {
         if (a[0] - cursor.x).hypot(a[1] - cursor.y) <= 0.0 {
             return Vec::new();
         }
-        let flecha = s.state().map(|st| ele::eletroduto::modelo(st.uid).flecha).unwrap_or(ele::eletroduto::FLECHA_PADRAO);
-        let pts: Vec<Vec2> =
-            ele::eletroduto::pontos_do_arco(a, [cursor.x, cursor.y], self.lado * flecha, 9).into_iter().map(|p| Vec2::new(p[0], p[1])).collect();
-        vec![EntityKind::Spline(cadcraft_doc::geom::Spline::from_fit_points(&pts))]
+        let m = s.state().map(|st| ele::eletroduto::modelo(st.uid)).unwrap_or_default();
+        vec![self.percurso(&m).entidade(a, [cursor.x, cursor.y])]
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
         let uid = s.state()?.uid;
@@ -1294,7 +1381,6 @@ impl Interactive for EletrodutoM {
                 if self.feitos > 0 {
                     s.echo(format!("{} eletroduto(s) inserido(s).", self.feitos));
                 }
-                atualizar_gerados(s)?;
                 Ok(Step::Done)
             }
             Input::Keyword(k) | Input::Text(k) => {
@@ -1303,12 +1389,23 @@ impl Interactive for EletrodutoM {
                     "teto" => m.instalacao = Instalacao::Teto,
                     "piso" => m.instalacao = Instalacao::Piso,
                     "parede" => m.instalacao = Instalacao::Parede,
-                    "inverter" => self.lado = -self.lado,
+                    "inverter" => {
+                        self.lado = -self.lado;
+                        self.vertical_primeiro = !self.vertical_primeiro;
+                    }
+                    "reto" => m.tracado = ele::eletroduto::Tracado::Reto,
+                    "ortogonal" => m.tracado = ele::eletroduto::Tracado::Ortogonal,
+                    "arco" => m.tracado = ele::eletroduto::Tracado::Arco,
                     "flecha" => self.pedindo_flecha = true,
                     "tipo" => self.pedindo_tipo = true,
                     _ => s.echo("Opção inválida."),
                 }
                 ele::eletroduto::definir_modelo(uid, m);
+                Ok(Step::Continue)
+            }
+            Input::Point(p) if self.anterior.is_some() && self.ponto_vazio(s, [p.x, p.y])? => {
+                self.desvios.push([p.x, p.y]);
+                s.echo(format!("Desvio {} no trajeto.", self.desvios.len()));
                 Ok(Step::Continue)
             }
             Input::Point(p) => match bloco_no_ponto(s, [p.x, p.y])? {
@@ -1393,7 +1490,6 @@ fn run_altura(s: &mut Session, p: &Value) -> Result<Value> {
     for h in &hs {
         ele::editar::definir_altura(s.doc_mut()?, *h, altura, &setup).map_err(erro)?;
     }
-    atualizar_gerados(s)?;
     Ok(json!({ "pontos": hs.len() }))
 }
 
@@ -1479,8 +1575,6 @@ fn run_familia_definir(s: &mut Session, p: &Value) -> Result<Value> {
     // No editor, o desenho de trás recebe junto: a família não depende de salvar a geometria.
     if let Some(b) = s.state_mut()?.block_edit.as_mut() {
         ele::familia::gravar(std::sync::Arc::make_mut(&mut b.host.doc), &bloco, familia.as_ref()).map_err(erro)?;
-    } else {
-        atualizar_gerados(s)?;
     }
     json_de(&familia)
 }
@@ -1576,7 +1670,6 @@ fn run_ponto(s: &mut Session, p: &Value) -> Result<Value> {
         ligar_ao_quadro_pai(s, h, pai)?;
         feitos.push(h.hex());
     }
-    atualizar_gerados(s)?;
     Ok(json!({ "pontos": feitos }))
 }
 
@@ -1604,7 +1697,6 @@ fn run_modelo(s: &mut Session, p: &Value) -> Result<Value> {
 fn run_excluir_pontos(s: &mut Session, p: &Value) -> Result<Value> {
     let hs = handles("eletrica.ponto.excluir", p, "pontos")?;
     let n = ele::biblioteca::excluir(s.doc_mut()?, &hs).map_err(erro)?;
-    atualizar_gerados(s)?;
     Ok(json!({ "excluidos": n }))
 }
 
@@ -1682,7 +1774,6 @@ impl Interactive for PontoM {
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
         if matches!(i, Input::Cancel) {
-            atualizar_gerados(s)?;
             return Ok(Step::Done);
         }
         if self.pedindo_bloco {
@@ -1740,7 +1831,6 @@ impl Interactive for PontoM {
                 if self.feitos > 0 {
                     s.echo(format!("{} ponto(s) {} inserido(s).", self.feitos, m.bloco));
                 }
-                atualizar_gerados(s)?;
                 Ok(Step::Done)
             }
             _ => Ok(Step::Continue),

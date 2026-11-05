@@ -227,6 +227,8 @@ pub struct Trecho {
     pub ocupacao: Option<f64>,
     /// O diâmetro foi travado à mão.
     pub diametro_travado: bool,
+    /// Os condutores de proteção que o compartilhamento tirou do trecho: (seção, tipo de cabo).
+    pub pe_removidos: Vec<(f64, crate::nbr5410::TipoCabo)>,
 }
 
 impl Trecho {
@@ -258,9 +260,32 @@ fn diametros(t: &Trecho, setup: &Setup, avisos: &mut Vec<String>) -> Option<Vec<
     Some(v)
 }
 
+/// Num trecho com vários circuitos, fica um só condutor de proteção, o de maior seção entre eles, no
+/// mesmo eletroduto das fases (NBR 5410, 6.4.3.1). Cabe ao projetista conferir a seção resultante.
+fn compartilhar_protecao(t: &mut Trecho) {
+    let maior = t
+        .circuitos
+        .iter()
+        .enumerate()
+        .filter(|(_, k)| k.protecao)
+        .max_by(|a, b| a.1.secao.unwrap_or(0.0).total_cmp(&b.1.secao.unwrap_or(0.0)))
+        .map(|(i, _)| i);
+    for (i, k) in t.circuitos.iter_mut().enumerate() {
+        if k.protecao && Some(i) != maior {
+            k.protecao = false;
+            if let Some(s) = k.secao {
+                t.pe_removidos.push((s, k.tipo_cabo));
+            }
+        }
+    }
+}
+
 /// Escolhe o eletroduto do trecho pela ocupação dos condutores; um diâmetro travado à mão só
 /// tem a ocupação conferida.
 fn dimensionar_eletroduto(t: &mut Trecho, travado: Option<f64>, setup: &Setup, avisos: &mut Vec<String>) {
+    if setup.compartilhar_pe {
+        compartilhar_protecao(t);
+    }
     t.eletroduto = None;
     t.ocupacao = None;
     t.diametro_travado = false;
@@ -340,6 +365,7 @@ fn trecho_de(rede: &Rede, e: usize, circuitos: Vec<Condutores>) -> Option<Trecho
         eletroduto: None,
         ocupacao: None,
         diametro_travado: false,
+        pe_removidos: Vec::new(),
     })
 }
 

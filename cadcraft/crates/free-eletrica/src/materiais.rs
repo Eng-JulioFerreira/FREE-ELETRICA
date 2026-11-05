@@ -47,6 +47,8 @@ pub struct Materiais {
     pub caixas: Vec<ItemContado>,
     pub pontos: Vec<ItemContado>,
     pub disjuntores: Vec<ItemContado>,
+    /// Circuitos por grupo de DR.
+    pub grupos_dr: Vec<ItemContado>,
     /// Pontos sem caixa física: blocos sem família, que não dizem qual é.
     pub pontos_sem_caixa: usize,
     /// Eletrodutos soltos, fora da metragem.
@@ -70,6 +72,7 @@ pub fn levantar(doc: &Drawing, analise: &Analise, setup: &Setup) -> Materiais {
     let chave = |v: f64| (v * 1000.0).round() as i64;
     let mut cabos: BTreeMap<(i64, &'static str), ItemCabo> = BTreeMap::new();
     let mut disjuntores: Vec<f64> = Vec::new();
+    let mut grupos: Vec<String> = Vec::new();
     for q in analise.quadros() {
         match quadro::rotear(doc, analise, setup, q.handle) {
             Ok(r) => {
@@ -81,13 +84,14 @@ pub fn levantar(doc: &Drawing, analise: &Analise, setup: &Setup) -> Materiais {
                     disjuntores.extend(l.escolha.disjuntor);
                 }
                 disjuntores.extend(r.alimentador.disjuntor);
+                grupos.extend(r.linhas.iter().filter_map(|l| l.grupo_dr.as_ref().map(|g| format!("{}: {g}", r.tag))));
             }
             Err(e) => m.avisos.push(e),
         }
     }
-    m.cabos = cabos.into_values().collect();
     disjuntores.sort_by(f64::total_cmp);
     m.disjuntores = contar_disjuntores(&disjuntores);
+    m.grupos_dr = contar(grupos.into_iter());
 
     let (trechos, soltos, avisos) = fiacao::todos_os_trechos(doc, analise, setup);
     m.avisos.extend(avisos);
@@ -99,6 +103,15 @@ pub fn levantar(doc: &Drawing, analise: &Analise, setup: &Setup) -> Materiais {
         item.metros += t.comprimento;
     }
     m.eletrodutos = dutos.into_values().collect();
+    // O condutor de proteção compartilhado não vai para a compra.
+    for t in &trechos {
+        for (secao, tipo) in &t.pe_removidos {
+            if let Some(c) = cabos.get_mut(&(chave(*secao), tipo.codigo())) {
+                c.metros = (c.metros - t.comprimento * setup.fator_materiais).max(0.0);
+            }
+        }
+    }
+    m.cabos = cabos.into_values().collect();
 
     m.pontos = contar(analise.pontos.iter().map(|p| p.tipo.nome().to_string()));
     m.caixas =

@@ -32,6 +32,10 @@ pub const CHAVE_ISOLACAO: &str = "ISOLACAO";
 pub const CHAVE_ISOLACAO_CIRCUITO: &str = "ISOL.";
 /// Tipo de cabo de um circuito: `CABO.<circuito>`; vale sobre `ISOL.`, dos desenhos anteriores.
 pub const CHAVE_CABO: &str = "CABO.";
+/// Grupo de DR de um circuito: `DR.<circuito>`.
+pub const CHAVE_DR: &str = "DR.";
+/// O último dimensionamento de um circuito: `DIM.<circuito>` = `seção;disjuntor;FCA;queda`.
+pub const CHAVE_DIM: &str = "DIM.";
 /// Esquema de condutores de um circuito: `ESQUEMA.<circuito>` (`F+N`, `F+N+T`, `2F+T`, `3F+N+T`).
 pub const CHAVE_ESQUEMA: &str = "ESQUEMA.";
 /// Tensão de um circuito: `TENSAO.<circuito>`; vale sobre a dos pontos.
@@ -45,10 +49,48 @@ pub const CHAVE_FASE: &str = "FASE.";
 pub struct Propriedades {
     pub isolacao: Option<nbr5410::Isolacao>,
     pub cabo: Option<nbr5410::TipoCabo>,
+    pub grupo_dr: Option<String>,
+    pub calculado: Option<Calculado>,
     pub esquema: Option<nbr5410::Esquema>,
     pub tensao: Option<f64>,
     /// Fases travadas à mão: índices em [`NOMES_FASES`].
     pub fases: Option<Vec<usize>>,
+}
+
+/// O que o último "Processar cálculo" gravou para um circuito. O quadro de cargas mostra isto: o
+/// projeto pode mudar depois, e aí o circuito aparece como desatualizado.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Calculado {
+    pub secao: Option<f64>,
+    pub disjuntor: Option<f64>,
+    pub fca: f64,
+    pub queda: Option<f64>,
+}
+
+impl Calculado {
+    fn de_texto(t: &str) -> Option<Self> {
+        let mut p = t.split(';').map(str::trim);
+        let opcao = |v: Option<&str>| v.and_then(|x| x.parse::<f64>().ok()).filter(|x| x.is_finite());
+        let (secao, disjuntor, fca, queda) = (opcao(p.next()), opcao(p.next()), opcao(p.next())?, opcao(p.next()));
+        Some(Calculado { secao, disjuntor, fca, queda })
+    }
+
+    fn texto(&self) -> String {
+        let f = |v: Option<f64>| v.map_or(String::new(), |x| x.to_string());
+        format!("{};{};{};{}", f(self.secao), f(self.disjuntor), self.fca, f(self.queda))
+    }
+}
+
+/// Como um circuito está em relação ao último cálculo.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum EstadoCalculo {
+    /// Nunca foi processado.
+    Pendente,
+    /// O projeto mudou depois do cálculo.
+    Desatualizado,
+    EmDia,
 }
 
 /// As fases de um texto como "R", "RS" ou "R+S+T". `None`: vazio ou letra que não é fase.
@@ -71,6 +113,10 @@ pub fn propriedades(quadro: &PontoEletrico) -> HashMap<String, Propriedades> {
         let k = k.to_uppercase();
         if let Some(c) = k.strip_prefix(CHAVE_ISOLACAO_CIRCUITO) {
             m.entry(c.to_string()).or_default().isolacao = nbr5410::Isolacao::de_codigo(v);
+        } else if let Some(c) = k.strip_prefix(CHAVE_DR) {
+            m.entry(c.to_string()).or_default().grupo_dr = Some(v.trim().to_string()).filter(|g| !g.is_empty());
+        } else if let Some(c) = k.strip_prefix(CHAVE_DIM) {
+            m.entry(c.to_string()).or_default().calculado = Calculado::de_texto(v);
         } else if let Some(c) = k.strip_prefix(CHAVE_CABO) {
             m.entry(c.to_string()).or_default().cabo = nbr5410::TipoCabo::de_codigo(v);
         } else if let Some(c) = k.strip_prefix(CHAVE_ESQUEMA) {
@@ -106,6 +152,20 @@ pub fn isolacao_do_quadro(quadro: &PontoEletrico, setup: &Setup) -> nbr5410::Iso
 /// padrão das configurações.
 pub fn cabo_do_quadro(quadro: &PontoEletrico, setup: &Setup) -> nbr5410::TipoCabo {
     isolacao_gravada(quadro).map_or(setup.cabo_padrao, nbr5410::TipoCabo::de_isolacao)
+}
+
+/// O que "Processar cálculo" fez num quadro.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Processado {
+    pub tag: String,
+    pub circuitos: usize,
+    pub avisos: Vec<String>,
+}
+
+/// O texto gravado do cálculo de um circuito.
+pub fn texto_do_calculo(c: &Calculado) -> String {
+    c.texto()
 }
 
 /// As descrições de circuitos gravadas no quadro: (circuito, descrição), na ordem natural.
@@ -202,6 +262,10 @@ pub struct Linha {
     pub isolacao: nbr5410::Isolacao,
     /// O tipo de cabo do circuito.
     pub tipo_cabo: nbr5410::TipoCabo,
+    /// O grupo de DR do circuito.
+    pub grupo_dr: Option<String>,
+    /// O que o último "Processar cálculo" gravou.
+    pub calculado: Option<Calculado>,
     /// A isolação foi escolhida para este circuito.
     pub isolacao_propria: bool,
     /// Tipos de carga dos pontos do circuito (atributo TIPO_CARGA), sem repetição.
@@ -221,6 +285,33 @@ pub struct Linha {
 }
 
 impl Linha {
+    /// O resultado do cálculo de agora, no formato gravado.
+    pub fn calculo_atual(&self) -> Calculado {
+        Calculado { secao: self.escolha.secao, disjuntor: self.escolha.disjuntor, fca: self.fca, queda: self.escolha.queda }
+    }
+
+    /// Como o circuito está em relação ao último cálculo.
+    pub fn estado_calculo(&self) -> EstadoCalculo {
+        let igual = |a: Option<f64>, b: Option<f64>| match (a, b) {
+            (Some(x), Some(y)) => (x - y).abs() < 1e-6,
+            (None, None) => true,
+            _ => false,
+        };
+        let atual = self.calculo_atual();
+        match self.calculado {
+            None => EstadoCalculo::Pendente,
+            Some(c)
+                if igual(c.secao, atual.secao)
+                    && igual(c.disjuntor, atual.disjuntor)
+                    && igual(Some(c.fca), Some(atual.fca))
+                    && igual(c.queda, atual.queda) =>
+            {
+                EstadoCalculo::EmDia
+            }
+            Some(_) => EstadoCalculo::Desatualizado,
+        }
+    }
+
     pub fn fases_texto(&self) -> String {
         self.fases.iter().map(|f| NOMES_FASES[*f]).collect::<Vec<_>>().join("+")
     }
@@ -435,7 +526,7 @@ pub fn rotear(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle) -
                 cargas.first().map_or(TipoCarga::IluminacaoTug.fp_padrao(), |p| p.fp_efetivo())
             };
             let cfg = nbr5410::Config {
-                fca: nbr5410::fca_agrupamento(agrupados),
+                fca: setup.fca_manual.unwrap_or_else(|| nbr5410::fca_agrupamento(agrupados)),
                 fct: isolacao_circuito.fct(setup.temperatura_ambiente),
                 isolacao: isolacao_circuito,
                 queda_admissivel: if c.natureza == crate::circuito::Natureza::Iluminacao { setup.queda_iluminacao } else { setup.queda_admissivel },
@@ -467,6 +558,8 @@ pub fn rotear(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle) -
                 cabo: r.percurso * f64::from(condutores) * setup.fator_materiais,
                 isolacao: isolacao_circuito,
                 tipo_cabo: p.cabo.unwrap_or(cabo_padrao),
+                grupo_dr: p.grupo_dr.clone(),
+                calculado: p.calculado,
                 isolacao_propria: p.isolacao.is_some(),
                 tipos_carga,
                 potencia_w,

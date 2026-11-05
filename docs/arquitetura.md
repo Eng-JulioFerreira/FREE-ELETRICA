@@ -41,6 +41,7 @@ aqui é um possível conflito ao atualizar o CADCraft.
 | `crates/ui-egui/src/i18n/uk.tsv`, `pt_br.tsv` | rótulos dos comandos e dos painéis |
 | `apps/cadcraft/src/main.rs` | carregar/gravar `freeeletrica.setup` e abrir a paleta ao iniciar |
 | `xtask/src/layers.rs` | `free-eletrica` na tabela de camadas |
+| `xtask/src/main.rs` | `mod dist;` e o comando `dist`, em `xtask/src/dist.rs` |
 
 ## Marca ArtCraft
 

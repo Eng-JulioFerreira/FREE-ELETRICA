@@ -472,6 +472,7 @@ fn cabo_eletroduto_quadro_pai_e_materiais_por_comandos() {
     assert!(m["pontos"].as_array().unwrap().iter().any(|c| c["nome"] == "TUG"), "{m}");
     let r = s.execute("eletrica.dimensionar", &json!({ "quadro": "QD-1" })).unwrap();
     assert_eq!(r["circuitos"], 1);
+    assert_eq!(r["quadros"].as_array().unwrap().len(), 1);
     assert!(s.execute("eletrica.dimensionar", &json!({ "quadro": "NADA" })).is_err());
     s.execute("eletrica.circuito.definir", &json!({ "quadro": q1, "circuito": "1", "fases": "T" })).unwrap();
     assert_eq!(linha(&mut s, &q1, "1")["fasesTravadas"], true);
@@ -487,6 +488,116 @@ fn cabo_eletroduto_quadro_pai_e_materiais_por_comandos() {
     assert_eq!(r.linhas[0].tipo_cabo, free_eletrica::nbr5410::TipoCabo::LszhHepr90);
     let rede = free_eletrica::rota::Rede::montar(&volta, &setup, &a2.pontos, 1.0);
     assert_eq!(rede.arestas[0].tipo, free_eletrica::rota::TipoEletroduto::CorrugadoLeve);
+}
+
+#[test]
+fn tracados_dimensionamento_e_atributos_por_comandos() {
+    let mut s = Session::new();
+    let mut d = Drawing::new_metric();
+    d.header.set_i64("INSUNITS", 6);
+    s.open_drawing(d, "Planta", None);
+    assert!(s.execute("eletrica.dimensionar", &json!({})).is_err(), "sem quadro não há o que dimensionar");
+    s.execute("eletrica.bootstrap", &json!({})).unwrap();
+    let um = |v: Value| v["pontos"][0].as_str().unwrap().to_string();
+    let q = um(s.execute("eleponto", &json!({ "bloco": "QDG", "pontos": [[0.0, 0.0]] })).unwrap());
+    let a = um(s.execute("eleponto", &json!({ "bloco": "TOM-SIM-BAIXA", "pontos": [[4.0, 3.0]], "valores": { "CIRCUITO": "1" } })).unwrap());
+    let b = um(s.execute("eleponto", &json!({ "bloco": "TOM-SIM-BAIXA", "pontos": [[8.0, 3.0]], "valores": { "CIRCUITO": "2" } })).unwrap());
+    let tipo = |s: &Session, h: &str| s.doc().unwrap().model.get(Handle::parse_hex(h).unwrap()).unwrap().kind.clone();
+
+    // Traçados pelo JSON.
+    let e = |s: &mut Session, p: Value| s.execute("eleeletroduto", &p).unwrap()["eletroduto"].as_str().unwrap().to_string();
+    let h = e(&mut s, json!({ "de": q, "para": a, "tracado": "STRAIGHT" }));
+    assert!(matches!(tipo(&s, &h), EntityKind::Line(_)));
+    let h = e(&mut s, json!({ "de": q, "para": a, "tracado": "ORTHOGONAL", "verticalPrimeiro": true }));
+    assert!(matches!(tipo(&s, &h), EntityKind::LwPolyline(_)));
+    let h = e(&mut s, json!({ "de": q, "para": a, "tracado": "ARC", "desvios": [[2.0, 3.0]] }));
+    assert!(matches!(tipo(&s, &h), EntityKind::Spline(_)));
+    for ruim in [json!({ "tracado": "ZIGUE" }), json!({ "tracado": 3 }), json!({ "desvios": 3 }), json!({ "desvios": [[1.0]] })] {
+        let mut p = json!({ "de": q, "para": a });
+        for (k, v) in ruim.as_object().unwrap() {
+            p[k] = v.clone();
+        }
+        assert!(s.execute("eleeletroduto", &p).is_err(), "{p}");
+    }
+    assert!(s.execute("eletrica.eletroduto.modelo", &json!({ "tracado": "ZIGUE" })).is_err());
+    assert_eq!(s.execute("eletrica.eletroduto.modelo", &json!({ "tracado": "ARC" })).unwrap()["tracado"], "arco");
+
+    // Interativo: o traçado pela palavra-chave e um desvio no clique no vazio. O trecho sai pela
+    // polilinha do reto com um desvio e os dois blocos nas pontas.
+    let antes = s.doc().unwrap().model.len();
+    s.start("eleeletroduto").unwrap();
+    s.input(Input::Keyword("Reto".into())).unwrap();
+    s.input(Input::Point(Vec2::new(4.0, 3.0))).unwrap();
+    s.input(Input::Point(Vec2::new(6.0, 6.0))).unwrap();
+    assert!(s.doc().unwrap().model.len() == antes, "o desvio não cria nada sozinho");
+    s.input(Input::Point(Vec2::new(8.0, 3.0))).unwrap();
+    s.input(Input::Enter).unwrap();
+    assert_eq!(s.doc().unwrap().model.len(), antes + 1);
+    let novo = s.doc().unwrap().model.iter().last().unwrap().clone();
+    let EntityKind::LwPolyline(pl) = &novo.kind else { panic!("polilinha") };
+    assert_eq!(pl.vertices.len(), 3);
+    assert_eq!(s.execute("eletrica.eletrodutos", &json!({})).unwrap()["soltos"].as_array().unwrap().len(), 0);
+    // Um desvio sem bloco de chegada não deixa rastro.
+    let antes = s.doc().unwrap().model.len();
+    s.start("eleeletroduto").unwrap();
+    s.input(Input::Point(Vec2::new(90.0, 90.0))).unwrap();
+    s.input(Input::Point(Vec2::new(4.0, 3.0))).unwrap();
+    s.input(Input::Point(Vec2::new(60.0, 60.0))).unwrap();
+    s.input(Input::Enter).unwrap();
+    assert_eq!(s.doc().unwrap().model.len(), antes);
+
+    // Editar não dimensiona; processar grava, e o que muda depois fica desatualizado.
+    let linha = |s: &mut Session, id: &str| -> Value {
+        let r = s.execute("eletrica.rotear", &json!({})).unwrap();
+        r["linhas"].as_array().unwrap().iter().find(|l| l["circuito"]["id"] == id).unwrap().clone()
+    };
+    assert!(linha(&mut s, "1")["calculado"].is_null());
+    let r = s.execute("eletrica.dimensionar", &json!({ "temperaturaAmbiente": 35, "compartilharPe": true, "fcaManual": 0.7 })).unwrap();
+    assert_eq!(r["circuitos"], 2);
+    let st = s.execute("eletrica.setup", &json!({})).unwrap();
+    assert_eq!((st["temperaturaAmbiente"].as_f64(), st["compartilharPe"].as_bool(), st["fcaManual"].as_f64()), (Some(35.0), Some(true), Some(0.7)));
+    assert_eq!(linha(&mut s, "1")["fca"].as_f64(), Some(0.7));
+    assert!(linha(&mut s, "1")["calculado"]["secao"].is_number());
+    assert!(s.execute("eletrica.dimensionar", &json!({ "temperaturaAmbiente": "quente" })).is_err());
+    assert!(s.execute("eletrica.dimensionar", &json!({ "quadro": "NADA" })).is_err());
+    // De volta ao padrão: o processo é compartilhado entre os testes.
+    s.execute("eletrica.setup", &json!({ "temperaturaAmbiente": 30, "compartilharPe": false, "fcaManual": null })).unwrap();
+
+    // Grupo de DR.
+    s.execute("eletrica.circuito.definir", &json!({ "quadro": q, "circuito": "1", "grupoDr": "IDR1" })).unwrap();
+    assert_eq!(linha(&mut s, "1")["grupoDr"], "IDR1");
+    assert!(s.execute("eletrica.circuito.definir", &json!({ "quadro": q, "circuito": "1", "grupoDr": 3 })).is_err());
+    s.execute("eletrica.circuito.definir", &json!({ "quadro": q, "circuito": "1", "grupoDr": null })).unwrap();
+    assert!(linha(&mut s, "1")["grupoDr"].is_null());
+
+    // Inspetor de atributos.
+    let l = s.execute("eletrica.atributos", &json!({ "ponto": b })).unwrap();
+    assert!(l.as_array().unwrap().iter().any(|x| x["tag"] == "CIRCUITO" && x["valor"] == "2"), "{l}");
+    assert!(l.as_array().unwrap().iter().any(|x| x["tag"] == "TIPO_PONTO" && x["constante"] == true), "{l}");
+    s.execute("eletrica.atributo.definir", &json!({ "ponto": b, "tag": "CIRCUITO", "valor": 5 })).unwrap();
+    assert_eq!(circuito(&s, Handle::parse_hex(&b).unwrap()).as_deref(), Some("5"));
+    s.execute("eletrica.atributo.definir", &json!({ "ponto": b, "tag": "POTENCIA", "visivel": true, "posicao": [1.0, 2.0] })).unwrap();
+    let l = s.execute("eletrica.atributos", &json!({ "ponto": b })).unwrap();
+    let p = l.as_array().unwrap().iter().find(|x| x["tag"] == "POTENCIA").unwrap().clone();
+    assert_eq!((p["visivel"].as_bool(), p["x"].as_f64(), p["y"].as_f64()), (Some(true), Some(1.0), Some(2.0)));
+    s.execute("eletrica.atributo.definir", &json!({ "ponto": b, "tag": "ALTURA", "valor": "1,45" })).unwrap();
+    let l = s.execute("eletrica.atributos", &json!({ "ponto": b })).unwrap();
+    assert_eq!(l.as_array().unwrap().iter().find(|x| x["tag"] == "ALTURA").unwrap()["valor"], "h=1,45m");
+    for ruim in [
+        json!({}),
+        json!({ "ponto": "FFFF", "tag": "CIRCUITO", "valor": "1" }),
+        json!({ "ponto": b, "valor": "1" }),
+        json!({ "ponto": b, "tag": "CIRCUITO" }),
+        json!({ "ponto": b, "tag": "NADA", "valor": "1" }),
+        json!({ "ponto": b, "tag": "TIPO_PONTO", "valor": "1" }),
+        json!({ "ponto": b, "tag": "CIRCUITO", "visivel": "sim" }),
+        json!({ "ponto": b, "tag": "CIRCUITO", "posicao": [1] }),
+        json!({ "ponto": b, "tag": "CIRCUITO", "valor": [] }),
+    ] {
+        assert!(s.execute("eletrica.atributo.definir", &ruim).is_err(), "{ruim}");
+    }
+    assert!(s.execute("eletrica.atributos", &json!({ "ponto": "FFFF" })).is_err());
+    let _ = a;
 }
 
 #[test]
@@ -716,6 +827,10 @@ fn tags_tabela_e_inspecao_por_comandos() {
     };
     assert!(!textos(&s, &bloco).contains(&"#6".to_string()));
     s.execute("eletrica.sobrescrever", &json!({ "circuito": "2", "secao": 6 })).unwrap();
+    // Editar não dimensiona: as tags só mudam ao processar o cálculo.
+    assert!(!textos(&s, &bloco).contains(&"#6".to_string()));
+    let r = s.execute("eletrica.dimensionar", &json!({})).unwrap();
+    assert_eq!(r["quadros"][0]["tag"], "QDG");
     assert_eq!(y(&s).0, antes);
     assert!(textos(&s, &bloco).contains(&"#6".to_string()), "{:?}", textos(&s, &bloco));
     let r = s.execute("eleregen", &json!({})).unwrap();
@@ -738,6 +853,7 @@ fn tags_tabela_e_inspecao_por_comandos() {
     let EntityKind::Insert(i) = &s.doc().unwrap().model.get(h).unwrap().kind else { panic!() };
     assert_eq!(i.insert.x, 30.0);
     s.execute("eletrica.circuito.descrever", &json!({ "circuito": "1", "descricao": "Salão" })).unwrap();
+    s.execute("eleregen", &json!({})).unwrap();
     let nome = i_bloco(&s, h);
     assert!(textos(&s, &nome).contains(&"Salão".to_string()));
 

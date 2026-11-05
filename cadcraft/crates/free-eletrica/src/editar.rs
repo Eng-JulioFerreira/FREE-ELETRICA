@@ -8,8 +8,8 @@ use cadcraft_doc::{Drawing, EntityKind, Handle};
 use crate::nbr5410::{Esquema, Isolacao, TipoCabo};
 use crate::ponto::{CHAVE_ALTURA, TAGS_ALTURA, TAGS_CIRCUITO, TAGS_COMANDO, TAGS_QUADRO, ler_ponto};
 use crate::quadro::{
-    CHAVE_CABO, CHAVE_DESCRICAO, CHAVE_DISJUNTOR, CHAVE_ESQUEMA, CHAVE_FASE, CHAVE_ISOLACAO, CHAVE_ISOLACAO_CIRCUITO, CHAVE_SECAO, CHAVE_TENSAO,
-    NOMES_FASES, fases_de_texto,
+    CHAVE_CABO, CHAVE_DESCRICAO, CHAVE_DIM, CHAVE_DISJUNTOR, CHAVE_DR, CHAVE_ESQUEMA, CHAVE_FASE, CHAVE_ISOLACAO, CHAVE_ISOLACAO_CIRCUITO,
+    CHAVE_SECAO, CHAVE_TENSAO, NOMES_FASES, fases_de_texto,
 };
 use crate::xdata;
 
@@ -37,7 +37,18 @@ fn pontos_do_circuito(doc: &Drawing, quadro: Handle, circuito: &str) -> Vec<Hand
 /// Apaga do quadro as escolhas e a descrição de um circuito.
 fn esquecer_circuito(doc: &mut Drawing, quadro: Handle, circuito: &str) -> Result<(), String> {
     let id = circuito.trim().to_uppercase();
-    for prefixo in [CHAVE_SECAO, CHAVE_DISJUNTOR, CHAVE_DESCRICAO, CHAVE_ISOLACAO_CIRCUITO, CHAVE_CABO, CHAVE_ESQUEMA, CHAVE_TENSAO, CHAVE_FASE] {
+    for prefixo in [
+        CHAVE_SECAO,
+        CHAVE_DISJUNTOR,
+        CHAVE_DESCRICAO,
+        CHAVE_ISOLACAO_CIRCUITO,
+        CHAVE_CABO,
+        CHAVE_ESQUEMA,
+        CHAVE_TENSAO,
+        CHAVE_FASE,
+        CHAVE_DR,
+        CHAVE_DIM,
+    ] {
         gravar_xdata(doc, quadro, &format!("{prefixo}{id}"), None)?;
     }
     Ok(())
@@ -61,6 +72,138 @@ pub fn definir_isolacao_circuito(doc: &mut Drawing, quadro: Handle, circuito: &s
 pub fn definir_cabo_circuito(doc: &mut Drawing, quadro: Handle, circuito: &str, cabo: Option<TipoCabo>) -> Result<(), String> {
     gravar_xdata(doc, quadro, &chave_do_circuito(CHAVE_ISOLACAO_CIRCUITO, circuito)?, None)?;
     gravar_xdata(doc, quadro, &chave_do_circuito(CHAVE_CABO, circuito)?, cabo.map(TipoCabo::codigo))
+}
+
+/// Grupo de DR de um circuito; `None` tira.
+pub fn definir_grupo_dr(doc: &mut Drawing, quadro: Handle, circuito: &str, grupo: Option<&str>) -> Result<(), String> {
+    gravar_xdata(doc, quadro, &chave_do_circuito(CHAVE_DR, circuito)?, grupo.map(str::trim).filter(|g| !g.is_empty()))
+}
+
+/// Processa o cálculo: dimensiona os quadros (`None`: todos), grava o resultado de cada circuito no
+/// quadro, para a tabela mostrar, e atualiza as tags e tabelas que já existem. Só aqui o desenho
+/// recebe o dimensionamento.
+pub fn processar_calculo(doc: &mut Drawing, setup: &crate::setup::Setup, quadro: Option<Handle>) -> Result<Vec<crate::quadro::Processado>, String> {
+    let analise = crate::analisar(doc);
+    let alvos: Vec<Handle> = match quadro {
+        Some(q) => vec![q],
+        None => analise.quadros().iter().map(|q| q.handle).collect(),
+    };
+    let mut feitos = Vec::new();
+    for q in alvos {
+        let r = crate::quadro::rotear(doc, &analise, setup, q)?;
+        let antigas: Vec<String> = ler_ponto(doc, q)
+            .map(|p| p.extras.iter().filter(|(k, _)| k.to_uppercase().starts_with(CHAVE_DIM)).map(|(k, _)| k.clone()).collect())
+            .unwrap_or_default();
+        for k in &antigas {
+            gravar_xdata(doc, q, k, None)?;
+        }
+        for l in &r.linhas {
+            let texto = crate::quadro::texto_do_calculo(&l.calculo_atual());
+            gravar_xdata(doc, q, &chave_do_circuito(CHAVE_DIM, &l.circuito.id)?, Some(&texto))?;
+        }
+        let mut avisos = r.avisos.clone();
+        avisos.extend(r.linhas.iter().flat_map(|l| l.escolha.avisos.iter().map(|a| format!("Circuito {}: {a}", l.circuito.id))));
+        feitos.push(crate::quadro::Processado { tag: r.tag.clone(), circuitos: r.linhas.len(), avisos });
+    }
+    crate::fiacao::regenerar_se_houver(doc, setup)?;
+    Ok(feitos)
+}
+
+/// Um atributo de uma inserção, como o inspetor mostra.
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AtributoInstancia {
+    pub tag: String,
+    pub valor: String,
+    pub visivel: bool,
+    pub x: f64,
+    pub y: f64,
+    /// Fica na definição do bloco: não muda por inserção.
+    pub constante: bool,
+}
+
+/// Os atributos de um bloco inserido. `None`: o objeto não é um bloco.
+pub fn atributos_de(doc: &Drawing, h: Handle) -> Option<Vec<AtributoInstancia>> {
+    let e = doc.model.get(h)?;
+    let EntityKind::Insert(ins) = &e.kind else { return None };
+    let mut v: Vec<AtributoInstancia> = ins
+        .attribs
+        .iter()
+        .map(|a| AtributoInstancia {
+            tag: a.tag.trim().to_string(),
+            valor: a.text.value.clone(),
+            visivel: !a.invisible,
+            x: a.text.insert.x,
+            y: a.text.insert.y,
+            constante: false,
+        })
+        .collect();
+    if let Some(def) = doc.blocks.get(&ins.block) {
+        for ent in def.entities.iter() {
+            if let EntityKind::AttDef(a) = &ent.kind
+                && a.constant
+            {
+                v.push(AtributoInstancia {
+                    tag: a.tag.trim().to_string(),
+                    valor: a.text.value.clone(),
+                    visivel: !a.invisible,
+                    x: 0.0,
+                    y: 0.0,
+                    constante: true,
+                });
+            }
+        }
+    }
+    Some(v)
+}
+
+/// Muda um atributo de um bloco inserido: valor, visibilidade e posição. ALTURA segue a regra da
+/// legenda (`definir_altura`).
+pub fn editar_atributo(
+    doc: &mut Drawing,
+    h: Handle,
+    tag: &str,
+    valor: Option<&str>,
+    visivel: Option<bool>,
+    posicao: Option<[f64; 2]>,
+    setup: &crate::setup::Setup,
+) -> Result<(), String> {
+    if posicao.is_some_and(|p| !p.iter().all(|v| v.is_finite())) {
+        return Err("posição inválida".into());
+    }
+    let lista = atributos_de(doc, h).ok_or("o objeto não é um bloco")?;
+    let atual = lista.iter().find(|a| a.tag.eq_ignore_ascii_case(tag.trim())).ok_or_else(|| format!("o bloco não tem o atributo {}", tag.trim()))?;
+    if atual.constante {
+        return Err(format!("{} é constante: fica na definição do bloco", atual.tag));
+    }
+    if let Some(v) = valor
+        && TAGS_ALTURA.iter().any(|t| tag.trim().eq_ignore_ascii_case(t))
+        && ler_ponto(doc, h).is_some()
+    {
+        let altura = if v.trim().is_empty() { None } else { Some(crate::ponto::altura_m(v).ok_or_else(|| format!("altura \"{v}\" inválida"))?) };
+        definir_altura(doc, h, altura, setup)?;
+    } else if let Some(v) = valor {
+        definir(doc, h, &[tag.trim()], Some(v))?;
+    }
+    let mut e = (**doc.model.get(h).ok_or("objeto não encontrado")?).clone();
+    if let EntityKind::Insert(ins) = &mut e.kind
+        && let Some(a) = ins.attribs.iter_mut().find(|a| a.tag.trim().eq_ignore_ascii_case(tag.trim()))
+    {
+        if let Some(on) = visivel {
+            a.invisible = !on;
+        }
+        if let Some(p) = posicao {
+            let (dx, dy) = (p[0] - a.text.insert.x, p[1] - a.text.insert.y);
+            a.text.insert.x = p[0];
+            a.text.insert.y = p[1];
+            if let Some(alinhado) = &mut a.text.align_pt {
+                alinhado.x += dx;
+                alinhado.y += dy;
+            }
+        }
+    }
+    doc.model.replace(e);
+    Ok(())
 }
 
 /// Destrava as fases de todos os circuitos do quadro: o balanceamento automático volta a valer para

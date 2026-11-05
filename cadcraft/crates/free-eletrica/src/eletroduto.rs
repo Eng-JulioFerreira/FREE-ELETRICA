@@ -105,22 +105,125 @@ pub fn inserir_com_tipo(
     flecha: f64,
     tipo: TipoEletroduto,
 ) -> Result<Handle, String> {
+    let tracado = if flecha.abs() < 1e-9 { Tracado::Reto } else { Tracado::Arco };
+    inserir_percurso(doc, de, para, instalacao, &Percurso { tracado, flecha, ..Percurso::default() }, tipo)
+}
+
+/// Cria o eletroduto entre dois blocos elétricos, pelo percurso dado.
+pub fn inserir_percurso(
+    doc: &mut Drawing,
+    de: Handle,
+    para: Handle,
+    instalacao: Instalacao,
+    percurso: &Percurso,
+    tipo: TipoEletroduto,
+) -> Result<Handle, String> {
     let posicao = |h: Handle| ler_ponto(doc, h).map(|p| p.posicao).ok_or_else(|| format!("o objeto {} não é um bloco elétrico", h.hex()));
     let (a, b) = (posicao(de)?, posicao(para)?);
     if de == para || (a[0] - b[0]).hypot(a[1] - b[1]) <= 1e-9 {
         return Err("os dois blocos estão no mesmo lugar".into());
     }
+    if !percurso.desvios.iter().flatten().all(|v| v.is_finite()) || !percurso.flecha.is_finite() {
+        return Err("percurso inválido".into());
+    }
     garantir_camada(doc, instalacao);
-    let kind = if flecha.abs() < 1e-9 {
-        EntityKind::Line(Line { a: Vec3::new(a[0], a[1], 0.0), b: Vec3::new(b[0], b[1], 0.0) })
-    } else {
-        let fit: Vec<Vec2> = pontos_do_arco(a, b, flecha, 5).into_iter().map(|p| Vec2::new(p[0], p[1])).collect();
-        EntityKind::Spline(Spline::from_fit_points(&fit))
-    };
     let mut xdata_novo = xdata_do_eletroduto(de, para, instalacao);
     xdata::gravar(&mut xdata_novo, rota::CHAVE_TIPO, Some(tipo.codigo()));
     let common = Common { layer: camada(instalacao).into(), xdata: xdata_novo, ..Common::default() };
-    doc.add(&Space::Model, common, kind).map_err(|e| e.to_string())
+    doc.add(&Space::Model, common, percurso.entidade(a, b)).map_err(|e| e.to_string())
+}
+
+/// O desenho do eletroduto entre os blocos.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Tracado {
+    /// Em linha reta entre os pontos.
+    Reto,
+    /// Só na horizontal e na vertical.
+    Ortogonal,
+    /// Em arco ou curva suave.
+    #[default]
+    Arco,
+}
+
+impl Tracado {
+    pub const TODOS: [Tracado; 3] = [Self::Reto, Self::Ortogonal, Self::Arco];
+
+    pub fn nome(self) -> &'static str {
+        match self {
+            Self::Reto => "Reto",
+            Self::Ortogonal => "Ortogonal",
+            Self::Arco => "Arco",
+        }
+    }
+
+    pub fn codigo(self) -> &'static str {
+        match self {
+            Self::Reto => "STRAIGHT",
+            Self::Ortogonal => "ORTHOGONAL",
+            Self::Arco => "ARC",
+        }
+    }
+
+    pub fn de_codigo(t: &str) -> Option<Self> {
+        let t = t.trim();
+        Self::TODOS.into_iter().find(|i| i.codigo().eq_ignore_ascii_case(t) || i.nome().eq_ignore_ascii_case(t))
+    }
+}
+
+/// Como desenhar um eletroduto entre dois pontos.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Percurso {
+    pub tracado: Tracado,
+    /// A fração da corda de um arco sem desvios: + à esquerda, - à direita, 0 reto.
+    pub flecha: f64,
+    /// Pontos de passagem entre os blocos, para contornar pilares e paredes.
+    pub desvios: Vec<P>,
+    /// No ortogonal, sobe primeiro e depois anda; sem isso, anda e depois sobe.
+    pub vertical_primeiro: bool,
+}
+
+impl Percurso {
+    /// Os pontos do percurso, de `a` a `b`. Num arco sem desvios, os da curva.
+    pub fn pontos(&self, a: P, b: P, n_arco: usize) -> Vec<P> {
+        let passagem: Vec<P> = std::iter::once(a).chain(self.desvios.iter().copied()).chain(std::iter::once(b)).collect();
+        match self.tracado {
+            Tracado::Arco if self.desvios.is_empty() && self.flecha.abs() >= 1e-9 => pontos_do_arco(a, b, self.flecha, n_arco),
+            Tracado::Arco | Tracado::Reto => passagem,
+            Tracado::Ortogonal => {
+                let mut v: Vec<P> = Vec::new();
+                for par in passagem.windows(2) {
+                    let (p, q) = (par[0], par[1]);
+                    v.push(p);
+                    let canto = if self.vertical_primeiro { [p[0], q[1]] } else { [q[0], p[1]] };
+                    if (canto[0] - p[0]).hypot(canto[1] - p[1]) > 1e-9 && (canto[0] - q[0]).hypot(canto[1] - q[1]) > 1e-9 {
+                        v.push(canto);
+                    }
+                }
+                v.push(b);
+                v
+            }
+        }
+    }
+
+    /// A entidade do percurso.
+    pub fn entidade(&self, a: P, b: P) -> EntityKind {
+        let pontos = self.pontos(a, b, 5);
+        let v: Vec<Vec2> = pontos.iter().map(|p| Vec2::new(p[0], p[1])).collect();
+        if self.tracado == Tracado::Arco && (!self.desvios.is_empty() || self.flecha.abs() >= 1e-9) {
+            return EntityKind::Spline(Spline::from_fit_points(&v));
+        }
+        if v.len() <= 2 {
+            return EntityKind::Line(Line { a: Vec3::new(a[0], a[1], 0.0), b: Vec3::new(b[0], b[1], 0.0) });
+        }
+        EntityKind::LwPolyline(cadcraft_doc::LwPolyline {
+            vertices: Polyline::from_points(&v, false).vertices,
+            closed: false,
+            const_width: 0.0,
+            elevation: 0.0,
+            plinegen: false,
+        })
+    }
 }
 
 /// O que o próximo trecho de ELEELETRODUTO usa: a barra de cima muda enquanto o comando corre.
@@ -130,11 +233,12 @@ pub struct ModeloEletroduto {
     pub instalacao: Instalacao,
     pub flecha: f64,
     pub tipo: TipoEletroduto,
+    pub tracado: Tracado,
 }
 
 impl Default for ModeloEletroduto {
     fn default() -> Self {
-        ModeloEletroduto { instalacao: Instalacao::Teto, flecha: FLECHA_PADRAO, tipo: TipoEletroduto::CorrugadoReforcado }
+        ModeloEletroduto { instalacao: Instalacao::Teto, flecha: FLECHA_PADRAO, tipo: TipoEletroduto::CorrugadoReforcado, tracado: Tracado::Arco }
     }
 }
 

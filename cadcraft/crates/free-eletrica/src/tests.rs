@@ -1894,6 +1894,194 @@ fn liberar_fases_devolve_ao_balanceamento() {
 }
 
 #[test]
+fn tracados_de_eletroduto_e_comprimento_real() {
+    use eletroduto::{Percurso, Tracado as T};
+    let setup = Setup::default();
+    for c in T::TODOS {
+        assert_eq!(T::de_codigo(c.codigo()), Some(c));
+    }
+    let mut d = metros();
+    let q = qd(&mut d, 0.0, 0.0);
+    let a = tug(&mut d, 4.0, 3.0, "1");
+    let tipo = rota::TipoEletroduto::PvcRigido;
+    let inserir = |d: &mut Drawing, p: Percurso| {
+        let h = eletroduto::inserir_percurso(d, q, a, rota::Instalacao::Teto, &p, tipo).unwrap();
+        let rede = rede_de(d);
+        let e = rede.arestas.iter().find(|e| e.eletroduto == h).unwrap().clone();
+        (h, e.comprimento_2d, e.comprimento)
+    };
+    // Reto: a hipotenusa, e os desníveis 3D somam igual em todos.
+    let (h, l2d, l3d) = inserir(&mut d, Percurso { tracado: T::Reto, ..Percurso::default() });
+    assert!(matches!(d.model.get(h).unwrap().kind, EntityKind::Line(_)));
+    assert!(perto(l2d, 5.0, 1e-9) && perto(l3d, 5.0 + 1.3 + 2.5, 1e-9));
+    // Ortogonal: anda e sobe; o outro lado passa pelo outro canto.
+    let (h, l2d, _) = inserir(&mut d, Percurso { tracado: T::Ortogonal, ..Percurso::default() });
+    let EntityKind::LwPolyline(pl) = &d.model.get(h).unwrap().kind else { panic!("polilinha") };
+    assert_eq!((pl.vertices[1].p.x, pl.vertices[1].p.y), (4.0, 0.0));
+    assert!(perto(l2d, 7.0, 1e-9));
+    let (h, l2d, _) = inserir(&mut d, Percurso { tracado: T::Ortogonal, vertical_primeiro: true, ..Percurso::default() });
+    let EntityKind::LwPolyline(pl) = &d.model.get(h).unwrap().kind else { panic!("polilinha") };
+    assert_eq!((pl.vertices[1].p.x, pl.vertices[1].p.y), (0.0, 3.0));
+    assert!(perto(l2d, 7.0, 1e-9));
+    // Arco: mais comprido que a corda.
+    let (h, l2d, _) = inserir(&mut d, Percurso { tracado: T::Arco, flecha: 0.2, ..Percurso::default() });
+    assert!(matches!(d.model.get(h).unwrap().kind, EntityKind::Spline(_)));
+    assert!(l2d > 5.0, "{l2d}");
+    // Desvios: passa por eles em qualquer traçado, sem perder as pontas.
+    let desvios = vec![[2.0, 2.0]];
+    let (_, l2d, _) = inserir(&mut d, Percurso { tracado: T::Reto, desvios: desvios.clone(), ..Percurso::default() });
+    assert!(perto(l2d, 8.0_f64.sqrt() + 5.0_f64.sqrt(), 1e-9), "{l2d}");
+    let (h, _, _) = inserir(&mut d, Percurso { tracado: T::Arco, desvios: desvios.clone(), ..Percurso::default() });
+    assert!(matches!(d.model.get(h).unwrap().kind, EntityKind::Spline(_)));
+    let (_, l2d, _) = inserir(&mut d, Percurso { tracado: T::Ortogonal, desvios, ..Percurso::default() });
+    assert!(perto(l2d, 7.0, 1e-9), "{l2d}");
+    assert!(rede_de(&d).soltos.is_empty(), "todos ligam os dois blocos");
+    // Alinhados: o ortogonal é uma linha; entrada hostil recusa.
+    let b = tug(&mut d, 4.0, 0.0, "1");
+    let h =
+        eletroduto::inserir_percurso(&mut d, q, b, rota::Instalacao::Teto, &Percurso { tracado: T::Ortogonal, ..Percurso::default() }, tipo).unwrap();
+    assert!(matches!(d.model.get(h).unwrap().kind, EntityKind::Line(_)));
+    let ruim = Percurso { desvios: vec![[f64::NAN, 0.0]], ..Percurso::default() };
+    assert!(eletroduto::inserir_percurso(&mut d, q, b, rota::Instalacao::Teto, &ruim, tipo).is_err());
+    let _ = setup;
+}
+
+#[test]
+fn compartilhar_o_pe_reduz_condutores_ocupacao_e_compra() {
+    let mut d = metros();
+    let q = qd(&mut d, 0.0, 0.0);
+    let cx = caixa(&mut d, 2.0, 0.0);
+    let (a, b) = (tug(&mut d, 4.0, 1.0, "1"), tug(&mut d, 4.0, -1.0, "2"));
+    for (x, y) in [(q, cx), (cx, a), (cx, b)] {
+        eletroduto::inserir(&mut d, x, y, rota::Instalacao::Teto, 0.0).unwrap();
+    }
+    editar::definir_sobrescrita(&mut d, q, "2", Some(4.0), None).unwrap();
+    let normal = Setup::default();
+    let dividido = Setup { compartilhar_pe: true, ..Setup::default() };
+    let tronco =
+        |s: &Setup, d: &Drawing| fiacao::calcular(d, &analisar(d), s, q).unwrap().trechos.into_iter().find(|t| t.circuitos.len() == 2).unwrap();
+    let (t1, t2) = (tronco(&normal, &d), tronco(&dividido, &d));
+    assert_eq!((t1.condutores(), t2.condutores()), (6, 5));
+    assert!(t2.ocupacao.unwrap() < t1.ocupacao.unwrap());
+    // Fica o de maior seção, e a marca sai junto.
+    let pe: Vec<_> = t2.circuitos.iter().filter(|k| k.protecao).collect();
+    assert_eq!((pe.len(), pe[0].secao), (1, Some(4.0)));
+    assert_eq!(t2.pe_removidos.len(), 1);
+    // Nos ramais, com um circuito só, nada muda.
+    let ramais = fiacao::calcular(&d, &analisar(&d), &dividido, q).unwrap();
+    assert!(ramais.trechos.iter().filter(|t| t.circuitos.len() == 1).all(|t| t.circuitos[0].protecao));
+    // A compra de cabo cai o comprimento do trecho, com a folga.
+    let metros_de = |s: &Setup| materiais::levantar(&d, &analisar(&d), s).cabos.iter().map(|c| c.metros).sum::<f64>();
+    assert!(perto(metros_de(&normal) - metros_de(&dividido), t2.comprimento * normal.fator_materiais, 1e-6));
+    // FCA manual vale sobre o de cada trecho.
+    let r = rotear_quadro(&d, &analisar(&d), &Setup { fca_manual: Some(0.5), ..Setup::default() }, q).unwrap();
+    assert!(r.linhas.iter().all(|l| l.fca == 0.5));
+    let mut s = Setup { fca_manual: Some(9.0), ..Setup::default() };
+    s.normalizar();
+    assert_eq!(s.fca_manual, Some(1.0));
+}
+
+#[test]
+fn calculo_so_grava_ao_processar_e_acusa_o_que_mudou() {
+    use quadro::EstadoCalculo as E;
+    let setup = Setup::default();
+    let mut d = planta();
+    let qd = quadro(&d);
+    let linhas = |d: &Drawing| rotear_quadro(d, &analisar(d), &setup, qd).unwrap().linhas;
+    assert!(linhas(&d).iter().all(|l| l.estado_calculo() == E::Pendente && l.calculado.is_none()));
+    // Consultar não muda o desenho.
+    let antes = d.model.get(qd).unwrap().common.xdata.clone();
+    rotear_quadro(&d, &analisar(&d), &setup, qd).unwrap();
+    assert_eq!(d.model.get(qd).unwrap().common.xdata, antes);
+    let feito = editar::processar_calculo(&mut d, &setup, None).unwrap();
+    assert_eq!((feito.len(), feito[0].circuitos), (1, linhas(&d).len()));
+    assert!(linhas(&d).iter().all(|l| l.estado_calculo() == E::EmDia));
+    let guardado = linhas(&d).iter().find(|l| l.circuito.id == "3").unwrap().calculado.unwrap();
+    // O projeto muda: a tabela continua mostrando o último cálculo, marcado como desatualizado.
+    editar::definir_sobrescrita(&mut d, qd, "3", Some(16.0), None).unwrap();
+    let l = linhas(&d).into_iter().find(|l| l.circuito.id == "3").unwrap();
+    assert_eq!((l.estado_calculo(), l.calculado), (E::Desatualizado, Some(guardado)));
+    assert_ne!(l.escolha.secao, guardado.secao);
+    // Processar de novo põe em dia; circuito excluído some do que estava gravado.
+    editar::processar_calculo(&mut d, &setup, Some(qd)).unwrap();
+    assert!(linhas(&d).iter().all(|l| l.estado_calculo() == E::EmDia));
+    editar::excluir_circuito(&mut d, qd, "3").unwrap();
+    assert!(!quadro::propriedades(analisar(&d).ponto(qd).unwrap()).contains_key("3"));
+    assert!(editar::processar_calculo(&mut d, &setup, Some(Handle(0xFFFF))).is_err());
+    // Atualiza as tags que existem, sem mexer em nada antes disso.
+    let mut d = planta();
+    let qd = quadro(&d);
+    let todos = eletrodutos(&d);
+    fiacao::regenerar(&mut d, &setup, Some(&todos)).unwrap();
+    let (tag, _) = fiacao::tags(&d)[0];
+    let bloco = |d: &Drawing| if let EntityKind::Insert(i) = &d.model.get(tag).unwrap().kind { i.block.clone() } else { panic!() };
+    let textos = |d: &Drawing| {
+        d.blocks[&bloco(d)]
+            .entities
+            .iter()
+            .filter_map(|e| if let EntityKind::Text(t) = &e.kind { Some(t.value.clone()) } else { None })
+            .collect::<Vec<_>>()
+    };
+    let velho = textos(&d);
+    editar::definir_sobrescrita(&mut d, qd, "1", Some(25.0), None).unwrap();
+    editar::definir_sobrescrita(&mut d, qd, "2", Some(25.0), None).unwrap();
+    editar::definir_sobrescrita(&mut d, qd, "3", Some(25.0), None).unwrap();
+    assert_eq!(textos(&d), velho);
+    editar::processar_calculo(&mut d, &setup, None).unwrap();
+    assert!(textos(&d).iter().any(|t| t == "#25"), "{:?}", textos(&d));
+}
+
+#[test]
+fn grupo_dr_por_circuito_e_na_lista_de_materiais() {
+    let mut d = planta();
+    let qd = quadro(&d);
+    editar::definir_grupo_dr(&mut d, qd, "1", Some(" IDR1 ")).unwrap();
+    editar::definir_grupo_dr(&mut d, qd, "2", Some("IDR1")).unwrap();
+    let r = rotear_quadro(&d, &analisar(&d), &Setup::default(), qd).unwrap();
+    assert_eq!(r.linhas.iter().find(|l| l.circuito.id == "1").unwrap().grupo_dr.as_deref(), Some("IDR1"));
+    let m = materiais::levantar(&d, &analisar(&d), &Setup::default());
+    assert_eq!(m.grupos_dr, [materiais::ItemContado { nome: "QD-01: IDR1".into(), quantidade: 2 }]);
+    editar::definir_grupo_dr(&mut d, qd, "1", None).unwrap();
+    editar::definir_grupo_dr(&mut d, qd, "2", Some("  ")).unwrap();
+    assert!(materiais::levantar(&d, &analisar(&d), &Setup::default()).grupos_dr.is_empty());
+    assert!(editar::definir_grupo_dr(&mut d, qd, "", Some("IDR1")).is_err());
+}
+
+#[test]
+fn inspetor_le_e_muda_os_atributos_de_uma_insercao() {
+    let setup = Setup::default();
+    let mut d = metros();
+    biblioteca::garantir_base(&mut d, &setup, 1.0);
+    let h = biblioteca::inserir_ponto(&mut d, "TOM-SIM-BAIXA", [5.0, 5.0], 0.0, &[("CIRCUITO".to_string(), "1".to_string())], &setup).unwrap();
+    let lista = |d: &Drawing| editar::atributos_de(d, h).unwrap();
+    let de = |d: &Drawing, t: &str| lista(d).into_iter().find(|a| a.tag == t).unwrap();
+    assert_eq!(de(&d, "CIRCUITO").valor, "1");
+    assert!(de(&d, "CIRCUITO").visivel && !de(&d, "POTENCIA").visivel);
+    assert!(de(&d, "TIPO_PONTO").constante);
+    // Valor, visibilidade e posição.
+    editar::editar_atributo(&mut d, h, "circuito", Some("7"), None, None, &setup).unwrap();
+    assert_eq!(ponto::ler_ponto(&d, h).unwrap().circuito.as_deref(), Some("7"));
+    editar::editar_atributo(&mut d, h, "POTENCIA", None, Some(true), None, &setup).unwrap();
+    assert!(de(&d, "POTENCIA").visivel);
+    editar::editar_atributo(&mut d, h, "CIRCUITO", None, None, Some([9.0, 8.0]), &setup).unwrap();
+    assert_eq!((de(&d, "CIRCUITO").x, de(&d, "CIRCUITO").y), (9.0, 8.0));
+    // ALTURA segue a regra da legenda.
+    editar::editar_atributo(&mut d, h, "ALTURA", Some("1,45"), None, None, &setup).unwrap();
+    assert_eq!(de(&d, "ALTURA").valor, "h=1,45m");
+    assert_eq!(ponto::ler_ponto(&d, h).unwrap().altura, Some(1.45));
+    editar::editar_atributo(&mut d, h, "ALTURA", Some(""), None, None, &setup).unwrap();
+    assert_eq!(de(&d, "ALTURA").valor, "");
+    // Recusas.
+    assert!(editar::editar_atributo(&mut d, h, "TIPO_PONTO", Some("X"), None, None, &setup).is_err());
+    assert!(editar::editar_atributo(&mut d, h, "NADA", Some("X"), None, None, &setup).is_err());
+    assert!(editar::editar_atributo(&mut d, h, "ALTURA", Some("alto"), None, None, &setup).is_err());
+    assert!(editar::editar_atributo(&mut d, h, "CIRCUITO", None, None, Some([f64::NAN, 0.0]), &setup).is_err());
+    assert!(editar::editar_atributo(&mut d, Handle(0xFFFF), "CIRCUITO", Some("1"), None, None, &setup).is_err());
+    let linha = d.add(&Space::Model, Common::default(), EntityKind::Line(Line { a: Vec3::ZERO, b: Vec3::new(1.0, 0.0, 0.0) })).unwrap();
+    assert!(editar::atributos_de(&d, linha).is_none());
+}
+
+#[test]
 fn letra_nova_entra_nas_teclas_livres() {
     use circuito::comando_com_letra as c;
     assert_eq!(c("", "a", 1), "a");
@@ -1914,7 +2102,12 @@ fn bloco_no_clique_e_modelo_do_eletroduto() {
     assert_eq!(eletroduto::bloco_em(&d, &setup, [3.09, 0.0], 1.0), Some(longe));
     assert_eq!(eletroduto::bloco_em(&d, &setup, [9.0, 0.0], 1.0), None);
     // Cada desenho tem o seu modelo.
-    let m = eletroduto::ModeloEletroduto { instalacao: rota::Instalacao::Piso, flecha: 0.0, tipo: rota::TipoEletroduto::AcoFogo };
+    let m = eletroduto::ModeloEletroduto {
+        instalacao: rota::Instalacao::Piso,
+        flecha: 0.0,
+        tipo: rota::TipoEletroduto::AcoFogo,
+        tracado: eletroduto::Tracado::Reto,
+    };
     eletroduto::definir_modelo(991_001, m);
     assert_eq!(eletroduto::modelo(991_001), m);
     assert_eq!(eletroduto::modelo(991_002), eletroduto::ModeloEletroduto::default());

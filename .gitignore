@@ -1,6 +1,9 @@
 # Saída de compilação (o CADCraft tem o próprio .gitignore em cadcraft/)
 target/
 
+# Pacote de distribuição (cargo xtask dist)
+dist/
+
 # Python (scripts/gerar_template.py)
 __pycache__/
 *.py[cod]

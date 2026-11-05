@@ -23,6 +23,7 @@ clean-room, assets) são obrigatórias. As exceções estão no fim deste arquiv
 | `cadcraft/crates/ui-egui/tests/eletrica_painel.rs` | Testes da paleta, da mini-barra e das janelas. |
 | `docs/` | Padrão de blocos, arquitetura do fork, registro da versão 2.0. |
 | `templates/` | Template opcional de blocos e camadas (`FREE_ELETRICA_BLOCOS.dxf`) e a fonte dos símbolos. Os blocos base nascem no motor (`ele::biblioteca`). |
+| `docs/INSTALL.md`, `docs/GETTING_STARTED.md` | Manuais de quem só usa; vão no pacote de `cargo xtask dist`. |
 | `scripts/` | `compilar.bat`, `iniciar.bat`, `testar.bat`, `publicar_fork.bat`, `gerar_template.py`. |
 
 Pontos de registro no código do CADCraft (as únicas linhas nossas fora dos nossos arquivos)

@@ -5,8 +5,8 @@
 //! 1. A paleta Elétrica (`show`): as ferramentas na ordem do fluxo de trabalho.
 //! 2. A mini-barra (`sobre_canvas`): sobre o desenho, só enquanto ELEPONTO, ELEELETRODUTO ou
 //!    ELECIRCUITO esperam cliques. Muda o que o comando usa sem interrompê-lo.
-//! 3. As janelas (`janelas`): quadro de cargas, detalhes do circuito, eletrodutos, pontos,
-//!    conferência, materiais e configurações. Cada uma fecha no X ou com Esc, a última aberta primeiro.
+//! 3. As janelas (`janelas`): blocos, inspetor de atributos, quadro de cargas em duas abas,
+//!    dimensionamento, eletrodutos, pontos, conferência, materiais e configurações. Cada uma fecha no X ou com Esc, a última aberta primeiro.
 //! 4. A sobreposição (`sobre_canvas`): os halos da inspeção visual e o destaque do circuito.
 //!
 //! Toda alteração passa por um comando do motor (`app.run`/`app.start`): a interface não decide
@@ -43,7 +43,7 @@ const COR_DESTAQUE_TRECHO: Color32 = Color32::from_rgb(255, 235, 59);
 /// Altura das linhas das tabelas.
 const LINHA: f32 = 20.0;
 /// Altura da paleta, com todas as ferramentas à vista.
-const ALTURA_PALETA: f32 = 610.0;
+const ALTURA_PALETA: f32 = 680.0;
 
 /// Chave das configurações do Free Elétrica no armazenamento de preferências do CADCraft.
 pub const PREFS_KEY: &str = "freeeletrica.setup";
@@ -66,8 +66,10 @@ struct Janelas {
     abertas: Vec<Qual>,
     cargas: Cargas,
     pontos: Pontos,
-    /// O circuito da janela de detalhes: (quadro, circuito).
-    detalhe: Option<(Handle, String)>,
+    /// As opções da janela de dimensionamento.
+    dimensionar: OpcoesDimensionar,
+    /// A janela de blocos.
+    blocos: Blocos,
     /// Inspeção visual ligada.
     inspecao: bool,
     /// O circuito destacado no desenho: (quadro, circuito).
@@ -81,7 +83,9 @@ struct Janelas {
 enum Qual {
     Setup,
     Cargas,
-    Detalhe,
+    Dimensionar,
+    Blocos,
+    Atributos,
     Eletrodutos,
     Pontos,
     Conferencia,
@@ -99,10 +103,8 @@ fn abrir(q: Qual) -> Result<Value, String> {
 /// Fecha uma janela e o que só existe com ela.
 fn fechar(j: &mut Janelas, q: Qual) {
     j.abertas.retain(|x| *x != q);
-    match q {
-        Qual::Setup => j.setup = None,
-        Qual::Detalhe => j.detalhe = None,
-        _ => {}
+    if q == Qual::Setup {
+        j.setup = None;
     }
 }
 
@@ -123,8 +125,36 @@ struct Rascunho {
     erro: Option<String>,
 }
 
+/// As abas do quadro de cargas.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum AbaCargas {
+    #[default]
+    Resumo,
+    Ficha,
+}
+
+/// As premissas do dimensionamento, até processar.
+#[derive(Clone, Default)]
+struct OpcoesDimensionar {
+    compartilhar_pe: bool,
+    temperatura: f64,
+    fca_manual: bool,
+    fca: f64,
+}
+
+/// A janela de blocos.
+#[derive(Clone, Default)]
+struct Blocos {
+    filtro: FiltroPontos,
+    nome: String,
+    categoria: Option<ele::familia::FamilyCategory>,
+}
+
 #[derive(Clone, Default)]
 struct Cargas {
+    aba: AbaCargas,
+    /// O circuito aberto na ficha.
+    selecionado: Option<String>,
     quadro: Option<Handle>,
     /// Descrições em edição: (circuito, texto).
     descricoes: Vec<(String, String)>,
@@ -172,8 +202,10 @@ enum Acao {
     Palavra(&'static str),
     /// Roda um comando e mostra o resultado na barra de status.
     RodarComStatus(&'static str, Value, fn(&Value) -> String),
-    /// Abre a janela de detalhes de um circuito.
-    Detalhes(Handle, String),
+    /// Abre a ficha de um circuito.
+    Ficha(Handle, String),
+    /// Fecha uma janela.
+    Fechar(Qual),
     /// Seleciona objetos no desenho.
     Selecionar(Vec<Handle>),
     /// Enquadra estes pontos na tela.
@@ -289,6 +321,18 @@ pub fn route(app: &mut CadApp, id: &str, _params: &Value) -> Option<Result<Value
         }
         "ui.eletrica.pontos" | "elepontos" => Some(comecar_a_inserir(app)),
         "ui.eletrica.lista" => Some(abrir(Qual::Pontos)),
+        "ui.eletrica.blocos" | "eleblocos" => Some(abrir(Qual::Blocos)),
+        "ui.eletrica.atributos" | "eleatributos" => Some(abrir(Qual::Atributos)),
+        "ui.eletrica.dimensionar" | "eledimensionar" => {
+            let s = setup();
+            trava(&JANELAS).dimensionar = OpcoesDimensionar {
+                compartilhar_pe: s.compartilhar_pe,
+                temperatura: s.temperatura_ambiente,
+                fca_manual: s.fca_manual.is_some(),
+                fca: s.fca_manual.unwrap_or(0.8),
+            };
+            Some(abrir(Qual::Dimensionar))
+        }
         "ui.eletrica.materiais" | "elemateriais" => Some(abrir(Qual::Materiais)),
         // Rotear fiação vive dentro do Quadro de cargas; ELEROTEAR abre o quadro de cargas.
         "ui.eletrica.cargas" | "elecargas" | "ui.eletrica.rotear" | "elerotear" => Some(abrir(Qual::Cargas)),
@@ -438,14 +482,16 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
                 }
             };
             grupo(ui, &t, "1. Pontos");
-            botao(ui, "Famílias de blocos", "bedit", "Abre o editor de blocos: classifique o bloco, com categoria, altura padrão e caixa, e crie os atributos (BEDIT)");
+            botao(ui, "Blocos e famílias...", "ui.eletrica.blocos", "Crie um bloco elétrico novo ou edite os do desenho, com categoria, altura padrão e caixa (ELEBLOCOS)");
             botao(ui, "Inserir pontos", "ui.eletrica.pontos", "A mini-barra escolhe o bloco, a potência, a altura e o quadro; cada clique no desenho insere um ponto. Tab gira (ELEPONTOS)");
             botao(ui, "Lista de pontos...", "ui.eletrica.lista", "Pontos do desenho por categoria: altura, selecionar e excluir");
+            botao(ui, "Inspetor de atributos...", "ui.eletrica.atributos", "Selecione um bloco: valores, visibilidade e posição de cada atributo (ELEATRIBUTOS)");
             grupo(ui, &t, "2. Circuitos e comandos");
             botao(ui, "Criar circuito", "elecircuito", "Selecione o quadro, o número e os pontos do circuito; a barra sobre o desenho edita descrição, esquema e tensão (ELECIRCUITO)");
             botao(ui, "Comandos e luminárias", "elecomando", "Selecione o interruptor e as luminárias que ele comanda (ELECOMANDO)");
             grupo(ui, &t, "3. Quadro de cargas");
-            botao(ui, "Quadro de cargas...", "ui.eletrica.cargas", "Tabela dos circuitos de um quadro, com fases, cabo e disjuntor (ELECARGAS)");
+            botao(ui, "Quadro de cargas...", "ui.eletrica.cargas", "Resumo dos circuitos de um quadro e a ficha de engenharia de cada um (ELECARGAS)");
+            botao(ui, "Dimensionar projeto...", "ui.eletrica.dimensionar", "Premissas do cálculo e o botão Processar cálculo: só aqui os cabos e disjuntores mudam (ELEDIMENSIONAR)");
             grupo(ui, &t, "4. Eletrodutos");
             botao(ui, "Inserir eletroduto", "eleeletroduto", "Clique nos blocos em sequência; a mini-barra escolhe a cota e o tipo. Clicar no meio de um eletroduto insere uma caixa de passagem (ELEELETRODUTO)");
             botao(ui, "Lista de eletrodutos...", "ui.eletrica.eletrodutos", "Trechos, com tipo, cota, diâmetro e ocupação");
@@ -655,10 +701,13 @@ fn executar(app: &mut CadApp, acoes: Vec<Acao>) {
                 Ok(v) => app.set_status(texto(&v)),
                 Err(e) => app.set_status(format!("Free Elétrica: {e}")),
             },
-            Acao::Detalhes(q, c) => {
-                trava(&JANELAS).detalhe = Some((q, c));
-                let _ = abrir(Qual::Detalhe);
+            Acao::Ficha(q, c) => {
+                let mut j = trava(&JANELAS);
+                j.cargas.quadro = Some(q);
+                j.cargas.aba = AbaCargas::Ficha;
+                j.cargas.selecionado = Some(c);
             }
+            Acao::Fechar(q) => fechar(&mut trava(&JANELAS), q),
             Acao::Iniciar(id) => app.start(id),
             Acao::Palavra(k) => {
                 if let Err(e) = app.session.input(cadcraft_engine::Input::Keyword(k.into())) {
@@ -723,9 +772,9 @@ pub fn janelas(app: &mut CadApp, ctx: &egui::Context) {
             fechar(&mut j, q);
         }
     }
-    let (abertas, mut cargas, mut pontos, mut destaque, detalhe) = {
+    let (abertas, mut cargas, mut pontos, mut destaque, mut dimensionar, mut blocos) = {
         let j = trava(&JANELAS);
-        (j.abertas.clone(), j.cargas.clone(), j.pontos.clone(), j.destaque.clone(), j.detalhe.clone())
+        (j.abertas.clone(), j.cargas.clone(), j.pontos.clone(), j.destaque.clone(), j.dimensionar.clone(), j.blocos.clone())
     };
     if abertas.is_empty() {
         return;
@@ -749,14 +798,13 @@ pub fn janelas(app: &mut CadApp, ctx: &egui::Context) {
                     ui.label(pequeno("Nenhum desenho aberto.", t.text_dim));
                 }
             }),
-            Qual::Detalhe => {
-                let titulo = detalhe.as_ref().map_or("Circuito".to_string(), |(_, c)| format!("Propriedades e dimensionamento do circuito {c}"));
-                janela(ctx, &titulo, (420.0, 160.0), (480.0, 520.0), |ui| {
-                    if let Some((q, id)) = &detalhe {
-                        detalhes_do_circuito(ui, app, &t, &mut st, &s, *q, id, &mut acoes);
-                    }
-                })
-            }
+            Qual::Dimensionar => janela(ctx, "Dimensionar projeto", (520.0, 170.0), (440.0, 300.0), |ui| {
+                janela_dimensionar(ui, &t, &mut dimensionar, tem_desenho, &mut acoes)
+            }),
+            Qual::Blocos => janela(ctx, "Blocos e famílias", (300.0, 130.0), (720.0, 460.0), |ui| {
+                janela_blocos(ui, &t, &st, &mut blocos, tem_desenho, &mut acoes)
+            }),
+            Qual::Atributos => janela(ctx, "Inspetor de atributos", (560.0, 140.0), (540.0, 400.0), |ui| janela_atributos(ui, app, &t, &mut acoes)),
             Qual::Eletrodutos => {
                 janela(ctx, "Eletrodutos", (280.0, 140.0), (980.0, 420.0), |ui| aba_lista_eletrodutos(ui, app, &t, &mut st, &s, &mut acoes))
             }
@@ -781,6 +829,8 @@ pub fn janelas(app: &mut CadApp, ctx: &egui::Context) {
         j.cargas = cargas;
         j.pontos = pontos;
         j.destaque = destaque;
+        j.dimensionar = dimensionar;
+        j.blocos = blocos;
         for q in fechadas {
             fechar(&mut j, q);
         }
@@ -1033,6 +1083,13 @@ fn barra_ponto(ui: &mut egui::Ui, uid: u64, st: &Estado, s: &Setup, filtro: &mut
 
 fn barra_eletroduto(ui: &mut egui::Ui, uid: u64, acoes: &mut Vec<Acao>) {
     let m = ele::eletroduto::modelo(uid);
+    ui.label("Traçado");
+    for tr in ele::eletroduto::Tracado::TODOS {
+        if ui.selectable_label(m.tracado == tr, tr.nome()).clicked() {
+            acoes.push(Acao::Rodar("eletrica.eletroduto.modelo", json!({ "tracado": tr.codigo() })));
+        }
+    }
+    ui.separator();
     ui.label("Cota");
     for i in Instalacao::TODAS {
         if ui.selectable_label(m.instalacao == i, i.nome()).clicked() {
@@ -1048,19 +1105,24 @@ fn barra_eletroduto(ui: &mut egui::Ui, uid: u64, acoes: &mut Vec<Acao>) {
             }
         }
     });
-    ui.separator();
-    ui.label("Flecha");
-    let mut f = m.flecha;
-    if ui
-        .add(campo(&mut f, 0.0..=ele::eletroduto::FLECHA_MAXIMA, 0.01, 2, ""))
-        .on_hover_text("Curvatura como fração do comprimento; 0 é reto")
-        .changed()
-    {
-        acoes.push(Acao::Rodar("eletrica.eletroduto.modelo", json!({ "flecha": f })));
+    if m.tracado == ele::eletroduto::Tracado::Arco {
+        ui.separator();
+        ui.label("Flecha");
+        let mut f = m.flecha;
+        if ui
+            .add(campo(&mut f, 0.0..=ele::eletroduto::FLECHA_MAXIMA, 0.01, 2, ""))
+            .on_hover_text("Curvatura como fração do comprimento; 0 é reto")
+            .changed()
+        {
+            acoes.push(Acao::Rodar("eletrica.eletroduto.modelo", json!({ "flecha": f })));
+        }
     }
-    if ui.button("Inverter").on_hover_text("Curva para o outro lado").clicked() {
+    if m.tracado != ele::eletroduto::Tracado::Reto && ui.button("Inverter").on_hover_text("Curva ou canto para o outro lado").clicked() {
         acoes.push(Acao::Palavra("Inverter"));
     }
+    ui.separator();
+    ui.label(RichText::new("Clique no vazio: desvio").weak())
+        .on_hover_text("Um clique fora de blocos e eletrodutos vira um ponto de passagem do trajeto");
 }
 
 fn barra_circuito(ui: &mut egui::Ui, uid: u64, st: &Estado, acoes: &mut Vec<Acao>) {
@@ -1137,18 +1199,234 @@ fn aba_cargas(
         }
     });
     let Some(q) = c.quadro else { return };
+    ui.horizontal(|ui| {
+        for (aba, nome) in [(AbaCargas::Resumo, "Quadro de cargas"), (AbaCargas::Ficha, "Ficha de engenharia")] {
+            if ui.selectable_label(c.aba == aba, nome).clicked() {
+                c.aba = aba;
+            }
+        }
+    });
+    ui.separator();
     let Some(resumo) = st.resumo(app, s, q) else { return };
     match resumo.as_ref() {
         Err(e) => {
             ui.label(pequeno(e.as_str(), COR_AVISO));
         }
-        Ok(r) => {
+        Ok(r) if c.aba == AbaCargas::Resumo => {
             egui::ScrollArea::both()
                 .id_salt("ele-cargas-rolagem")
                 .auto_shrink([false, true])
                 .show(ui, |ui| quadro_de_cargas(ui, t, &analise, s, r, c, destaque, acoes));
         }
+        Ok(r) => ficha_de_engenharia(ui, t, s, r, c, acoes),
     }
+}
+
+/// A aba da ficha: a lista dos circuitos e a engenharia do escolhido.
+fn ficha_de_engenharia(ui: &mut egui::Ui, t: &Tokens, s: &Setup, r: &ele::ResumoQuadro, c: &mut Cargas, acoes: &mut Vec<Acao>) {
+    if r.linhas.is_empty() {
+        ui.label(pequeno("Nenhum circuito com pontos neste quadro.", t.text_dim));
+        return;
+    }
+    if !c.selecionado.as_ref().is_some_and(|id| r.linhas.iter().any(|l| l.circuito.id.eq_ignore_ascii_case(id))) {
+        c.selecionado = r.linhas.first().map(|l| l.circuito.id.clone());
+    }
+    ui.horizontal_top(|ui| {
+        ui.vertical(|ui| {
+            ui.set_width(190.0);
+            egui::ScrollArea::vertical().id_salt("ele-ficha-lista").auto_shrink([false, true]).show(ui, |ui| {
+                for l in &r.linhas {
+                    let id = &l.circuito.id;
+                    let nome = if l.descricao.is_empty() { format!("Circuito {id}") } else { format!("{id}  {}", l.descricao) };
+                    if ui.selectable_label(c.selecionado.as_deref() == Some(id.as_str()), nome).clicked() {
+                        c.selecionado = Some(id.clone());
+                    }
+                }
+            });
+        });
+        ui.separator();
+        ui.vertical(|ui| {
+            egui::ScrollArea::vertical().id_salt("ele-ficha-detalhe").auto_shrink([false, true]).show(ui, |ui| {
+                if let Some(l) = r.linhas.iter().find(|l| c.selecionado.as_deref().is_some_and(|id| l.circuito.id.eq_ignore_ascii_case(id))) {
+                    detalhes_do_circuito(ui, s, r.quadro, l, acoes);
+                }
+            });
+        });
+    });
+}
+
+/// A janela do dimensionamento: as premissas e o botão que processa.
+fn janela_dimensionar(ui: &mut egui::Ui, t: &Tokens, o: &mut OpcoesDimensionar, tem_desenho: bool, acoes: &mut Vec<Acao>) {
+    ui.label(pequeno(
+        "Lançar pontos, circuitos e eletrodutos não muda o dimensionamento. O quadro de cargas, as tags e as tabelas recebem o resultado aqui.",
+        t.text_dim,
+    ));
+    ui.add_space(4.0);
+    ui.checkbox(&mut o.compartilhar_pe, "Compartilhar o condutor de proteção (PE)")
+        .on_hover_text("Circuitos no mesmo eletroduto dividem um PE, o de maior seção entre eles (NBR 5410, 6.4.3.1). Confira a seção resultante");
+    egui::Grid::new("ele-dimensionar").num_columns(2).spacing(vec2(12.0, 6.0)).show(ui, |ui| {
+        ui.label("Temperatura ambiente (FCT)");
+        ui.add(campo(&mut o.temperatura, 10.0..=60.0, 1.0, 0, " °C"));
+        ui.end_row();
+        ui.checkbox(&mut o.fca_manual, "FCA fixo").on_hover_text("Sem marcar, vale o FCA real de cada trecho (tabela 42)");
+        if o.fca_manual {
+            ui.add(campo(&mut o.fca, 0.1..=1.0, 0.01, 2, ""));
+        } else {
+            ui.label(pequeno("real, por trecho", t.text_dim));
+        }
+        ui.end_row();
+    });
+    ui.add_space(6.0);
+    if ui.add_enabled(tem_desenho, egui::Button::new(RichText::new("Processar cálculo").strong()).min_size(vec2(200.0, 28.0))).clicked() {
+        acoes.push(Acao::RodarComStatus(
+            "eletrica.dimensionar",
+            json!({ "compartilharPe": o.compartilhar_pe, "temperaturaAmbiente": o.temperatura, "fcaManual": if o.fca_manual { json!(o.fca) } else { Value::Null } }),
+            |v| format!("Projeto dimensionado: {} circuito(s), {} aviso(s)", v["circuitos"], v["avisos"]),
+        ));
+    }
+}
+
+/// A janela de blocos: criar um novo e editar os do desenho.
+fn janela_blocos(ui: &mut egui::Ui, t: &Tokens, st: &Estado, b: &mut Blocos, tem_desenho: bool, acoes: &mut Vec<Acao>) {
+    use ele::familia::FamilyCategory;
+    ui.horizontal(|ui| {
+        let rotulo = ui.label("Nome do bloco");
+        ui.add(egui::TextEdit::singleline(&mut b.nome).desired_width(170.0)).labelled_by(rotulo.id);
+        let categoria = b.categoria.unwrap_or_default();
+        egui::ComboBox::from_id_salt("ele-blocos-categoria").selected_text(categoria.nome()).width(190.0).show_ui(ui, |ui| {
+            for c in FamilyCategory::TODAS.into_iter().filter(|c| *c != FamilyCategory::Nenhum) {
+                if ui.selectable_label(categoria == c, c.nome()).clicked() {
+                    b.categoria = Some(c);
+                }
+            }
+        });
+        let nome = b.nome.trim().to_string();
+        let existe = st.blocos.iter().any(|x| x.nome.eq_ignore_ascii_case(&nome));
+        let pronto = tem_desenho && !nome.is_empty() && !existe;
+        let botao = egui::Button::new(RichText::new("+ Criar novo bloco elétrico").strong().color(Color32::WHITE))
+            .fill(Tokens::get().accent)
+            .min_size(vec2(210.0, 26.0));
+        let dica = if existe {
+            "Já existe um bloco com esse nome: use Editar na lista"
+        } else {
+            "Abre o editor de blocos já com a família e os atributos prontos"
+        };
+        if ui
+            .add_enabled(pronto, botao)
+            .on_hover_text(dica)
+            .on_disabled_hover_text(if nome.is_empty() { "Digite o nome do bloco" } else { dica })
+            .clicked()
+        {
+            acoes.push(Acao::Rodar("eletrica.bootstrap", json!({})));
+            acoes.push(Acao::Rodar("bedit", json!({ "name": nome, "create": true })));
+            acoes.push(Acao::Rodar("eletrica.familia.definir", json!({ "categoria": categoria.codigo() })));
+            acoes.push(Acao::Rodar("eletrica.familia.atributos", json!({})));
+            acoes.push(Acao::Fechar(Qual::Blocos));
+            b.nome.clear();
+        }
+    });
+    ui.separator();
+    ui.horizontal_wrapped(|ui| {
+        for f in FiltroPontos::TODOS {
+            if ui.selectable_label(b.filtro == f, f.nome()).clicked() {
+                b.filtro = f;
+            }
+        }
+    });
+    let colunas: [(&str, f32, bool); 5] =
+        [("Bloco", 170.0, false), ("Categoria", 190.0, false), ("Caixa", 90.0, false), ("No desenho", 70.0, true), ("", 130.0, false)];
+    egui::ScrollArea::vertical().id_salt("ele-blocos-lista").auto_shrink([false, true]).show(ui, |ui| {
+        egui::Grid::new("ele-blocos-tabela").num_columns(colunas.len()).striped(true).spacing(vec2(10.0, 2.0)).show(ui, |ui| {
+            cabecalho(ui, t, &colunas);
+            for x in st.blocos.iter().filter(|x| b.filtro.aceita(x.tipo)) {
+                celula(ui, colunas[0].1, x.nome.as_str(), false);
+                let categoria = x.familia.as_ref().map_or_else(|| format!("{} (sem família)", x.tipo.nome()), |f| f.categoria.nome().to_string());
+                celula(ui, colunas[1].1, categoria, false);
+                celula(ui, colunas[2].1, x.familia.as_ref().map_or("-", |f| f.caixa.nome()), false);
+                celula(ui, colunas[3].1, numero(x.inseridos.to_string()), true);
+                ui.horizontal(|ui| {
+                    if ui.small_button("Editar").on_hover_text("Abre o editor de blocos, com a família na paleta").clicked() {
+                        acoes.push(Acao::Rodar("bedit", json!({ "name": x.nome })));
+                        acoes.push(Acao::Fechar(Qual::Blocos));
+                    }
+                    if ui.small_button("Inserir").clicked() {
+                        acoes.push(Acao::Rodar("eletrica.ponto.modelo", json!({ "bloco": x.nome })));
+                        acoes.push(Acao::Iniciar("eleponto"));
+                        acoes.push(Acao::Fechar(Qual::Blocos));
+                    }
+                });
+                ui.end_row();
+            }
+        });
+    });
+}
+
+/// O inspetor de atributos do bloco selecionado.
+fn janela_atributos(ui: &mut egui::Ui, app: &CadApp, t: &Tokens, acoes: &mut Vec<Acao>) {
+    let Ok(doc) = app.session.doc() else {
+        ui.label(pequeno("Nenhum desenho aberto.", t.text_dim));
+        return;
+    };
+    let Some((h, lista)) = app.session.selection().into_iter().find_map(|h| ele::editar::atributos_de(doc, h).map(|l| (h, l))) else {
+        ui.label(pequeno("Selecione um bloco no desenho para ver os atributos dele.", t.text_dim));
+        return;
+    };
+    let nome = match doc.model.get(h).map(|e| &e.kind) {
+        Some(cadcraft_doc::EntityKind::Insert(i)) => i.block.clone(),
+        _ => String::new(),
+    };
+    ui.label(RichText::new(format!("{nome} #{}", h.hex())).strong());
+    if lista.is_empty() {
+        ui.label(pequeno("Este bloco não tem atributos.", t.text_dim));
+        return;
+    }
+    egui::ScrollArea::vertical().id_salt("ele-atributos").auto_shrink([false, true]).show(ui, |ui| {
+        egui::Grid::new("ele-atributos-tabela").num_columns(5).striped(true).spacing(vec2(8.0, 3.0)).show(ui, |ui| {
+            cabecalho(
+                ui,
+                t,
+                &[("Atributo", 110.0, false), ("Valor", 150.0, false), ("Visível", 44.0, false), ("X", 70.0, false), ("Y", 70.0, false)],
+            );
+            for a in &lista {
+                celula(ui, 110.0, a.tag.as_str(), false);
+                if a.constante {
+                    celula(ui, 150.0, pequeno(format!("{} (da definição)", a.valor), t.text_dim), false);
+                    celula(ui, 44.0, "", false);
+                    celula(ui, 70.0, "", false);
+                    celula(ui, 70.0, "", false);
+                    ui.end_row();
+                    continue;
+                }
+                let enviar = |acoes: &mut Vec<Acao>, campo: &str, valor: Value| {
+                    let mut p = serde_json::Map::new();
+                    p.insert("ponto".into(), json!(h.hex()));
+                    p.insert("tag".into(), json!(a.tag));
+                    p.insert(campo.into(), valor);
+                    acoes.push(Acao::Rodar("eletrica.atributo.definir", Value::Object(p)));
+                };
+                // O texto em edição fica na memória da janela até sair do campo.
+                let chave = egui::Id::new(("ele-atributo", h, a.tag.as_str(), a.valor.as_str()));
+                let mut texto: String = ui.ctx().data_mut(|d| d.get_temp(chave)).unwrap_or_else(|| a.valor.clone());
+                let r = ui.add_sized(vec2(150.0, LINHA), egui::TextEdit::singleline(&mut texto));
+                if r.lost_focus() && texto != a.valor {
+                    enviar(acoes, "valor", json!(texto));
+                }
+                ui.ctx().data_mut(|d| d.insert_temp(chave, texto));
+                let mut visivel = a.visivel;
+                if ui.checkbox(&mut visivel, "").changed() {
+                    enviar(acoes, "visivel", json!(visivel));
+                }
+                let (mut x, mut y) = (a.x, a.y);
+                let mudou_x = ui.add_sized(vec2(70.0, LINHA), campo(&mut x, -1e9..=1e9, 0.01, 3, "")).changed();
+                let mudou_y = ui.add_sized(vec2(70.0, LINHA), campo(&mut y, -1e9..=1e9, 0.01, 3, "")).changed();
+                if mudou_x || mudou_y {
+                    enviar(acoes, "posicao", json!([x, y]));
+                }
+                ui.end_row();
+            }
+        });
+    });
+    ui.label(pequeno("A altura segue a legenda do projeto: vazio volta a ela, e outro valor aparece como h=1,45m.", t.text_dim));
 }
 
 /// Uma coluna da tabela: título, largura e se o conteúdo é número (à direita).
@@ -1223,8 +1501,8 @@ fn escolher_secao_e_disjuntor(ui: &mut egui::Ui, q: Handle, id: &String, l: &ele
     }
 }
 
-/// A tabela do quadro de cargas: circuitos, fases, cabo e disjuntor. A engenharia de cada circuito
-/// fica na janela de detalhes.
+/// O resumo do quadro de cargas: circuitos, fases, grupos DR e o último cálculo. A engenharia de cada
+/// circuito fica na ficha.
 #[allow(clippy::too_many_arguments)]
 fn quadro_de_cargas(
     ui: &mut egui::Ui,
@@ -1265,10 +1543,8 @@ fn quadro_de_cargas(
                 format!("Fases equilibradas: desequilíbrio de {} %", fixo(v["desequilibrio"].as_f64().unwrap_or(0.0), 1))
             }));
         }
-        if ui.button("Dimensionar").on_hover_text("Refaz o cálculo do quadro e atualiza as tags e tabelas do desenho").clicked() {
-            acoes.push(Acao::RodarComStatus("eletrica.dimensionar", json!({ "quadro": q.hex() }), |v| {
-                format!("Quadro dimensionado: {} circuito(s), {} aviso(s)", v["circuitos"], v["avisos"])
-            }));
+        if ui.button("Dimensionar projeto...").on_hover_text("Premissas do cálculo e Processar cálculo (ELEDIMENSIONAR)").clicked() {
+            acoes.push(Acao::Rodar("ui.eletrica.dimensionar", Value::Null));
         }
         ui.separator();
         if ui.button("Tags de fiação").on_hover_text("Põe a simbologia de fiação nos eletrodutos deste quadro (ELEFIACAO)").clicked() {
@@ -1283,22 +1559,28 @@ fn quadro_de_cargas(
     });
     ui.add_space(4.0);
 
+    let pendentes = r.linhas.iter().filter(|l| l.estado_calculo() != ele::quadro::EstadoCalculo::EmDia).count();
+    if pendentes > 0 {
+        ui.label(RichText::new(format!("{pendentes} circuito(s) sem cálculo ou com o projeto alterado: use Dimensionar projeto.")).color(COR_AVISO));
+    }
     let fases = usize::from(r.fases_quadro.clamp(1, 3));
-    let mut colunas: Vec<Coluna> =
-        vec![("Circ.", 34.0, false), ("", 262.0, false), ("Descrição", 150.0, false), ("Pontos", 44.0, true), ("Potência (VA)", 80.0, true)];
+    let mut colunas: Vec<Coluna> = vec![
+        ("Circ.", 34.0, false),
+        ("", 262.0, false),
+        ("Descrição", 150.0, false),
+        ("Esquema", 56.0, false),
+        ("Pontos", 44.0, true),
+        ("Potência (VA)", 80.0, true),
+        ("Potência (W)", 74.0, true),
+        ("Ib (A)", 52.0, true),
+    ];
     for nome in ["Fase R (VA)", "Fase S (VA)", "Fase T (VA)"].into_iter().take(fases) {
         colunas.push((nome, 66.0, true));
     }
-    /// A coluna de fases: as anteriores são fixas até "Potência".
-    const F0: usize = 5;
+    /// A primeira coluna de carga por fase.
+    const F0: usize = 8;
     let fim = F0 + fases;
-    colunas.extend_from_slice(&[
-        ("Fases", 78.0, false),
-        ("Tipo de cabo", 124.0, false),
-        ("Cabo (mm²)", 96.0, false),
-        ("Disjuntor (A)", 96.0, false),
-        ("Situação", 64.0, false),
-    ]);
+    colunas.extend_from_slice(&[("Fases", 78.0, false), ("Grupo DR", 76.0, false), ("Cabo / disjuntor", 106.0, false), ("Situação", 92.0, false)]);
     let largura = |i: usize| colunas.get(i).map_or(60.0, |c| c.1);
     let todos: Vec<(String, String)> = r
         .linhas
@@ -1322,8 +1604,11 @@ fn quadro_de_cargas(
             let lugares: Vec<[f64; 2]> = analise.pontos.iter().filter(|p| k.pontos.contains(&p.handle)).map(|p| p.posicao).collect();
             acoes_do_circuito(ui, c, q, id, &k.pontos, &lugares, &todos, destaque, acoes);
             campo_descricao(ui, c, q, id, &l.descricao, largura(2), acoes);
-            celula(ui, largura(3), numero(k.pontos.len().to_string()), true);
-            celula(ui, largura(4), numero(fixo(k.potencia, 0)), true);
+            celula(ui, largura(3), l.esquema.codigo(), false);
+            celula(ui, largura(4), numero(k.pontos.len().to_string()), true);
+            celula(ui, largura(5), numero(fixo(k.potencia, 0)), true);
+            celula(ui, largura(6), numero(fixo(l.potencia_w, 0)), true);
+            celula(ui, largura(7), numero(fixo(l.escolha.ib, 2)), true);
             for f in 0..fases {
                 let v = l.carga_fase.get(f).copied().unwrap_or(0.0);
                 celula(ui, largura(F0 + f), numero(if v > 0.0 { fixo(v, 0) } else { String::new() }), true);
@@ -1347,18 +1632,44 @@ fn quadro_de_cargas(
                     },
                 );
             });
-            na_celula(ui, largura(fim + 1), |ui| escolher_cabo(ui, q, id, l, largura(fim + 1) - 4.0, false, acoes));
-            escolher_secao_e_disjuntor(ui, q, id, l, (largura(fim + 2), largura(fim + 3)), acoes);
-            let mut avisos = l.automatico.avisos.clone();
-            avisos.extend(l.escolha.avisos.iter().cloned());
+            // Grupo de DR.
+            na_celula(ui, largura(fim + 1), |ui| {
+                let atual = l.grupo_dr.as_deref().unwrap_or("-");
+                egui::ComboBox::from_id_salt(("ele-dr", id.as_str())).selected_text(atual).width(largura(fim + 1) - 4.0).show_ui(ui, |ui| {
+                    if ui.selectable_label(l.grupo_dr.is_none(), "-").clicked() {
+                        acoes.push(Acao::Rodar("eletrica.circuito.definir", json!({ "quadro": q.hex(), "circuito": id, "grupoDr": null })));
+                    }
+                    for g in ["IDR1", "IDR2", "IDR3", "IDR4", "IDR5", "IDR6"] {
+                        if ui.selectable_label(atual == g, g).clicked() {
+                            acoes.push(Acao::Rodar("eletrica.circuito.definir", json!({ "quadro": q.hex(), "circuito": id, "grupoDr": g })));
+                        }
+                    }
+                });
+            });
+            // O que o último cálculo gravou.
+            let resumo = l
+                .calculado
+                .map_or("-".to_string(), |d| format!("#{} · {} A", d.secao.map_or("?".to_string(), br), d.disjuntor.map_or("?".to_string(), br)));
+            celula(ui, largura(fim + 2), numero(resumo), false);
+            let mut avisos = l.escolha.avisos.clone();
             avisos.extend(k.avisos.iter().cloned());
             avisos.sort();
             avisos.dedup();
-            if avisos.is_empty() {
-                celula(ui, largura(fim + 4), "OK", false);
-            } else {
-                celula(ui, largura(fim + 4), RichText::new(format!("{} aviso(s)", avisos.len())).color(COR_AVISO), false)
-                    .on_hover_text(avisos.join("\n"));
+            match l.estado_calculo() {
+                ele::quadro::EstadoCalculo::Pendente => {
+                    celula(ui, largura(fim + 3), pequeno("A dimensionar", t.text_dim), false);
+                }
+                ele::quadro::EstadoCalculo::Desatualizado => {
+                    celula(ui, largura(fim + 3), RichText::new("Desatualizado").color(COR_AVISO), false)
+                        .on_hover_text("O projeto mudou depois do último cálculo");
+                }
+                ele::quadro::EstadoCalculo::EmDia if avisos.is_empty() => {
+                    celula(ui, largura(fim + 3), "OK", false);
+                }
+                ele::quadro::EstadoCalculo::EmDia => {
+                    celula(ui, largura(fim + 3), RichText::new(format!("{} aviso(s)", avisos.len())).color(COR_AVISO), false)
+                        .on_hover_text(avisos.join("\n"));
+                }
             }
             ui.end_row();
         }
@@ -1368,7 +1679,7 @@ fn quadro_de_cargas(
             acoes_do_circuito(ui, c, q, &v.id, &[], &[], &todos, destaque, acoes);
             campo_descricao(ui, c, q, &v.id, &v.descricao, largura(2), acoes);
             celula(ui, largura(3), pequeno("vazio", t.text_dim), false);
-            for i in 4..=fim + 4 {
+            for i in 4..=fim + 3 {
                 celula(ui, largura(i), "", false);
             }
             ui.end_row();
@@ -1378,11 +1689,14 @@ fn quadro_de_cargas(
         celula(ui, largura(1), "", false);
         celula(ui, largura(2), RichText::new("TOTAL").strong(), false);
         celula(ui, largura(3), "", false);
-        celula(ui, largura(4), numero(fixo(r.potencia_total, 0)).strong(), true);
+        celula(ui, largura(4), "", false);
+        celula(ui, largura(5), numero(fixo(r.potencia_total, 0)).strong(), true);
+        celula(ui, largura(6), numero(fixo(r.linhas.iter().map(|l| l.potencia_w).sum::<f64>(), 0)).strong(), true);
+        celula(ui, largura(7), "", false);
         for f in 0..fases {
             celula(ui, largura(F0 + f), numero(fixo(r.carga_por_fase.get(f).copied().unwrap_or(0.0), 0)).strong(), true);
         }
-        for i in fim..=fim + 4 {
+        for i in fim..=fim + 3 {
             celula(ui, largura(i), "", false);
         }
         ui.end_row();
@@ -1450,19 +1764,15 @@ fn quadro_de_cargas(
     lista_avisos(ui, "ele-avisos-resumo", &r.avisos);
 }
 
-/// A janela de um circuito: a engenharia dele, com as escolhas à mão.
-#[allow(clippy::too_many_arguments)]
-fn detalhes_do_circuito(ui: &mut egui::Ui, app: &CadApp, t: &Tokens, st: &mut Estado, s: &Setup, q: Handle, id: &str, acoes: &mut Vec<Acao>) {
-    let Some(resumo) = st.resumo(app, s, q) else { return };
-    let linha = resumo.as_ref().as_ref().ok().and_then(|r| r.linhas.iter().find(|l| l.circuito.id.eq_ignore_ascii_case(id)));
-    let Some(l) = linha else {
-        ui.label(pequeno("O circuito ainda não tem pontos: adicione pontos para dimensionar.", t.text_dim));
-        return;
-    };
+/// A ficha de um circuito: a engenharia dele, com as escolhas à mão. É uma prévia até processar.
+fn detalhes_do_circuito(ui: &mut egui::Ui, s: &Setup, q: Handle, l: &ele::quadro::Linha, acoes: &mut Vec<Acao>) {
     let id_texto = l.circuito.id.clone();
     let e = &l.escolha;
     let estimado = l.fora_da_rede > 0;
     let til = if estimado { "~" } else { "" };
+    if l.estado_calculo() != ele::quadro::EstadoCalculo::EmDia {
+        ui.label(RichText::new("Prévia: o quadro, as tags e as tabelas mudam ao processar o cálculo.").color(COR_AVISO));
+    }
     let secoes = |ui: &mut egui::Ui, nome: &str, valor: String| {
         ui.label(nome);
         ui.label(numero(valor));
@@ -1583,6 +1893,9 @@ fn lista_de_materiais(ui: &mut egui::Ui, t: &Tokens, m: &ele::materiais::Materia
     }
     contados(ui, "ele-mat-pontos", "Pontos", &m.pontos);
     contados(ui, "ele-mat-disj", "Disjuntores", &m.disjuntores);
+    if !m.grupos_dr.is_empty() {
+        contados(ui, "ele-mat-dr", "Circuitos por grupo de DR", &m.grupos_dr);
+    }
     lista_avisos(ui, "ele-mat-avisos", &m.avisos);
 }
 
@@ -1628,8 +1941,8 @@ fn acoes_do_circuito(
             }
             return;
         }
-        if ui.small_button("Detalhes").on_hover_text("Propriedades e dimensionamento deste circuito").clicked() {
-            acoes.push(Acao::Detalhes(q, id.to_string()));
+        if ui.small_button("Detalhes").on_hover_text("Abre a ficha de engenharia deste circuito").clicked() {
+            acoes.push(Acao::Ficha(q, id.to_string()));
         }
         if ui.small_button("+ Pontos").on_hover_text("Adicionar pontos: clique neles no desenho; Enter termina").clicked() {
             acoes.push(Acao::Rodar("eletrica.circuito.alvo", json!({ "quadro": q.hex(), "circuito": id })));
