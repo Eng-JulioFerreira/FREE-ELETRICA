@@ -635,6 +635,7 @@ fn atributo_base(a: &Att, m: f64) -> Attrib {
 /// Falta alguma camada ou bloco base no desenho.
 pub fn falta_base(doc: &Drawing) -> bool {
     BLOCOS_BASE.iter().any(|n| !doc.blocks.contains_key(*n) && !familia::excluida(doc, n))
+        || BLOCOS_ANTIGOS.iter().any(|n| doc.blocks.contains_key(*n))
         || crate::fiacao::TipoCondutor::TODOS.iter().any(|t| !doc.blocks.contains_key(t.bloco()))
         || [CAMADA_PONTOS, CAMADA_QUADROS, CAMADA_DADOS, crate::fiacao::CAMADA, crate::eletroduto::CAMADA_TETO, crate::eletroduto::CAMADA_PISO]
             .iter()
@@ -671,29 +672,159 @@ pub fn garantir_base(doc: &mut Drawing, setup: &crate::setup::Setup, metros: f64
                 continue;
             }
         }
-        let Some((pecas, atributos)) = definicao_base(nome, &tensao) else { continue };
-        let mut b = Block::new(nome);
-        let u = |v: f64| v / m;
-        // As primeiras peças de um ponto de parede são a caixa 4x2 e a haste: marcadas, para o módulo
-        // empilhado sair sem elas.
-        let caixa = if pecas_com_caixa(nome) { 5 } else { 0 };
-        for (i, p) in pecas.iter().enumerate() {
-            let mut e = Entity::new(doc.new_handle(), entidade_da_peca(p, &u));
-            if i < caixa {
-                crate::xdata::gravar(&mut e.common.xdata, CHAVE_CAIXA_2D, Some("1"));
+        criar_bloco_base(doc, nome, &tensao, m);
+    }
+    migrar_antigos(doc, setup, m);
+    true
+}
+
+/// Cria (ou troca) a definição de um bloco base, com a família dele.
+pub(crate) fn criar_bloco_base(doc: &mut Drawing, nome: &str, tensao: &str, m: f64) {
+    let Some((pecas, atributos)) = definicao_base(nome, tensao) else { return };
+    let mut b = Block::new(nome);
+    let u = |v: f64| v / m;
+    // As primeiras peças de um ponto de parede são a caixa 4x2 e a haste: marcadas, para o módulo
+    // empilhado sair sem elas.
+    let caixa = if pecas_com_caixa(nome) { 5 } else { 0 };
+    for (i, p) in pecas.iter().enumerate() {
+        let mut e = Entity::new(doc.new_handle(), entidade_da_peca(p, &u));
+        if i < caixa {
+            crate::xdata::gravar(&mut e.common.xdata, CHAVE_CAIXA_2D, Some("1"));
+        }
+        b.entities.push(e);
+    }
+    for a in &atributos {
+        let k = EntityKind::AttDef(atributo_base(a, m));
+        b.entities.push(Entity::new(doc.new_handle(), k));
+    }
+    doc.blocks.insert(nome.to_string(), Arc::new(b));
+    if let Some(f) = familia::da_base(nome) {
+        let _ = familia::gravar(doc, nome, Some(&f));
+    }
+}
+
+/// Os blocos de fábrica de versões anteriores que tinham mais de um módulo: tomadas duplas e interruptores
+/// de 2 e 3 teclas.
+pub const BLOCOS_ANTIGOS: [&str; 18] = [
+    "TOM-DUP-BAIXA",
+    "TOM-DUP-MEDIA",
+    "TOM-DUP-ALTA",
+    "INT-2S",
+    "INT-3S",
+    "INT-PAR-2S",
+    "INT-PAR-3S",
+    "INT-INT-2S",
+    "INT-INT-3S",
+    "INT-2S-ALTO",
+    "INT-3S-ALTO",
+    "INT-PAR-2S-ALTO",
+    "INT-PAR-3S-ALTO",
+    "INT-INT-2S-ALTO",
+    "INT-INT-3S-ALTO",
+    "TOM-DUP-BAIXA$EMP",
+    "TOM-DUP-MEDIA$EMP",
+    "TOM-DUP-ALTA$EMP",
+];
+
+/// O módulo de fábrica que substitui um bloco antigo, e quantos módulos ele tinha.
+fn substituto(nome: &str) -> Option<(&'static str, usize)> {
+    if let Some((true, nivel)) = tomada_base(nome) {
+        return Some((
+            match nivel {
+                Nivel::Baixo => "TOM-SIM-BAIXA",
+                Nivel::Medio => "TOM-SIM-MEDIA",
+                Nivel::Alto => "TOM-SIM-ALTA",
+            },
+            2,
+        ));
+    }
+    let i = interruptor_base(nome).filter(|i| i.secoes > 1)?;
+    let modulo = match (i.funcao, i.alto) {
+        (FuncaoTecla::Simples, false) => "INT-SIM",
+        (FuncaoTecla::Paralelo, false) => "INT-PAR",
+        (FuncaoTecla::Intermediario, false) => "INT-INT",
+        (FuncaoTecla::Simples, true) => "INT-SIM-ALTO",
+        (FuncaoTecla::Paralelo, true) => "INT-PAR-ALTO",
+        (FuncaoTecla::Intermediario, true) => "INT-INT-ALTO",
+    };
+    Some((modulo, usize::from(i.secoes)))
+}
+
+/// Tira do desenho os blocos antigos de mais de um módulo. Cada inserção vira os módulos de agora,
+/// empilhados no mesmo lugar: o primeiro fica com os atributos, o XDATA e a camada; os outros, com o mesmo
+/// circuito e uma letra de comando cada. Um bloco antigo sem o módulo novo no desenho (excluído pelo
+/// projetista) fica. Devolve quantas inserções foram trocadas.
+pub fn migrar_antigos(doc: &mut Drawing, setup: &crate::setup::Setup, metros: f64) -> usize {
+    let _ = setup;
+    let mut n = 0;
+    for antigo in BLOCOS_ANTIGOS {
+        if !doc.blocks.contains_key(antigo) {
+            continue;
+        }
+        let Some((modulo, quantos)) = substituto(bloco_de_origem(antigo)) else { continue };
+        if !doc.blocks.contains_key(modulo) {
+            continue;
+        }
+        let insercoes: Vec<Entity> =
+            doc.model.iter().filter(|e| matches!(&e.kind, EntityKind::Insert(i) if i.block == antigo)).map(|e| (**e).clone()).collect();
+        let mut ok = true;
+        for e in insercoes {
+            if trocar_insercao(doc, &e, modulo, quantos, metros).is_err() {
+                ok = false;
+                continue;
             }
-            b.entities.push(e);
+            n += 1;
         }
-        for a in &atributos {
-            let k = EntityKind::AttDef(atributo_base(a, m));
-            b.entities.push(Entity::new(doc.new_handle(), k));
-        }
-        doc.blocks.insert(nome.to_string(), Arc::new(b));
-        if let Some(f) = familia::da_base(nome) {
-            let _ = familia::gravar(doc, nome, Some(&f));
+        if ok {
+            let _ = familia::gravar(doc, antigo, None);
+            doc.blocks.remove(antigo);
         }
     }
-    true
+    n
+}
+
+fn trocar_insercao(doc: &mut Drawing, e: &Entity, modulo: &str, quantos: usize, metros: f64) -> Result<(), String> {
+    let EntityKind::Insert(ins) = &e.kind else { return Err("não é inserção".into()) };
+    let p = crate::ponto::ler_ponto(doc, e.handle).ok_or("não é ponto")?;
+    let novo = blocos(doc).into_iter().find(|b| b.nome == modulo).ok_or("módulo ausente")?;
+    let livre = |tag: &str| novo.atributos.iter().any(|a| !a.constante && a.tag.eq_ignore_ascii_case(tag));
+    let valores: Vec<(String, String)> = ins
+        .attribs
+        .iter()
+        .filter(|a| livre(&a.tag) && !a.tag.eq_ignore_ascii_case("TIPO_INTERRUPTOR"))
+        .map(|a| (a.tag.trim().to_string(), a.text.value.clone()))
+        .collect();
+    let letras = p.comando.as_deref().map(crate::fiacao::letras).unwrap_or_default();
+    let pos = [ins.insert.x, ins.insert.y];
+    let rotacao = ins.rotation.to_degrees();
+    let mut primeiro = None;
+    for k in 0..quantos {
+        let mut v: Vec<(String, String)> = if k == 0 {
+            valores.clone()
+        } else {
+            // Os outros módulos: o circuito do ponto antigo; a potência fica a da família.
+            valores.iter().filter(|(t, _)| crate::ponto::TAGS_CIRCUITO.iter().any(|c| t.eq_ignore_ascii_case(c))).cloned().collect()
+        };
+        if !letras.is_empty() && livre("COMANDO") {
+            v.retain(|(t, _)| !t.eq_ignore_ascii_case("COMANDO"));
+            v.push(("COMANDO".into(), letras.get(k).cloned().unwrap_or_default()));
+        }
+        let h = inserir(doc, modulo, pos, rotacao, &v)?;
+        // O XDATA (quadro, altura própria, vínculos) e a camada do ponto antigo valem para os módulos.
+        if let Some(mut x) = doc.model.get(h).map(|x| (**x).clone()) {
+            x.common.xdata = e.common.xdata.clone();
+            x.common.layer = e.common.layer.clone();
+            doc.model.replace(x);
+        }
+        match primeiro {
+            None => primeiro = Some(h),
+            Some(base) => {
+                empilhar(doc, h, Some(base), metros)?;
+            }
+        }
+    }
+    doc.model.remove(e.handle);
+    Ok(())
 }
 
 /// Os blocos base que começam pela caixa 4x2 na parede.

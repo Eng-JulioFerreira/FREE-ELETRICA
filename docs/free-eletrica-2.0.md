@@ -290,5 +290,6 @@ Limites dos módulos empilhados:
 - **Comprimento:** o módulo empilhado usa o caminho até a caixa base; a diferença de altura entre os dois (0,30 m e 1,20 m, por
   exemplo) não entra no comprimento do cabo.
 - **Base excluída:** os módulos que estavam nela voltam a ser pontos soltos, sem a caixa desenhada. Empilhe de novo ou reinsira.
-- **Blocos antigos:** `TOM-DUP-*` e os interruptores de 2 e 3 seções da etapa anterior ficam nos desenhos que já os têm, mas não
-  são mais criados.
+- **Blocos antigos:** `TOM-DUP-*` e os interruptores de 2 e 3 seções saem do desenho na primeira ferramenta usada nele. Cada
+  inserção vira os módulos de agora, empilhados no mesmo lugar: o primeiro fica com os atributos, o XDATA e a camada; os outros,
+  com o mesmo circuito, uma letra de comando cada e a potência da família.

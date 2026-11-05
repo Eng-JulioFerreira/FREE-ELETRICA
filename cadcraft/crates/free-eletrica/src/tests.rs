@@ -3333,3 +3333,48 @@ fn modulos_empilhados_numa_caixa() {
     assert!(biblioteca::empilhar(&mut d, q, Some(q), 1.0).is_err());
     assert!(biblioteca::empilhar(&mut d, base, Some(q), 1.0).is_err(), "a base de outros não sai");
 }
+
+#[test]
+fn blocos_antigos_de_varios_modulos_saem_e_viram_modulos_empilhados() {
+    let setup = Setup::default();
+    let mut d = metros();
+    biblioteca::garantir_base(&mut d, &setup, 1.0);
+    // Um desenho da etapa anterior: os blocos de várias teclas e a tomada dupla, inseridos.
+    for n in ["INT-2S", "TOM-DUP-BAIXA", "INT-PAR-3S-ALTO"] {
+        biblioteca::criar_bloco_base(&mut d, n, "220V", 1.0);
+    }
+    let q = biblioteca::inserir_ponto(&mut d, "QDG", [0.0, 0.0], 0.0, &[], &setup).unwrap();
+    let valores = |pares: &[(&str, &str)]| pares.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect::<Vec<_>>();
+    let int = biblioteca::inserir(&mut d, "INT-2S", [2.0, 0.0], 0.0, &valores(&[("CIRCUITO", "3"), ("COMANDO", "ab")])).unwrap();
+    let tom = biblioteca::inserir(&mut d, "TOM-DUP-BAIXA", [4.0, 0.0], 90.0, &valores(&[("CIRCUITO", "1"), ("POTENCIA", "600VA")])).unwrap();
+    editar::ligar_ao_quadro(&mut d, tom, q).unwrap();
+    eletroduto::inserir(&mut d, q, tom, rota::Instalacao::Teto, 0.0).unwrap();
+    assert!(biblioteca::falta_base(&d), "um bloco antigo no desenho pede a preparação");
+    assert!(biblioteca::garantir_base(&mut d, &setup, 1.0));
+    // Os antigos saíram, com as famílias, e nenhum ponto se perdeu.
+    for n in biblioteca::BLOCOS_ANTIGOS {
+        assert!(!d.blocks.contains_key(n) && familia::ler(&d, n).is_none(), "{n}");
+    }
+    assert!(d.model.get(int).is_none() && d.model.get(tom).is_none());
+    let a = analisar(&d);
+    let em = |x: f64| -> Vec<&ponto::PontoEletrico> {
+        let base = a.pontos.iter().find(|p| p.host.is_none() && perto(p.posicao[0], x, 1e-9) && perto(p.posicao[1], 0.0, 1e-9)).unwrap();
+        let mut v = vec![base];
+        v.extend(a.pontos.iter().filter(|p| p.host == Some(base.handle)));
+        v
+    };
+    // O interruptor de 2 teclas: dois módulos, uma letra cada, o mesmo circuito.
+    let i = em(2.0);
+    assert_eq!(i.len(), 2);
+    assert!(i.iter().all(|p| p.bloco.starts_with("INT-SIM") && p.circuito.as_deref() == Some("3")));
+    assert_eq!(i.iter().map(|p| p.comando.clone().unwrap_or_default()).collect::<Vec<_>>(), ["a", "b"]);
+    // A tomada dupla: dois módulos; o primeiro fica com a potência, o quadro e o eletroduto.
+    let t = em(4.0);
+    assert_eq!(t.len(), 2);
+    assert_eq!((t[0].potencia, t[0].quadro, t[1].circuito.as_deref()), (Some(600.0), Some(q), Some("1")));
+    let rede = rede_de(&d);
+    assert!(rede.soltos.is_empty() && rede.no_de(t[0].handle).is_some() && rede.no_de(t[1].handle) == rede.no_de(t[0].handle));
+    // De novo não muda nada.
+    assert!(!biblioteca::falta_base(&d));
+    assert_eq!(biblioteca::migrar_antigos(&mut d, &setup, 1.0), 0);
+}

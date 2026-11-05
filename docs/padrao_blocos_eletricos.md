@@ -54,6 +54,8 @@ Na primeira ferramenta usada num desenho, entram sem perguntar as camadas e os b
 Cada bloco é um módulo, com o seu `CIRCUITO` e o seu `COMANDO`. Tomada dupla ou interruptor de duas teclas são dois módulos
 empilhados: o segundo, inserido no mesmo ponto (a até 10 cm) ou com `eletrica.ponto.empilhar`, usa o bloco `<nome>$EMP`, sem
 a caixa 4x2 (as peças da caixa têm o XDATA `wall_box`), encosta no topo do último símbolo e grava `host_point_handle`.
+Os blocos antigos de mais de um módulo (`TOM-DUP-*`, `INT-2S`, `INT-3S` e os de paralelo e intermediário de 2 e 3 seções)
+são trocados por módulos empilhados e apagados do desenho.
 
 Também entram `TOM-TUE`, `ILU-OCT`, `QDG`, `QDC`, `RJ45`, `RACK` e `CX-PASSAGEM`. Um bloco com o mesmo nome já no desenho
 fica como está: é assim que se usa outro símbolo. Só o desenho padrão de uma versão anterior é trocado. Excluído na janela
