@@ -11,6 +11,45 @@ As premissas do CADCraft valem aqui. Ao mexer em `cadcraft/`, leia também
 `cadcraft/CLAUDE.md`: as regras dele (nunca travar, tudo é comando, interface fina, camadas,
 clean-room, assets) são obrigatórias. As exceções estão no fim deste arquivo.
 
+## POLÍTICA DE GIT E CONTROLE DE VERSÃO (COMMITS LOCAIS VS. RELEASES NO GITHUB)
+
+**Nenhum `git push`, Release, PR ou qualquer outra mudança no GitHub sem a autorização explícita do usuário.** O projeto é
+divulgado para engenheiros e usuários finais: código em teste ou incompleto não sai desta máquina.
+
+1. **Commits locais são livres.** Faça `git add` e `git commit` ao concluir e validar uma etapa que compila e passa nos
+   portões de qualidade. Isso mantém o histórico local seguro para voltar atrás.
+2. **O remoto é proibido por iniciativa própria.** Isso inclui `git push`, `gh release create`, `gh pr create`, comentários
+   em issues, disparo de workflows, renomear, arquivar ou mudar a visibilidade de repositórios, por `gh` ou pela API. Vale
+   para qualquer repositório do GitHub, e nenhuma aprovação anterior se estende a uma próxima vez.
+3. **O gatilho é a frase do usuário**, depois de ele testar o software localmente: **"Publicar nova versão [vX.Y.Z] no GitHub"**.
+   Ler o remoto (`git fetch`, consultar uma issue) continua permitido.
+
+### Protocolo de lançamento (só com o gatilho acima)
+
+1. Conferir que o workspace compila em release (`cargo build --release`), sem avisos críticos, e que os testes passam
+   (`scripts\testar.bat tudo`).
+2. Atualizar a versão e registrar as novidades em `CHANGELOG.md`, e em `README.md` e `docs/` se a interface mudou. A versão do
+   Free Elétrica é `VERSAO`, em `cadcraft/xtask/src/dist.rs`, e o `Cargo.toml` de `crates/free-eletrica`; a versão do workspace
+   é a do CADCraft e não muda.
+3. Criar o commit de release local e a tag (`v0.2.0`, `v0.3.0`...).
+4. Rodar `scripts\package_release.ps1`: gera `dist/FreeEletrica/` (executável, `templates/`, manuais e licenças, sem `.bat`) e
+   `dist/FreeEletrica-vX.Y.Z-win64.zip`.
+5. Fazer o `git push` para a branch principal do GitHub (`free-eletrica`) e publicar a Release com o `.zip` (`gh release create`).
+
+## Arquitetura do Free Elétrica 2.0
+
+- **Motor headless NBR 5410:** cálculo, roteamento e escrita no desenho ficam em `crates/free-eletrica`, sem interface. Tudo é
+  comando, alcançável por linha de comando, JSON, `cadcraft-cli` e MCP.
+- **Persistência no desenho:** atributos dos blocos e XDATA `FREE_ELETRICA`, incluindo famílias no `BLOCK_RECORD` e o
+  resultado do último cálculo nos quadros. As configurações do Setup ficam nas preferências do programa.
+- **Grafo 3D estrito de eletrodutos:** nós são só blocos elétricos, e cada eletroduto liga exatamente dois deles.
+  Cruzamento sem caixa não conecta. Comprimento = traçado + desníveis até os blocos.
+- **Etapas separadas:** lançar não dimensiona. O cálculo, as tags e as tabelas só mudam com `ELEDIMENSIONAR` e `ELEREGEN`.
+- **Interface em janelas `egui` independentes, sem painel inferior fixo:** paleta Elétrica com as ferramentas, mini-barra só
+  enquanto um comando espera cliques, janelas abertas sob demanda (X ou Esc) e sobreposição de inspeção.
+
+Os detalhes estão em `docs/SPECIFICATION.md`.
+
 ## Mapa
 
 | Onde | O quê |
@@ -21,10 +60,11 @@ clean-room, assets) são obrigatórias. As exceções estão no fim deste arquiv
 | `cadcraft/crates/free-eletrica/src/tests.rs` | Testes do motor. |
 | `cadcraft/crates/engine/tests/eletrica_comandos.rs` | Testes dos comandos, sem interface. |
 | `cadcraft/crates/ui-egui/tests/eletrica_painel.rs` | Testes da paleta, da mini-barra e das janelas. |
-| `docs/` | Padrão de blocos, arquitetura do fork, registro da versão 2.0. |
+| `docs/` | Documentação técnica (`SPECIFICATION.md`), padrão de blocos, arquitetura do fork, especificação pedida e registro da versão 2.0. |
 | `templates/` | Template opcional de blocos e camadas (`FREE_ELETRICA_BLOCOS.dxf`) e a fonte dos símbolos. Os blocos base nascem no motor (`ele::biblioteca`). |
-| `docs/INSTALL.md`, `docs/GETTING_STARTED.md` | Manuais de quem só usa; vão no pacote de `cargo xtask dist`. |
-| `scripts/` | `compilar.bat`, `iniciar.bat`, `testar.bat`, `publicar_fork.bat`, `gerar_template.py`. |
+| `docs/LEIA-ME.md`, `docs/INSTALL.md`, `docs/GETTING_STARTED.md` | Manuais de quem só usa; vão no pacote de `cargo xtask dist`. |
+| `.github/workflows/release.yml` | Gera o pacote no GitHub Actions; é disparado à mão, e publicar segue a política acima. |
+| `scripts/` | `compilar.bat`, `iniciar.bat`, `testar.bat`, `package_release.ps1`, `gerar_template.py`. |
 
 Pontos de registro no código do CADCraft (as únicas linhas nossas fora dos nossos arquivos)
 estão listados em `docs/arquitetura.md`. Qualquer mudança nova num arquivo do CADCraft entra
@@ -70,9 +110,12 @@ nessa lista e precisa ser pequena.
 `scripts\testar.bat` roda: `cargo fmt --check`, `cargo clippy ... -D warnings`, os testes e
 `cargo xtask layers`. Periodicamente, e antes de publicar, `scripts\testar.bat tudo` (workspace
 inteiro). Commits atômicos em Conventional Commits (`feat:`, `fix:`, `docs:`, `test:`,
-`refactor:`), um por arco de funcionalidade que compila e passa.
+`refactor:`), um por arco de funcionalidade que compila e passa. Commits são locais: veja a política de Git no início.
 
 ## Compilar, rodar e olhar o resultado
+
+- Testes de uma parte: `cargo test -p free-eletrica`, `cargo test -p cadcraft-engine --test eletrica_comandos` e
+  `cargo test -p cadcraft-ui-egui --test eletrica_painel`, em `cadcraft/`, com o ambiente carregado.
 
 - Ambiente: `scripts\ambiente.cmd`. O toolchain Rust (GNU), o MinGW e a saída (`C:\rust\target`)
   ficam em `C:\rust` porque as ferramentas GNU não aceitam o "ú" da pasta do usuário. A saída é
@@ -86,12 +129,17 @@ inteiro). Commits atômicos em Conventional Commits (`feat:`, `fix:`, `docs:`, `
 - Não compile por cima do executável que o usuário está usando (o Windows bloqueia o arquivo):
   veja qual está aberto e use o outro perfil (release ou desenvolvimento).
 
-## Fork no GitHub
+## Repositórios no GitHub
 
-`github.com/Eng-JulioFerreira/cadcraft-free-eletrica` é um fork de verdade do CADCraft com a
-pasta `cadcraft/` deste repositório. Depois de um commit que muda `cadcraft/` (portões passando e
-push do repositório principal), rode `scripts\publicar_fork.bat`: ele cria um commit no `main` do
-fork com a árvore exata de `cadcraft/`, sem `--force`. O fork não é editado direto.
+Hoje, `origin` é `Eng-JulioFerreira/FREE-ELETRICA`, e `Eng-JulioFerreira/cadcraft-free-eletrica` é o fork de `storytold/cadcraft`.
+Foi pedida, e ainda não executada, a reorganização que renomeia o antigo para `FREE-ELETRICA-legacy-archive` (privado e
+arquivado) e o fork para `Free-Eletrica`, público, com a branch padrão `free-eletrica` com a árvore deste repositório. Ela
+depende da autorização explícita do usuário.
+
+O GitHub não diferencia maiúsculas em nomes: depois das renomeações, uma URL `.../FREE-ELETRICA.git` aponta para o novo
+`Free-Eletrica`. Atualize os remotos no mesmo passo. Depois de arquivado, o repositório antigo não aceita push.
+
+Publicar uma versão segue a política de Git do início deste arquivo.
 
 ## Atualizar o CADCraft
 
