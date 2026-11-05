@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use cadcraft_engine::doc::geom::Vec3;
+use cadcraft_engine::doc::geom::{Vec2, Vec3};
 use cadcraft_engine::doc::{Attrib, Block, Common, Drawing, EntityKind, HAlign, Handle, Insert, Line, Space, Text, VAlign};
 use cadcraft_engine::{Input, Session};
 use serde_json::{Value, json};
@@ -113,24 +113,23 @@ fn projeto_inteiro_por_comandos_sem_interface() {
     assert_eq!(r["linhas"].as_array().unwrap().iter().find(|l| l["circuito"]["id"] == "2").unwrap()["escolha"]["disjuntor"], 16.0);
     s.undo().unwrap();
 
-    // Ajustar fiação: marca os trechos; rodar de novo refaz sem duplicar; limpar apaga.
+    // Tags de fiação: uma por eletroduto; rodar de novo não duplica; limpar apaga.
     let r = s.execute("elefiacao", &json!({})).unwrap();
-    let marcas = r["quadros"][0]["marcas"].as_u64().unwrap();
-    assert!(marcas > 0, "{r}");
-    assert_eq!(r["quadros"][0]["trechos"], 3);
+    assert_eq!(r["criadas"], 3, "{r}");
     let entidades = s.doc().unwrap().model.len();
-    s.execute("elefiacao", &json!({ "quadro": "QDG" })).unwrap();
+    let r = s.execute("elefiacao", &json!({ "quadro": "QDG" })).unwrap();
+    assert_eq!(r["criadas"], 0);
     assert_eq!(s.doc().unwrap().model.len(), entidades);
     let r = s.execute("elefiacao", &json!({ "limpar": true })).unwrap();
-    assert_eq!(r["quadros"][0]["apagadas"].as_u64(), Some(marcas));
+    assert_eq!(r["apagadas"], 3);
 
-    // ELEFIACAO digitado: Enter ajusta todos os quadros; um passo de desfazer.
+    // ELEFIACAO digitado: Enter põe em todos; um passo de desfazer.
     s.start("elefiacao").unwrap();
     s.input(Input::Enter).unwrap();
     assert!(s.running.is_none());
     assert_eq!(s.doc().unwrap().model.len(), entidades);
     s.undo().unwrap();
-    assert_eq!(s.doc().unwrap().model.len() as u64, entidades as u64 - marcas);
+    assert_eq!(s.doc().unwrap().model.len(), entidades - 3);
 }
 
 #[test]
@@ -187,12 +186,11 @@ fn quadro_de_cargas_e_isolacao_por_comandos() {
     s.execute("eletrica.quadro", &json!({ "isolacao": null })).unwrap();
     assert_eq!(s.execute("eletrica.rotear", &json!({})).unwrap()["isolacao"], "pvc");
 
-    // A fiação dimensiona o eletroduto de cada trecho.
+    // A fiação dimensiona o eletroduto de cada trecho e grava no XDATA dele.
     let r = s.execute("elefiacao", &json!({})).unwrap();
-    assert!(r["quadros"][0]["marcas"].as_u64().unwrap() > 0);
-    let textos: Vec<String> =
-        s.doc().unwrap().model.iter().filter_map(|e| if let EntityKind::Text(t) = &e.kind { Some(t.value.clone()) } else { None }).collect();
-    assert!(textos.iter().any(|t| t == "%%c20"), "{textos:?}");
+    assert!(r["criadas"].as_u64().unwrap() > 0);
+    let e = s.execute("eletrica.eletrodutos", &json!({})).unwrap();
+    assert!(e["trechos"].as_array().unwrap().iter().any(|t| t["eletroduto"]["nominal"] == 20.0), "{e}");
 }
 
 /// Um bloco de tomada com atributos na definição, como os do template.
@@ -216,30 +214,355 @@ fn eletroduto_em_arco_por_comandos() {
         d.model.remove(h);
     }
     s.open_drawing(d, "Planta", None);
-    // JSON: do quadro à luz, no teto; e por coordenadas, no piso.
+    // JSON: do quadro à luz, no teto; e da luz à tomada por coordenadas, no piso, reto.
     let r = s.execute("eleeletroduto", &json!({ "de": qd.hex(), "para": luz.hex() })).unwrap();
     let h = Handle::parse_hex(r["eletroduto"].as_str().unwrap()).unwrap();
     assert!(matches!(s.doc().unwrap().model.get(h).unwrap().kind, EntityKind::Spline(_)));
-    s.execute("eleeletroduto", &json!({ "de": [10.0, 10.0], "para": [12.0, 10.0], "piso": true, "flecha": 0 })).unwrap();
+    let r = s.execute("eleeletroduto", &json!({ "de": [3.0, 0.0], "para": [6.0, 0.05], "instalacao": "FLOOR", "flecha": 0 })).unwrap();
+    assert_eq!((r["de"].as_str(), r["para"].as_str()), (Some(luz.hex().as_str()), Some(tug.hex().as_str())));
+    // Pontas que não são blocos elétricos, ou o mesmo bloco, ou parâmetros hostis: erro.
     assert!(s.execute("eleeletroduto", &json!({ "de": qd.hex(), "para": qd.hex() })).is_err());
     assert!(s.execute("eleeletroduto", &json!({ "de": qd.hex() })).is_err());
+    assert!(s.execute("eleeletroduto", &json!({ "de": [50.0, 50.0], "para": qd.hex() })).is_err());
+    assert!(s.execute("eleeletroduto", &json!({ "de": [50.0], "para": qd.hex() })).is_err());
+    assert!(s.execute("eleeletroduto", &json!({ "de": qd.hex(), "para": h.hex() })).is_err());
+    assert!(s.execute("eleeletroduto", &json!({ "de": qd.hex(), "para": luz.hex(), "instalacao": "LUA" })).is_err());
+    assert!(s.execute("eleeletroduto", &json!({ "de": qd.hex(), "para": luz.hex(), "flecha": "muita" })).is_err());
     let camadas: Vec<String> =
-        s.doc().unwrap().model.iter().filter(|e| matches!(e.kind, EntityKind::Spline(_))).map(|e| e.common.layer.clone()).collect();
-    assert_eq!(camadas, ["ELE-ELETRODUTO-PVC-MEDIA-TETO", "ELE-ELETRODUTO-PVC-MEDIA-PISO"]);
+        s.doc().unwrap().model.iter().filter(|e| e.common.layer.contains("ELETRODUTO")).map(|e| e.common.layer.clone()).collect();
+    assert_eq!(camadas, ["ELE-ELETRODUTO-TETO", "ELE-ELETRODUTO-PISO"]);
 
-    // Interativo: luz, interruptor e tomada em sequência; Inverter muda o lado do próximo arco;
+    // Interativo: luz, interruptor e quadro em sequência; Inverter muda o lado do próximo arco;
     // um passo de desfazer.
     let antes = s.doc().unwrap().model.len();
     s.start("eleeletroduto").unwrap();
-    s.input(Input::Pick(vec![luz])).unwrap();
+    s.input(Input::Point(Vec2::new(3.0, 0.0))).unwrap();
     s.input(Input::Pick(vec![int])).unwrap();
     s.input(Input::Keyword("Inverter".into())).unwrap();
-    s.input(Input::Pick(vec![tug])).unwrap();
+    s.input(Input::Keyword("Parede".into())).unwrap();
+    s.input(Input::Point(Vec2::new(0.0, 0.0))).unwrap();
+    // Longe de tudo: avisa e continua.
+    s.input(Input::Point(Vec2::new(90.0, 90.0))).unwrap();
+    assert!(s.running.is_some());
     s.input(Input::Enter).unwrap();
     assert!(s.running.is_none());
     assert_eq!(s.doc().unwrap().model.len(), antes + 2);
     s.undo().unwrap();
     assert_eq!(s.doc().unwrap().model.len(), antes);
+    // O modelo muda pelo comando, fica para o próximo e recusa valores ruins.
+    let m = s.execute("eletrica.eletroduto.modelo", &json!({ "instalacao": "CEILING", "flecha": 9 })).unwrap();
+    assert_eq!((m["instalacao"].as_str(), m["flecha"].as_f64()), (Some("teto"), Some(0.5)));
+    assert!(s.execute("eletrica.eletroduto.modelo", &json!({ "instalacao": 3 })).is_err());
+    s.execute("eletrica.eletroduto.modelo", &json!({ "flecha": 0 })).unwrap();
+    let r = s.execute("eleeletroduto", &json!({ "de": qd.hex(), "para": tug.hex() })).unwrap();
+    let h = Handle::parse_hex(r["eletroduto"].as_str().unwrap()).unwrap();
+    assert!(matches!(s.doc().unwrap().model.get(h).unwrap().kind, EntityKind::Line(_)));
+}
+
+#[test]
+fn clicar_no_meio_do_eletroduto_divide_com_caixa() {
+    let mut s = Session::new();
+    let mut d = Drawing::new_metric();
+    d.header.set_i64("INSUNITS", 6);
+    let q = inserir(&mut d, "QDG", 0.0, 0.0, &[("TIPO_PONTO", "QUADRO"), ("TAG", "QDG"), ("ALTURA", "1,5")]);
+    let t = inserir(&mut d, "T", 6.0, 0.0, &[("TIPO_PONTO", "TUG"), ("POTENCIA", "100VA"), ("CIRCUITO", "1")]);
+    let ramal = inserir(&mut d, "T", 3.0, 3.0, &[("TIPO_PONTO", "TUG"), ("POTENCIA", "100VA"), ("CIRCUITO", "1")]);
+    s.open_drawing(d, "Planta", None);
+    s.execute("eletrica.ponto.excluir", &json!({ "pontos": [] })).unwrap();
+    let r = s.execute("eleeletroduto", &json!({ "de": q.hex(), "para": t.hex(), "flecha": 0 })).unwrap();
+    let e = r["eletroduto"].as_str().unwrap().to_string();
+    let antes = s.doc().unwrap().model.len();
+    // Interativo: do ramal ao meio do eletroduto. Vira uma caixa e dois trechos.
+    s.start("eleeletroduto").unwrap();
+    s.input(Input::Keyword("Flecha".into())).unwrap();
+    s.input(Input::Text("0".into())).unwrap();
+    s.input(Input::Point(Vec2::new(3.0, 3.0))).unwrap();
+    s.input(Input::Point(Vec2::new(3.0, 0.05))).unwrap();
+    s.input(Input::Enter).unwrap();
+    // A caixa, a segunda metade do trecho dividido e o ramal.
+    assert_eq!(s.doc().unwrap().model.len(), antes + 3);
+    let a = s.execute("eletrica.analisar", &json!({})).unwrap();
+    assert_eq!(a["pontos"].as_array().unwrap().iter().filter(|p| p["tipo"] == "caixa").count(), 1);
+    let r = s.execute("eletrica.rotear", &json!({})).unwrap();
+    assert_eq!(r["linhas"][0]["foraDaRede"], 0, "{r}");
+    let _ = ramal;
+    s.undo().unwrap();
+    assert_eq!(s.doc().unwrap().model.len(), antes);
+    // Pelo JSON; o ponto na ponta e um eletroduto que não existe dão erro.
+    assert!(s.execute("eletrica.eletroduto.dividir", &json!({ "eletroduto": e, "ponto": [0.0, 0.0] })).is_err());
+    assert!(s.execute("eletrica.eletroduto.dividir", &json!({ "eletroduto": "FFFF", "ponto": [1.0, 0.0] })).is_err());
+    assert!(s.execute("eletrica.eletroduto.dividir", &json!({ "eletroduto": e })).is_err());
+    let r = s.execute("eletrica.eletroduto.dividir", &json!({ "eletroduto": e, "ponto": [2.0, 0.0] })).unwrap();
+    assert!(r["caixa"].is_string());
+    // Diâmetro travado e instalação de um trecho.
+    assert!(s.execute("eletrica.eletroduto.definir", &json!({ "eletroduto": e })).is_err());
+    assert!(s.execute("eletrica.eletroduto.definir", &json!({ "eletroduto": e, "diametro": -3 })).is_err());
+    assert!(s.execute("eletrica.eletroduto.definir", &json!({ "eletroduto": q.hex(), "diametro": 25 })).is_err(), "o quadro não é um eletroduto");
+    s.execute("eletrica.eletroduto.definir", &json!({ "eletroduto": e, "diametro": 32, "instalacao": "WALL" })).unwrap();
+    let ee = s.execute("eletrica.eletrodutos", &json!({})).unwrap();
+    let tr = ee["trechos"].as_array().unwrap().iter().find(|x| x["handle"].as_str() == Some(e.as_str())).unwrap().clone();
+    assert_eq!(
+        (tr["eletroduto"]["nominal"].as_f64(), tr["diametroTravado"].as_bool(), tr["instalacao"].as_str()),
+        (Some(32.0), Some(true), Some("parede"))
+    );
+    s.execute("eletrica.eletroduto.definir", &json!({ "eletroduto": e, "diametro": null })).unwrap();
+    let ee = s.execute("eletrica.eletrodutos", &json!({})).unwrap();
+    let tr = ee["trechos"].as_array().unwrap().iter().find(|x| x["handle"].as_str() == Some(e.as_str())).unwrap().clone();
+    assert_eq!(tr["diametroTravado"], false);
+}
+
+#[test]
+fn desenho_virgem_ganha_camadas_e_blocos_sem_perguntar() {
+    let mut s = Session::new();
+    s.open_drawing(Drawing::new_metric(), "Virgem", None);
+    // Consultar não muda o desenho.
+    assert!(s.execute("eletrica.blocos", &json!({})).unwrap().as_array().unwrap().is_empty());
+    // Inserir já traz tudo, sem template.
+    let r = s.execute("eleponto", &json!({ "bloco": "QDG", "pontos": [[0.0, 0.0]], "valores": { "TAG": "QD-1" } })).unwrap();
+    assert_eq!(r["pontos"].as_array().unwrap().len(), 1);
+    let doc = s.doc().unwrap();
+    for c in ["ELE-PONTOS", "ELE-QUADROS", "ELE-FIACAO", "ELE-ELETRODUTO-TETO", "ELE-ELETRODUTO-PISO"] {
+        assert!(doc.layer(c).is_some(), "{c}");
+    }
+    assert_eq!(s.execute("eletrica.bootstrap", &json!({})).unwrap()["mudou"], false);
+    // Interativo: começar o comando já prepara outro desenho virgem, e ele pergunta o bloco.
+    s.open_drawing(Drawing::new_metric(), "Virgem 2", None);
+    s.start("eleponto").unwrap();
+    assert!(s.prompt_text().contains("Nome do bloco"), "{}", s.prompt_text());
+    s.input(Input::Text("QDC".into())).unwrap();
+    s.input(Input::Point(Vec2::new(1.0, 1.0))).unwrap();
+    s.input(Input::Enter).unwrap();
+    assert_eq!(s.execute("eletrica.analisar", &json!({})).unwrap()["pontos"][0]["bloco"], "QDC");
+    // E o comando manual também funciona num desenho virgem.
+    s.open_drawing(Drawing::new_metric(), "Virgem 3", None);
+    assert_eq!(s.execute("eletrica.bootstrap", &json!({})).unwrap()["mudou"], true);
+}
+
+#[test]
+fn barra_muda_o_modelo_enquanto_o_comando_corre_e_tab_gira() {
+    let mut s = Session::new();
+    let mut d = Drawing::new_metric();
+    d.header.set_i64("INSUNITS", 6);
+    // Uma parede vertical em x = 2.
+    let c = Common { layer: "PAREDE".into(), ..Default::default() };
+    d.add(&Space::Model, c, EntityKind::Line(Line { a: Vec3::new(2.0, 0.0, 0.0), b: Vec3::new(2.0, 9.0, 0.0) })).unwrap();
+    s.open_drawing(d, "Planta", None);
+    let rotacao = |s: &Session, i: usize| -> f64 {
+        let insercoes: Vec<f64> = s
+            .doc()
+            .unwrap()
+            .model
+            .iter()
+            .filter_map(|e| if let EntityKind::Insert(k) = &e.kind { Some(k.rotation.to_degrees()) } else { None })
+            .collect();
+        insercoes[i]
+    };
+    s.start("eleponto").unwrap();
+    s.execute("eletrica.ponto.modelo", &json!({ "bloco": "TOM-SIM-BAIXA", "valores": { "ALTURA": "1,20", "POTENCIA": "300VA" } })).unwrap();
+    assert!(s.running.is_some(), "o comando continua");
+    // Junto da parede alinha; longe fica na rotação do modelo.
+    s.input(Input::Point(Vec2::new(2.05, 1.0))).unwrap();
+    assert!((rotacao(&s, 0) - 90.0).abs() < 1e-9);
+    s.input(Input::Point(Vec2::new(6.0, 1.0))).unwrap();
+    assert!(rotacao(&s, 1).abs() < 1e-9);
+    // Girar soma 90°; com a barra, o próximo muda de bloco no meio do comando.
+    s.input(Input::Keyword("Girar".into())).unwrap();
+    s.execute("eletrica.ponto.modelo", &json!({ "bloco": "TOM-TUE" })).unwrap();
+    s.input(Input::Point(Vec2::new(7.0, 1.0))).unwrap();
+    assert!((rotacao(&s, 2) - 90.0).abs() < 1e-9);
+    // Rotacao digitada fixa o ângulo e desliga o automático.
+    s.input(Input::Keyword("Rotacao".into())).unwrap();
+    s.input(Input::Text("45".into())).unwrap();
+    s.input(Input::Point(Vec2::new(2.05, 3.0))).unwrap();
+    assert!((rotacao(&s, 3) - 45.0).abs() < 1e-9);
+    s.input(Input::Enter).unwrap();
+    let a = s.execute("eletrica.analisar", &json!({})).unwrap();
+    let pontos = a["pontos"].as_array().unwrap();
+    assert_eq!(
+        (pontos[0]["bloco"].as_str(), pontos[0]["altura"].as_f64(), pontos[0]["potencia"].as_f64()),
+        (Some("TOM-SIM-BAIXA"), Some(1.2), Some(300.0))
+    );
+    assert_eq!(pontos[2]["bloco"], "TOM-TUE");
+    // JSON com alinhamento e parâmetros hostis.
+    let r = s.execute("eleponto", &json!({ "bloco": "TOM-TUE", "pontos": [[2.05, 5.0]], "rotacaoAuto": true })).unwrap();
+    assert_eq!(r["pontos"].as_array().unwrap().len(), 1);
+    assert!((rotacao(&s, 4) - 90.0).abs() < 1e-9);
+    assert!(s.execute("eleponto", &json!({ "bloco": "TOM-TUE", "pontos": [[f64::INFINITY, 5.0]]})).is_err());
+    assert!(s.execute("eleponto", &json!({ "bloco": "TOM-TUE", "pontos": 3 })).is_err());
+}
+
+#[test]
+fn circuito_com_descricao_esquema_e_tensao() {
+    let mut s = Session::new();
+    let (d, [qd, luz, int, tug]) = planta();
+    s.open_drawing(d, "Planta", None);
+    // Parâmetros ruins não gravam nada.
+    assert!(s.execute("elecircuito", &json!({ "quadro": qd.hex(), "pontos": [luz.hex()], "esquema": "4F" })).is_err());
+    assert!(s.execute("elecircuito", &json!({ "quadro": qd.hex(), "pontos": [luz.hex()], "tensao": -1 })).is_err());
+    assert_eq!(circuito(&s, luz), None);
+    let r = s
+        .execute("elecircuito", &json!({ "quadro": qd.hex(), "pontos": [luz.hex()], "circuito": "C1", "descricao": "Iluminação Social", "esquema": "F+N", "tensao": 127 }))
+        .unwrap();
+    assert_eq!(r["circuito"], "C1");
+    assert_eq!(circuito(&s, luz).as_deref(), Some("C1"));
+    let c = s.execute("eletrica.rotear", &json!({})).unwrap();
+    let l = &c["linhas"][0];
+    assert_eq!((l["descricao"].as_str(), l["esquema"].as_str(), l["tensao"].as_f64()), (Some("Iluminação Social"), Some("fn"), Some(127.0)));
+
+    // Interativo, com os campos pelo prompt; o ativo acompanha o comando.
+    s.start("elecircuito").unwrap();
+    s.input(Input::Pick(vec![qd])).unwrap();
+    s.input(Input::Text("7".into())).unwrap();
+    let uid = s.state().unwrap().uid;
+    assert_eq!(free_eletrica::circuito::ativo(uid), Some((qd, "7".to_string())));
+    for (k, v) in [("Descricao", "Tomadas"), ("Esquema", "2F+T"), ("Tensao", "220"), ("Esquema", "ouro"), ("Tensao", "nada")] {
+        s.input(Input::Keyword(k.into())).unwrap();
+        s.input(Input::Text(v.into())).unwrap();
+    }
+    assert!(s.running.is_some());
+    s.input(Input::Pick(vec![tug])).unwrap();
+    s.input(Input::Enter).unwrap();
+    assert_eq!(free_eletrica::circuito::ativo(uid), None);
+    let c = s.execute("eletrica.rotear", &json!({})).unwrap();
+    let l = c["linhas"].as_array().unwrap().iter().find(|l| l["circuito"]["id"] == "7").unwrap().clone();
+    assert_eq!((l["descricao"].as_str(), l["esquema"].as_str(), l["tensao"].as_f64()), (Some("Tomadas"), Some("fft"), Some(220.0)));
+
+    // Definir: fases travadas; valores ruins não gravam; null volta ao automático.
+    s.execute("eletrica.circuito.definir", &json!({ "circuito": "7", "fases": "st" })).unwrap();
+    let c = s.execute("eletrica.rotear", &json!({})).unwrap();
+    let l = c["linhas"].as_array().unwrap().iter().find(|l| l["circuito"]["id"] == "7").unwrap().clone();
+    assert_eq!(l["fasesTravadas"], true);
+    assert!(s.execute("eletrica.circuito.definir", &json!({ "circuito": "7", "fases": "XYZ" })).is_err());
+    assert!(s.execute("eletrica.circuito.definir", &json!({ "circuito": "7", "fases": 3 })).is_err());
+    s.execute("eletrica.circuito.definir", &json!({ "circuito": "7", "fases": null, "esquema": null, "tensao": null })).unwrap();
+    let c = s.execute("eletrica.rotear", &json!({})).unwrap();
+    let l = c["linhas"].as_array().unwrap().iter().find(|l| l["circuito"]["id"] == "7").unwrap().clone();
+    assert_eq!(l["fasesTravadas"], false);
+
+    // Remover do circuito: JSON e interativo; quem não é ponto recusa.
+    assert!(s.execute("eleremoverponto", &json!({ "pontos": ["FFFF"] })).is_err());
+    assert!(s.execute("eleremoverponto", &json!({})).is_err());
+    assert_eq!(s.execute("eleremoverponto", &json!({ "pontos": [tug.hex()] })).unwrap()["removidos"], 1);
+    assert_eq!(circuito(&s, tug), None);
+    s.start("eleremoverponto").unwrap();
+    s.input(Input::Pick(vec![luz])).unwrap();
+    s.input(Input::Enter).unwrap();
+    assert_eq!(circuito(&s, luz), None);
+    let _ = int;
+}
+
+#[test]
+fn comando_usa_as_teclas_do_interruptor_e_grava_o_vinculo() {
+    let mut s = Session::new();
+    let (mut d, [qd, luz, _int, tug]) = planta();
+    let duas =
+        inserir(&mut d, "INT-2S", 3.0, 2.0, &[("TIPO_PONTO", "INTERRUPTOR"), ("TIPO_INTERRUPTOR", "2S"), ("POTENCIA", "0W"), ("CIRCUITO", "1")]);
+    let luz2 = inserir(&mut d, "ILU-OCT", 5.0, 2.0, &[("TIPO_PONTO", "ILUM"), ("POTENCIA", "100VA"), ("CIRCUITO", "1")]);
+    s.open_drawing(d, "Planta", None);
+    s.execute("elecircuito", &json!({ "quadro": qd.hex(), "circuito": "1", "pontos": [duas.hex(), luz.hex(), luz2.hex()] })).unwrap();
+    // Duas teclas: duas passadas, duas letras.
+    let r = s.execute("elecomando", &json!({ "interruptor": duas.hex(), "luminarias": [luz.hex()] })).unwrap();
+    assert_eq!(r["comando"], "a");
+    let r = s.execute("elecomando", &json!({ "interruptor": duas.hex(), "luminarias": [luz2.hex()] })).unwrap();
+    assert_eq!(r["comando"], "b");
+    let ler = |s: &Session, h: Handle| free_eletrica::ponto::ler_ponto(s.doc().unwrap(), h).unwrap();
+    assert_eq!(ler(&s, duas).comando.as_deref(), Some("ab"));
+    assert_eq!(ler(&s, luz2).comando.as_deref(), Some("b"));
+    // O vínculo fica no XDATA do interruptor.
+    let extras = ler(&s, duas).extras;
+    assert!(extras.iter().any(|(k, v)| k == "target_handles.a" && *v == luz.hex()), "{extras:?}");
+    // Interativo com letra própria; sem tecla livre a letra troca a última.
+    s.start("elecomando").unwrap();
+    s.input(Input::Pick(vec![duas])).unwrap();
+    s.input(Input::Keyword("Letra".into())).unwrap();
+    s.input(Input::Text("x".into())).unwrap();
+    s.input(Input::Pick(vec![luz2])).unwrap();
+    s.input(Input::Enter).unwrap();
+    assert_eq!(ler(&s, duas).comando.as_deref(), Some("ax"));
+    assert_eq!(ler(&s, luz2).comando.as_deref(), Some("x"));
+    // O que não é interruptor é recusado.
+    assert!(s.execute("elecomando", &json!({ "interruptor": tug.hex(), "luminarias": [] })).is_err());
+    assert!(s.execute("elecomando", &json!({ "interruptor": duas.hex() })).is_err());
+}
+
+#[test]
+fn tags_tabela_e_inspecao_por_comandos() {
+    let mut s = Session::new();
+    let (d, [qd, luz, _int, tug]) = planta();
+    s.open_drawing(d, "Planta", None);
+    s.execute("elecircuito", &json!({ "quadro": qd.hex(), "circuito": "1", "pontos": [luz.hex()] })).unwrap();
+    s.execute("elecircuito", &json!({ "quadro": qd.hex(), "circuito": "2", "pontos": [tug.hex()] })).unwrap();
+    let ee = s.execute("eletrica.eletrodutos", &json!({})).unwrap();
+    let primeiro = ee["trechos"][0]["handle"].as_str().unwrap().to_string();
+    // Tag num eletroduto escolhido; handle ruim não vira tag.
+    assert_eq!(s.execute("elefiacao", &json!({ "eletrodutos": [primeiro] })).unwrap()["criadas"], 1);
+    assert!(s.execute("elefiacao", &json!({ "eletrodutos": ["zzz"] })).is_err());
+
+    // O projetista move a tag; mudar o quadro atualiza sem mexer nela.
+    let (tag, _) = free_eletrica::fiacao::tags(s.doc().unwrap())[0];
+    let mover = |s: &mut Session| {
+        let doc = s.doc_mut().unwrap();
+        let mut e = (**doc.model.get(tag).unwrap()).clone();
+        if let EntityKind::Insert(i) = &mut e.kind {
+            i.insert.y += 1.5;
+        }
+        doc.model.replace(e);
+    };
+    mover(&mut s);
+    let y = |s: &Session| {
+        if let EntityKind::Insert(i) = &s.doc().unwrap().model.get(tag).unwrap().kind { (i.insert.y, i.block.clone()) } else { panic!() }
+    };
+    let (antes, bloco) = y(&s);
+    let textos = |s: &Session, b: &str| -> Vec<String> {
+        s.doc().unwrap().blocks[b]
+            .entities
+            .iter()
+            .filter_map(|e| if let EntityKind::Text(t) = &e.kind { Some(t.value.clone()) } else { None })
+            .collect()
+    };
+    assert!(!textos(&s, &bloco).contains(&"#6".to_string()));
+    s.execute("eletrica.sobrescrever", &json!({ "circuito": "2", "secao": 6 })).unwrap();
+    assert_eq!(y(&s).0, antes);
+    assert!(textos(&s, &bloco).contains(&"#6".to_string()), "{:?}", textos(&s, &bloco));
+    let r = s.execute("eleregen", &json!({})).unwrap();
+    assert_eq!(r["tags"], 1);
+    assert!(r["message"].as_str().unwrap().contains("Fiação"));
+    // Digitado: sem parâmetros.
+    s.start("eleregen").unwrap();
+    assert!(s.running.is_none());
+
+    // Tabela: por JSON, por prompt, um quadro só tem uma, e ela segue o quadro.
+    assert!(s.execute("elequadro_tabela", &json!({})).is_err());
+    assert!(s.execute("elequadro_tabela", &json!({ "ponto": [1] })).is_err());
+    let r = s.execute("elequadro_tabela", &json!({ "ponto": [20.0, 5.0] })).unwrap();
+    let t = r["tabela"].as_str().unwrap().to_string();
+    s.start("elequadro_tabela").unwrap();
+    s.input(Input::Point(Vec2::new(30.0, 5.0))).unwrap();
+    assert!(s.running.is_none());
+    assert_eq!(free_eletrica::tabela::tabelas(s.doc().unwrap()).len(), 1);
+    let h = Handle::parse_hex(&t).unwrap();
+    let EntityKind::Insert(i) = &s.doc().unwrap().model.get(h).unwrap().kind else { panic!() };
+    assert_eq!(i.insert.x, 30.0);
+    s.execute("eletrica.circuito.descrever", &json!({ "circuito": "1", "descricao": "Salão" })).unwrap();
+    let nome = i_bloco(&s, h);
+    assert!(textos(&s, &nome).contains(&"Salão".to_string()));
+
+    // Inspeção: o interruptor sem circuito é vermelho, o quadro é verde.
+    let v = s.execute("eletrica.inspecionar", &json!({})).unwrap();
+    let itens = v.as_array().unwrap();
+    assert!(itens.iter().any(|i| i["handle"].as_str() == Some(qd.hex().as_str()) && i["nivel"] == "verde"), "{v}");
+    assert_eq!(itens[0]["nivel"], "vermelho");
+    // Sem eletroduto nenhum, elefiacao avisa em vez de criar nada.
+    let mut vazio = Session::new();
+    vazio.open_drawing(Drawing::new_metric(), "Vazio", None);
+    assert!(vazio.execute("elefiacao", &json!({})).is_err());
+    assert!(vazio.execute("eleregen", &json!({})).is_ok());
+    assert!(vazio.execute("eletrica.inspecionar", &json!({})).unwrap().as_array().unwrap().is_empty());
+}
+
+fn i_bloco(s: &Session, h: Handle) -> String {
+    let EntityKind::Insert(i) = &s.doc().unwrap().model.get(h).unwrap().kind else { panic!() };
+    i.block.clone()
 }
 
 #[test]
@@ -269,8 +592,8 @@ fn inserir_e_excluir_pontos_por_comandos() {
     // Interativo com o modelo escolhido antes (a janela Inserir pontos): dois cliques e Enter.
     s.execute("eletrica.ponto.modelo", &json!({ "bloco": "tom-sim-baixa", "rotacao": 90, "valores": { "CIRCUITO": "5" } })).unwrap();
     s.start("eleponto").unwrap();
-    s.input(Input::Point(cadcraft_engine::doc::geom::Vec2::new(3.0, 3.0))).unwrap();
-    s.input(Input::Point(cadcraft_engine::doc::geom::Vec2::new(4.0, 3.0))).unwrap();
+    s.input(Input::Point(Vec2::new(3.0, 3.0))).unwrap();
+    s.input(Input::Point(Vec2::new(4.0, 3.0))).unwrap();
     s.input(Input::Enter).unwrap();
     assert!(s.running.is_none());
     let a = s.execute("eletrica.analisar", &json!({})).unwrap();

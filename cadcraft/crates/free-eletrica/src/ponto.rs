@@ -24,6 +24,56 @@ pub const TAGS_QUADRO: &[&str] = &["QUADRO"];
 pub const TAGS_FP: &[&str] = &["FP", "FATOR_POTENCIA", "FATOR_DE_POTENCIA", "COS_FI"];
 /// Tipo de carga na demanda: ILUM_TUG, AQUECIMENTO, ELETRODOMESTICOS, AR, BOMBA, OUTROS, RESERVA.
 pub const TAGS_CARGA: &[&str] = &["TIPO_CARGA", "CARGA"];
+/// Tipo de interruptor: 1S, 2S, 3S, PARALELO, INTERMEDIARIO.
+pub const TAGS_INTERRUPTOR: &[&str] = &["TIPO_INTERRUPTOR", "TECLAS"];
+
+/// O tipo de um interruptor.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TipoInterruptor {
+    #[default]
+    Simples1,
+    Simples2,
+    Simples3,
+    Paralelo,
+    Intermediario,
+}
+
+impl TipoInterruptor {
+    pub const TODOS: [TipoInterruptor; 5] = [Self::Simples1, Self::Simples2, Self::Simples3, Self::Paralelo, Self::Intermediario];
+
+    pub fn nome(self) -> &'static str {
+        match self {
+            Self::Simples1 => "1S",
+            Self::Simples2 => "2S",
+            Self::Simples3 => "3S",
+            Self::Paralelo => "Paralelo",
+            Self::Intermediario => "Intermediário",
+        }
+    }
+
+    /// Quantas teclas (letras de comando) o interruptor tem.
+    pub fn teclas(self) -> usize {
+        match self {
+            Self::Simples2 => 2,
+            Self::Simples3 => 3,
+            _ => 1,
+        }
+    }
+
+    pub fn de_texto(t: &str) -> Option<Self> {
+        let n = normalizar(t);
+        let n = n.trim();
+        Some(match n {
+            "1S" | "1" | "SIMPLES" => Self::Simples1,
+            "2S" | "2" => Self::Simples2,
+            "3S" | "3" => Self::Simples3,
+            _ if n.starts_with("PARALEL") || n.contains("THREE") => Self::Paralelo,
+            _ if n.starts_with("INTERMED") || n.contains("FOUR") => Self::Intermediario,
+            _ => return None,
+        })
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -136,6 +186,8 @@ pub struct PontoEletrico {
     pub fp: Option<f64>,
     /// Tipo de carga do atributo TIPO_CARGA. `None`: o padrão do tipo do ponto.
     pub tipo_carga: Option<TipoCarga>,
+    /// Tipo de interruptor (atributo TIPO_INTERRUPTOR). `None`: um simples de uma tecla.
+    pub tipo_interruptor: Option<TipoInterruptor>,
     /// Todos os atributos lidos, na ordem do bloco.
     pub atributos: Vec<(String, String)>,
     /// Valores que o Free Elétrica gravou no XDATA do bloco (valem quando o bloco não tem o atributo).
@@ -219,6 +271,7 @@ impl PontoEletrico {
             quadro_ref: texto(TAGS_QUADRO),
             fp: valor(TAGS_FP).and_then(fator_potencia),
             tipo_carga: valor(TAGS_CARGA).and_then(TipoCarga::de_texto),
+            tipo_interruptor: valor(TAGS_INTERRUPTOR).and_then(TipoInterruptor::de_texto),
             atributos,
             extras,
         })

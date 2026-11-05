@@ -1262,6 +1262,17 @@
 	Circuit Properties	Propriedades do circuito
 	Demand Tables	Tabelas de demanda
 	Insert Conduit	Inserir eletroduto
+	Remove Points from Circuit	Remover pontos do circuito
+	Wiring Tags	Tags de fiação
+	Regenerate Electrical Drawing	Regenerar desenho elétrico
+	Load Schedule Table	Tabela do quadro de cargas
+	Prepare Electrical Drawing	Preparar desenho elétrico
+	Conduit Template	Modelo do eletroduto
+	Split Conduit	Dividir eletroduto
+	Conduit Properties	Propriedades do eletroduto
+	Conduit Summary	Resumo dos eletrodutos
+	Inspect Electrical Project	Inspecionar projeto elétrico
+	Load Panel	Quadro de cargas
 	Insert Electrical Point	Inserir ponto elétrico
 	Electrical Point Blocks	Blocos de pontos elétricos
 	Point Template	Modelo de ponto

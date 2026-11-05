@@ -1,15 +1,24 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (C) 2026 Julio Ferreira. Free Elétrica: ver LICENSE e AVISO_LEGAL.md na raiz do repositorio.
-//! Inserir eletroduto: uma spline em arco entre dois objetos (pontos elétricos, quadros, caixas),
-//! na camada de eletroduto do teto ou do piso. O roteamento lê a curva em pedaços retos.
+//! Inserir eletroduto: uma spline em arco (ou uma linha, com flecha zero) que liga exatamente dois
+//! blocos elétricos, gravados em `from_handle` e `to_handle`. Clicar no meio de um eletroduto
+//! existente divide o trecho e insere uma caixa de passagem: é assim que se deriva no grafo
+//! estrito.
 
 use cadcraft_doc::color::Color;
-use cadcraft_doc::geom::{Spline, Vec2};
-use cadcraft_doc::{Common, Drawing, EntityKind, Handle, Lineweight, Space};
+use cadcraft_doc::geom::{Polyline, Spline, Vec2, Vec3};
+use cadcraft_doc::{Common, Drawing, EntityKind, Handle, Line, Lineweight, Space};
 
-/// Camadas do eletroduto (as do template).
-pub const CAMADA_TETO: &str = "ELE-ELETRODUTO-PVC-MEDIA-TETO";
-pub const CAMADA_PISO: &str = "ELE-ELETRODUTO-PVC-MEDIA-PISO";
+use crate::biblioteca;
+use crate::ponto::ler_ponto;
+use crate::rota::{self, Instalacao};
+use crate::setup::Setup;
+use crate::xdata;
+
+/// Camadas do eletroduto.
+pub const CAMADA_TETO: &str = "ELE-ELETRODUTO-TETO";
+pub const CAMADA_PISO: &str = "ELE-ELETRODUTO-PISO";
+pub const CAMADA_PAREDE: &str = "ELE-ELETRODUTO-PAREDE";
 /// Flecha padrão do arco: a distância do meio da corda ao arco, como fração da corda.
 pub const FLECHA_PADRAO: f64 = 0.15;
 /// A flecha vai até meia corda (meia circunferência).
@@ -17,13 +26,29 @@ pub const FLECHA_MAXIMA: f64 = 0.5;
 
 type P = [f64; 2];
 
-/// Onde um objeto se liga ao eletroduto: o ponto de inserção de um bloco ou o centro de um
-/// círculo. `None` para outros objetos.
-pub fn posicao(doc: &Drawing, h: Handle) -> Option<P> {
-    match &doc.model.get(h)?.kind {
-        EntityKind::Insert(i) => Some([i.insert.x, i.insert.y]),
-        EntityKind::Circle(c) => Some([c.center.x, c.center.y]),
-        _ => None,
+/// A camada de uma instalação.
+pub fn camada(i: Instalacao) -> &'static str {
+    match i {
+        Instalacao::Teto => CAMADA_TETO,
+        Instalacao::Piso => CAMADA_PISO,
+        Instalacao::Parede => CAMADA_PAREDE,
+    }
+}
+
+/// Cria a camada com a cor padrão, se ela ainda não existe.
+pub fn garantir_camada(doc: &mut Drawing, i: Instalacao) {
+    let nome = camada(i);
+    if doc.ensure_layer(nome)
+        && let Some(l) = doc.layer_mut(nome)
+    {
+        let (cor, descricao) = match i {
+            Instalacao::Teto => (4, "Eletroduto embutido no teto/laje"),
+            Instalacao::Piso => (6, "Eletroduto embutido no piso"),
+            Instalacao::Parede => (3, "Eletroduto embutido na parede"),
+        };
+        l.color = Color::Index(cor);
+        l.lineweight = Lineweight::Mm100(30);
+        l.description = descricao.into();
     }
 }
 
@@ -57,24 +82,201 @@ pub fn pontos_do_arco(a: P, b: P, flecha: f64, n: usize) -> Vec<P> {
         .collect()
 }
 
-/// Cria o eletroduto em arco de `a` a `b`, no teto ou no piso. A camada é criada com a cor do
-/// template quando ainda não existe.
-pub fn inserir(doc: &mut Drawing, a: P, b: P, piso: bool, flecha: f64) -> Result<Handle, String> {
-    if !(a.iter().chain(b.iter()).all(|v| v.is_finite())) {
-        return Err("coordenadas inválidas".into());
+fn xdata_do_eletroduto(de: Handle, para: Handle, instalacao: Instalacao) -> Vec<cadcraft_doc::RawTag> {
+    let mut x = Vec::new();
+    xdata::gravar(&mut x, rota::CHAVE_ESQUEMA, Some(rota::VERSAO_ESQUEMA));
+    xdata::gravar(&mut x, rota::CHAVE_DE, Some(&de.hex()));
+    xdata::gravar(&mut x, rota::CHAVE_PARA, Some(&para.hex()));
+    xdata::gravar(&mut x, rota::CHAVE_INSTALACAO, Some(instalacao.codigo()));
+    x
+}
+
+/// Cria o eletroduto em arco entre dois blocos elétricos.
+pub fn inserir(doc: &mut Drawing, de: Handle, para: Handle, instalacao: Instalacao, flecha: f64) -> Result<Handle, String> {
+    let posicao = |h: Handle| ler_ponto(doc, h).map(|p| p.posicao).ok_or_else(|| format!("o objeto {} não é um bloco elétrico", h.hex()));
+    let (a, b) = (posicao(de)?, posicao(para)?);
+    if de == para || (a[0] - b[0]).hypot(a[1] - b[1]) <= 1e-9 {
+        return Err("os dois blocos estão no mesmo lugar".into());
     }
-    if (a[0] - b[0]).hypot(a[1] - b[1]) <= 1e-9 {
-        return Err("os dois objetos estão no mesmo lugar".into());
+    garantir_camada(doc, instalacao);
+    let kind = if flecha.abs() < 1e-9 {
+        EntityKind::Line(Line { a: Vec3::new(a[0], a[1], 0.0), b: Vec3::new(b[0], b[1], 0.0) })
+    } else {
+        let fit: Vec<Vec2> = pontos_do_arco(a, b, flecha, 5).into_iter().map(|p| Vec2::new(p[0], p[1])).collect();
+        EntityKind::Spline(Spline::from_fit_points(&fit))
+    };
+    let common = Common { layer: camada(instalacao).into(), xdata: xdata_do_eletroduto(de, para, instalacao), ..Common::default() };
+    doc.add(&Space::Model, common, kind).map_err(|e| e.to_string())
+}
+
+/// O que o próximo trecho de ELEELETRODUTO usa: a barra de cima muda enquanto o comando corre.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModeloEletroduto {
+    pub instalacao: Instalacao,
+    pub flecha: f64,
+}
+
+impl Default for ModeloEletroduto {
+    fn default() -> Self {
+        ModeloEletroduto { instalacao: Instalacao::Teto, flecha: FLECHA_PADRAO }
     }
-    let camada = if piso { CAMADA_PISO } else { CAMADA_TETO };
-    if doc.ensure_layer(camada)
-        && let Some(l) = doc.layer_mut(camada)
-    {
-        l.color = Color::Index(if piso { 6 } else { 4 });
-        l.lineweight = Lineweight::Mm100(30);
-        l.description = if piso { "Eletroduto PVC linha média embutido no piso" } else { "Eletroduto PVC linha média embutido no teto/laje" }.into();
+}
+
+/// O modelo de cada desenho aberto (`uid`): outro desenho no mesmo processo não usa o deste.
+static MODELO: std::sync::Mutex<std::collections::BTreeMap<u64, ModeloEletroduto>> = std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+/// Escolhe a instalação e a flecha dos próximos eletrodutos do desenho `desenho`.
+pub fn definir_modelo(desenho: u64, m: ModeloEletroduto) {
+    MODELO.lock().unwrap_or_else(|e| e.into_inner()).insert(desenho, m);
+}
+
+/// A instalação e a flecha em uso no desenho `desenho`.
+pub fn modelo(desenho: u64) -> ModeloEletroduto {
+    MODELO.lock().unwrap_or_else(|e| e.into_inner()).get(&desenho).copied().unwrap_or_default()
+}
+
+/// O bloco elétrico mais perto de `q`, dentro do raio de captura.
+pub fn bloco_em(doc: &Drawing, setup: &Setup, q: P, metros: f64) -> Option<Handle> {
+    let metros = if metros > 0.0 { metros } else { 1.0 };
+    let raio = setup.raio_captura / metros;
+    crate::analisar(doc)
+        .pontos
+        .iter()
+        .map(|p| (p.handle, (p.posicao[0] - q[0]).hypot(p.posicao[1] - q[1])))
+        .filter(|(_, d)| *d <= raio)
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(h, _)| h)
+}
+
+/// O eletroduto mais perto de `q`, dentro do raio de captura: (handle, ponto nele).
+pub fn eletroduto_em(doc: &Drawing, setup: &Setup, q: P, metros: f64) -> Option<(Handle, P)> {
+    let metros = if metros > 0.0 { metros } else { 1.0 };
+    let raio = setup.raio_captura / metros;
+    doc.model
+        .iter()
+        .filter(|e| setup.e_camada_eletroduto(&e.common.layer))
+        .filter_map(|e| {
+            let t = rota::tracado(&e.kind, 0.005 / metros)?;
+            let (p, d, _) = rota::perto_do_tracado(&t, q)?;
+            (d <= raio).then_some((e.handle, p, d))
+        })
+        .min_by(|a, b| a.2.total_cmp(&b.2))
+        .map(|(h, p, _)| (h, p))
+}
+
+/// Uma parte do traçado cortado, com a mesma espécie de entidade quando dá.
+fn parte(original: &EntityKind, pontos: &[P]) -> EntityKind {
+    let v: Vec<Vec2> = pontos.iter().map(|p| Vec2::new(p[0], p[1])).collect();
+    match original {
+        EntityKind::Line(_) => match (pontos.first(), pontos.last()) {
+            (Some(a), Some(b)) => EntityKind::Line(Line { a: Vec3::new(a[0], a[1], 0.0), b: Vec3::new(b[0], b[1], 0.0) }),
+            _ => original.clone(),
+        },
+        EntityKind::LwPolyline(pl) => {
+            let mut nova = pl.clone();
+            nova.vertices = Polyline::from_points(&v, false).vertices;
+            EntityKind::LwPolyline(nova)
+        }
+        // Arco e spline viram uma spline por até 7 pontos da parte.
+        _ => {
+            let passo = (v.len().saturating_sub(1) / 6).max(1);
+            let mut fit: Vec<Vec2> = v.iter().step_by(passo).copied().collect();
+            if let (Some(u), Some(f)) = (v.last(), fit.last())
+                && u != f
+            {
+                fit.push(*u);
+            }
+            EntityKind::Spline(Spline::from_fit_points(&fit))
+        }
     }
-    let fit: Vec<Vec2> = pontos_do_arco(a, b, flecha, 5).into_iter().map(|p| Vec2::new(p[0], p[1])).collect();
-    let spline = Spline::from_fit_points(&fit);
-    doc.add(&Space::Model, Common { layer: camada.into(), ..Common::default() }, EntityKind::Spline(spline)).map_err(|e| e.to_string())
+}
+
+/// Divide o eletroduto `h` em `q` e insere uma caixa de passagem ali, ligando as duas partes a
+/// ela. Devolve a caixa. Os blocos das pontas continuam os mesmos.
+pub fn dividir(doc: &mut Drawing, setup: &Setup, h: Handle, q: P, metros: f64) -> Result<Handle, String> {
+    let metros = if metros > 0.0 { metros } else { 1.0 };
+    let original = doc.model.get(h).map(|e| (**e).clone()).ok_or("eletroduto não encontrado")?;
+    if !setup.e_camada_eletroduto(&original.common.layer) {
+        return Err("o objeto não está numa camada de eletroduto".into());
+    }
+    let t = rota::tracado(&original.kind, 0.005 / metros).ok_or("o objeto não é um eletroduto aberto")?;
+    let (p, _, i) = rota::perto_do_tracado(&t, q).ok_or("não achei o ponto no eletroduto")?;
+    let (Some(ini), Some(fim)) = (t.first().copied(), t.last().copied()) else { return Err("eletroduto vazio".into()) };
+    let folga = 0.01 / metros;
+    let longe = |a: P, b: P| (a[0] - b[0]).hypot(a[1] - b[1]) > folga;
+    if !longe(p, ini) || !longe(p, fim) {
+        return Err("o ponto cai na ponta do eletroduto: não há o que dividir".into());
+    }
+    // Quem está nas pontas, pelo grafo atual (a gravação pode estar faltando).
+    let analise = crate::analisar(doc);
+    let rede = rota::Rede::montar(doc, setup, &analise.pontos, metros);
+    let aresta = rede.arestas.iter().find(|a| a.eletroduto == h);
+    let pontas = aresta.and_then(|a| Some((rede.nos.get(a.de)?.handle, rede.nos.get(a.para)?.handle)));
+    let xd = xdata::ler(&original.common.xdata);
+    let instalacao = rota::instalacao_de(&xd, &original.common.layer, setup);
+
+    let z = match instalacao {
+        Instalacao::Teto => setup.pe_direito,
+        Instalacao::Piso => 0.0,
+        Instalacao::Parede => aresta.and_then(|a| rede.nos.get(a.de)).map_or(setup.pe_direito, |n| n.z),
+    };
+    biblioteca::garantir_base(doc, setup, metros);
+    let valores = vec![("ALTURA".to_string(), crate::ponto::br(z))];
+    let caixa = biblioteca::inserir(doc, biblioteca::BLOCO_CAIXA, p, 0.0, &valores)?;
+
+    let mut primeira: Vec<P> = t.iter().take(i + 1).copied().collect();
+    primeira.push(p);
+    let mut segunda: Vec<P> = vec![p];
+    segunda.extend(t.iter().skip(i + 1).copied());
+
+    let mut e1 = original.clone();
+    e1.kind = parte(&original.kind, &primeira);
+    xdata::gravar(&mut e1.common.xdata, rota::CHAVE_PARA, Some(&caixa.hex()));
+    if let Some((de, _)) = pontas {
+        xdata::gravar(&mut e1.common.xdata, rota::CHAVE_DE, Some(&de.hex()));
+    }
+    xdata::gravar(&mut e1.common.xdata, rota::CHAVE_INSTALACAO, Some(instalacao.codigo()));
+    doc.model.replace(e1);
+
+    let mut x2 = original.common.xdata.clone();
+    xdata::gravar(&mut x2, rota::CHAVE_ESQUEMA, Some(rota::VERSAO_ESQUEMA));
+    xdata::gravar(&mut x2, rota::CHAVE_DE, Some(&caixa.hex()));
+    if let Some((_, para)) = pontas {
+        xdata::gravar(&mut x2, rota::CHAVE_PARA, Some(&para.hex()));
+    }
+    xdata::gravar(&mut x2, rota::CHAVE_INSTALACAO, Some(instalacao.codigo()));
+    xdata::gravar(&mut x2, rota::CHAVE_TAG, None);
+    let c2 = Common { xdata: x2, ..original.common.clone() };
+    doc.add(&Space::Model, c2, parte(&original.kind, &segunda)).map_err(|e| e.to_string())?;
+    Ok(caixa)
+}
+
+/// Trava (`Some`) ou destrava (`None`) o diâmetro de um eletroduto.
+pub fn travar_diametro(doc: &mut Drawing, h: Handle, diametro: Option<f64>) -> Result<(), String> {
+    let mut e = doc.model.get(h).map(|e| (**e).clone()).ok_or("eletroduto não encontrado")?;
+    match diametro {
+        Some(d) => {
+            if !(d.is_finite() && d > 0.0) {
+                return Err("diâmetro inválido".into());
+            }
+            xdata::gravar(&mut e.common.xdata, rota::CHAVE_DIAMETRO, Some(&d.to_string()));
+            xdata::gravar(&mut e.common.xdata, rota::CHAVE_TRAVA_DIAMETRO, Some("1"));
+        }
+        None => {
+            xdata::gravar(&mut e.common.xdata, rota::CHAVE_TRAVA_DIAMETRO, None);
+        }
+    }
+    doc.model.replace(e);
+    Ok(())
+}
+
+/// Muda a instalação de um eletroduto (e a camada dele).
+pub fn definir_instalacao(doc: &mut Drawing, h: Handle, instalacao: Instalacao) -> Result<(), String> {
+    garantir_camada(doc, instalacao);
+    let mut e = doc.model.get(h).map(|e| (**e).clone()).ok_or("eletroduto não encontrado")?;
+    xdata::gravar(&mut e.common.xdata, rota::CHAVE_INSTALACAO, Some(instalacao.codigo()));
+    e.common.layer = camada(instalacao).into();
+    doc.model.replace(e);
+    Ok(())
 }

@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (C) 2026 Julio Ferreira. Free Elétrica: ver LICENSE e AVISO_LEGAL.md na raiz do repositorio.
-//! Dados do Free Elétrica gravados no XDATA das entidades (aplicativo `FREEELETRICA`), como pares
+//! Dados do Free Elétrica gravados no XDATA das entidades (aplicativo `FREE_ELETRICA`), como pares
 //! `CHAVE=valor` em grupos 1000. Viajam dentro do DWG/DXF e são copiados junto com o objeto.
 
 use cadcraft_doc::RawTag;
 
-pub const APP: &str = "FREEELETRICA";
-/// O nome antigo do aplicativo (o projeto se chamava CRAFT ELE). Desenhos feitos antes da troca
-/// continuam sendo lidos; a próxima gravação passa o trecho para o nome novo.
-pub const APP_ANTIGO: &str = "CRAFTELE";
+pub const APP: &str = "FREE_ELETRICA";
+/// Os nomes antigos do aplicativo. Desenhos feitos antes da troca continuam sendo lidos; a
+/// próxima gravação passa o trecho para o nome novo.
+pub const APPS_ANTIGOS: [&str; 2] = ["FREEELETRICA", "CRAFTELE"];
 
 /// O trecho `[início, fim)` do XDATA do Free Elétrica: do grupo 1001 até o próximo 1001. O nome
 /// novo vale antes do antigo.
 fn trecho(xdata: &[RawTag]) -> Option<(usize, usize)> {
     let achar = |app: &str| xdata.iter().position(|t| t.code == 1001 && t.value.trim().eq_ignore_ascii_case(app));
-    let inicio = achar(APP).or_else(|| achar(APP_ANTIGO))?;
+    let inicio = achar(APP).or_else(|| APPS_ANTIGOS.iter().find_map(|a| achar(a)))?;
     let fim = xdata.iter().skip(inicio + 1).position(|t| t.code == 1001).map_or(xdata.len(), |i| inicio + 1 + i);
     Some((inicio, fim))
 }

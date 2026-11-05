@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (C) 2026 Julio Ferreira. Free Elétrica: ver LICENSE e AVISO_LEGAL.md na raiz do repositorio.
-//! Free Elétrica: a paleta Elétrica (só ferramentas), os comandos ELECIRCUITO e ELECOMANDO no
-//! desenho, a janela Rotear fiação com a tabela de resumo e a sobrescrita manual, e o setup.
+//! Free Elétrica: a paleta Elétrica na ordem do fluxo, a barra de contexto sobre o desenho, o painel
+//! de baixo com as abas, a inspeção visual e as configurações.
 
 use std::sync::Arc;
 
@@ -55,7 +55,7 @@ fn inserir(d: &mut Drawing, bloco: &str, x: f64, attrs: &[(&str, &str)]) -> Hand
 }
 
 /// Em metros: quadro em 0, luz em 2, TUG em 4, uma segunda luz e um interruptor sem circuito,
-/// e um eletroduto do quadro até 6.
+/// e eletrodutos ligando os blocos em sequência, do quadro até 6.
 fn planta() -> Drawing {
     let mut d = Drawing::new_metric();
     d.header.set_i64("INSUNITS", 6);
@@ -77,8 +77,11 @@ fn planta() -> Drawing {
         tom.entities.push(cadcraft_engine::doc::Entity::new(d.new_handle(), EntityKind::AttDef(a)));
     }
     d.blocks.insert("TOM-X".into(), Arc::new(tom));
-    let c = Common { layer: "ELETRODUTO".into(), ..Default::default() };
-    d.add(&Space::Model, c, EntityKind::Line(Line { a: Vec3::ZERO, b: Vec3::new(6.0, 0.0, 0.0) })).unwrap();
+    // Grafo estrito: um eletroduto entre cada par de blocos vizinhos.
+    for (a, b) in [(0.0, 2.0), (2.0, 4.0), (4.0, 5.0), (5.0, 6.0)] {
+        let c = Common { layer: "ELETRODUTO".into(), ..Default::default() };
+        d.add(&Space::Model, c, EntityKind::Line(Line { a: Vec3::new(a, 0.0, 0.0), b: Vec3::new(b, 0.0, 0.0) })).unwrap();
+    }
     d
 }
 
@@ -95,7 +98,7 @@ fn handles(app: &mut CadApp) -> (String, String, String) {
 }
 
 fn harness(app: CadApp) -> Harness<'static, CadApp> {
-    Harness::builder().with_size(vec2(1600.0, 1000.0)).build_ui_state(
+    Harness::builder().with_size(vec2(2400.0, 1000.0)).build_ui_state(
         |ui, app: &mut CadApp| {
             app.logic(&ui.ctx().clone());
             app.ui(ui);
@@ -119,7 +122,7 @@ fn paleta_ferramentas_e_fluxo_completo() {
     // Digitado, abre a paleta acima das Tool Sets, com altura fixa.
     assert!(app.cmdline("ELETRICA").is_none());
     let local = app.ui.docking.layout.location(&Panel::Eletrica).unwrap();
-    assert_eq!(local.size, Some(craft_ui::layout::SplitSize::FixedFirst(380.0)));
+    assert_eq!(local.size, Some(craft_ui::layout::SplitSize::FixedFirst(500.0)));
     assert_eq!(local.anchor, Some(Panel::ToolSets));
 
     let (qd, luz, int) = handles(app);
@@ -173,22 +176,30 @@ fn paleta_ferramentas_e_fluxo_completo() {
     app.run("eletrica.setup", json!({ "temperaturaAmbiente": 30, "peDireito": 2.8 })).unwrap();
 
     h.run_steps(4);
-    // A paleta só tem ferramentas.
+    // A paleta tem as ferramentas na ordem do fluxo.
     for f in [
-        "Configurações...",
-        "Inserir pontos...",
-        "Inserir eletroduto",
-        "Quadro de cargas...",
+        "1. Pontos",
+        "Inserir pontos",
+        "2. Circuitos e comandos",
         "Criar circuito",
         "Comandos e luminárias",
-        "Conferir pontos e circuitos...",
-        "Ajustar fiação",
+        "3. Quadro de cargas",
+        "Quadro de cargas",
+        "4. Eletrodutos",
+        "Inserir eletroduto",
+        "5. Documentação e tags",
+        "Tags de fiação",
+        "Tabela do quadro",
+        "Atualizar tags e tabelas",
+        "Inspecionar projeto",
+        "Configurações...",
     ] {
         h.get_by_label(f);
     }
-    // Rotear fiação vive dentro do Quadro de cargas.
+    // Nada de planilha flutuando: sem o painel, sem as tabelas.
     assert!(h.query_by_label("Rotear fiação...").is_none());
     assert!(h.query_by_label("Pontos elétricos").is_none());
+    assert!(!h.state().ui.docking.layout.contains(&Panel::QuadroCargas));
 
     // Configurações: isolação e diâmetros dos condutores, eletrodutos, e o catálogo de telecom
     // com o diâmetro do cabo novo.
@@ -199,6 +210,7 @@ fn paleta_ferramentas_e_fluxo_completo() {
     h.run_steps(3);
     h.get_by_label("Isolação padrão");
     h.get_by_label("Diâmetro externo dos condutores");
+    h.get_by_label("Cor da fase R");
     h.get_by_label("Eletrodutos").click();
     h.run_steps(3);
     h.get_by_label("Diâmetro mínimo");
@@ -215,16 +227,34 @@ fn paleta_ferramentas_e_fluxo_completo() {
     h.run_steps(3);
     assert!(h.query_by_label("Cadastrar novo cabo").is_none());
 
-    // Quadro de cargas: o menu central do quadro, já com a fiação roteada e a demanda.
-    h.get_by_label("Quadro de cargas...").click();
+    // Quadro de cargas: abre no painel de baixo do desenho, acoplado, com altura fixa.
+    h.get_by_label("Quadro de cargas").click();
     h.run_steps(3);
+    let local = h.state().ui.docking.layout.location(&Panel::QuadroCargas).unwrap();
+    assert_eq!(local.anchor, Some(Panel::Canvas));
+    assert_eq!(local.size, Some(craft_ui::layout::SplitSize::FixedSecond(340.0)));
     h.get_by_label("PAINEL: QD-01");
-    for coluna in ["Tipo de carga", "Potência (VA)", "FP", "Potência (W)", "Corrente (A)", "Queda (%)", "Isolação", "Fase A (VA)", "Situação"] {
+    for coluna in [
+        "Esquema",
+        "Tipo de carga",
+        "Potência (VA)",
+        "FP",
+        "Potência (W)",
+        "Ib (A)",
+        "I'b (A)",
+        "Queda (%)",
+        "Isolação",
+        "Fases",
+        "Fase R (VA)",
+        "Situação",
+    ] {
         assert!(h.query_all_by_label(coluna).count() >= 1, "coluna {coluna}");
     }
-    h.get_by_label("Demanda");
-    h.get_by_label("Potência demandada");
     h.get_by_label("Copiar resumo");
+    // Os botões da linha do circuito.
+    assert!(h.query_all_by_label("+ Pontos").count() >= 2);
+    assert!(h.query_all_by_label("- Ponto").count() >= 2);
+    assert!(h.query_all_by_label("Localizar").count() >= 2);
     // Novo circuito cria o próximo número (4) vazio, listado na tabela.
     h.get_by_label("Novo circuito").click();
     h.run_steps(3);
@@ -233,13 +263,48 @@ fn paleta_ferramentas_e_fluxo_completo() {
     h.get_by_label("vazio");
     h.state_mut().session.undo().unwrap();
     h.run_steps(3);
-    // ELEROTEAR abre o mesmo quadro de cargas.
+    // ELEROTEAR abre o mesmo painel.
     assert!(h.state_mut().cmdline("ELEROTEAR").is_none());
     h.run_steps(3);
     assert_eq!(h.query_all_by_label("PAINEL: QD-01").count(), 1);
 
-    // Inserir pontos: filtrar por tipo, escolher o bloco, inserir com os valores e excluir.
-    h.get_by_label("Inserir pontos...").click();
+    // Cadeado: travar a seção do primeiro circuito leva ao valor em uso, e a seção automática
+    // fica como estava para quem não travou.
+    h.query_all_by_label("Automático").next().unwrap().click();
+    h.run_steps(3);
+    let r = h.state_mut().run("eletrica.rotear", json!({})).unwrap();
+    assert!(r["linhas"][0]["sobrescrita"]["secao"].is_number(), "{r}");
+    h.state_mut().session.undo().unwrap();
+    h.run_steps(3);
+    // Localizar enquadra o circuito e o destaca, sem travar.
+    let antes = h.state().session.state().unwrap().view().center;
+    h.query_all_by_label("Localizar").next().unwrap().click();
+    h.run_steps(3);
+    let depois = h.state().session.state().unwrap().view().center;
+    assert_ne!(antes, depois);
+
+    // Recolher e expandir mudam a altura; destacar solta o painel e acoplar devolve.
+    h.get_by_label("Recolher").click();
+    h.run_steps(3);
+    assert_eq!(h.state().ui.docking.layout.location(&Panel::QuadroCargas).unwrap().size, Some(craft_ui::layout::SplitSize::FixedSecond(96.0)));
+    h.get_by_label("Expandir").click();
+    h.run_steps(3);
+    assert_eq!(h.state().ui.docking.layout.location(&Panel::QuadroCargas).unwrap().size, Some(craft_ui::layout::SplitSize::FixedSecond(340.0)));
+    h.get_by_label("Destacar").click();
+    h.run_steps(3);
+    assert!(h.state().ui.docking.layout.floating.iter().any(|g| g.panels.contains(&Panel::QuadroCargas)));
+    h.get_by_label("Acoplar").click();
+    h.run_steps(3);
+    assert!(!h.state().ui.docking.layout.floating.iter().any(|g| g.panels.contains(&Panel::QuadroCargas)));
+
+    // Aba Eletrodutos: os trechos, com diâmetro travável.
+    h.get_by_label("Eletrodutos").click();
+    h.run_steps(3);
+    h.get_by_label("4 trecho(s) ligados, 0 solto(s)");
+    h.get_by_label("Ocupação");
+
+    // Aba Pontos: filtrar por tipo, escolher o bloco, inserir com os valores e excluir.
+    assert!(h.state_mut().run("ui.eletrica.lista", Value::Null).is_ok());
     h.run_steps(3);
     h.get_by_label("Blocos");
     h.get_by_label("TUG (1)").click();
@@ -266,4 +331,85 @@ fn paleta_ferramentas_e_fluxo_completo() {
     h.get_by_label("Excluir?").click();
     h.run_steps(3);
     h.get_by_label("Pontos no desenho (1)");
+
+    // Barra de contexto: só enquanto o comando espera cliques, e muda o modelo sem interrompê-lo.
+    assert!(h.query_by_label("Alinhar à parede").is_none());
+    h.state_mut().run("eletrica.bootstrap", json!({})).unwrap();
+    h.state_mut().run("eletrica.ponto.modelo", json!({ "bloco": "TOM-SIM-BAIXA" })).unwrap();
+    h.get_by_label("Inserir pontos").click();
+    h.run_steps(3);
+    assert_eq!(h.state().session.running.as_ref().map(|r| r.id.as_str()), Some("eleponto"));
+    h.get_by_label("Alinhar à parede").click();
+    h.run_steps(3);
+    assert_eq!(h.state().session.running.as_ref().map(|r| r.id.as_str()), Some("eleponto"));
+    let uid = h.state().session.state().unwrap().uid;
+    assert!(!free_eletrica::biblioteca::modelo(uid).unwrap().rotacao_auto);
+    h.get_by_label("Altura");
+    h.get_by_label("Potência");
+    h.get_by_label("Girar").click();
+    h.run_steps(3);
+    assert!(h.state().session.running.is_some());
+    h.state_mut().session.input(Input::Enter).unwrap();
+    h.run_steps(3);
+    assert!(h.query_by_label("Alinhar à parede").is_none());
+
+    h.get_by_label("Inserir eletroduto").click();
+    h.run_steps(3);
+    h.get_by_label("Cota");
+    h.get_by_label("Piso").click();
+    h.run_steps(3);
+    assert_eq!(free_eletrica::eletroduto::modelo(uid).instalacao, free_eletrica::rota::Instalacao::Piso);
+    assert!(h.state().session.running.is_some());
+    h.get_by_label("Teto").click();
+    h.run_steps(3);
+    h.state_mut().session.input(Input::Enter).unwrap();
+    h.run_steps(3);
+
+    h.get_by_label("Criar circuito").click();
+    h.run_steps(3);
+    h.get_by_label("Selecione o quadro e informe o número do circuito.");
+    let q = Handle::parse_hex(&qd).unwrap();
+    let app = h.state_mut();
+    app.session.input(Input::Pick(vec![q])).unwrap();
+    app.session.input(Input::Text("9".into())).unwrap();
+    h.run_steps(3);
+    h.get_by_label("Circuito 9 · QD-01");
+    h.state_mut().run("eletrica.circuito.definir", json!({ "circuito": "9", "esquema": "F+N" })).unwrap();
+    h.run_steps(3);
+    h.get_by_label("Tensão");
+    assert!(h.state().session.running.is_some(), "a edição não interrompe o comando");
+    h.state_mut().session.input(Input::Enter).unwrap();
+    h.run_steps(3);
+
+    // Inspeção visual: liga e desliga; ELECONFERIR liga e abre a lista.
+    h.get_by_label("Inspecionar projeto").click();
+    h.run_steps(3);
+    h.get_by_label("Inspeção");
+    h.get_by_label("Inspecionar projeto").click();
+    h.run_steps(3);
+    assert!(h.query_by_label("Inspeção").is_none());
+    assert!(h.state_mut().cmdline("ELECONFERIR").is_none());
+    h.run_steps(3);
+    assert!(h.query_all_by_label("Inspeção").count() >= 2, "a legenda e a aba Conferência");
+    h.get_by_label("Pontos elétricos");
+
+    // Tab durante ELEPONTO gira; fora dele, segue o caminho do CADCraft.
+    assert!(!cadcraft_ui_egui::eletrica::tab(h.state_mut()));
+    assert!(h.state_mut().cmdline("ELEPONTOS").is_none());
+    h.run_steps(2);
+    assert!(cadcraft_ui_egui::eletrica::tab(h.state_mut()));
+    // Imagem da barra com a inspeção ligada, quando pedida.
+    if let Ok(saida) = std::env::var("FREE_ELETRICA_PNG_BARRA") {
+        h.run_steps(2);
+        h.render().unwrap().save(saida).unwrap();
+    }
+    h.state_mut().session.input(Input::Enter).unwrap();
+    h.run_steps(2);
+    assert!(h.state_mut().run("ui.eletrica.inspecao", Value::Null).is_ok());
+    assert!(h.state_mut().run("ui.eletrica.cargas", Value::Null).is_ok());
+    h.run_steps(3);
+    // Imagem para conferir a tela, quando pedida.
+    if let Ok(saida) = std::env::var("FREE_ELETRICA_PNG") {
+        h.render().unwrap().save(saida).unwrap();
+    }
 }

@@ -100,7 +100,8 @@ fn planta() -> Drawing {
     inserir(&mut d, "CAIXA_PASSAGEM", 6.0, 6.0, &[("TIPO_PONTO", "CAIXA DE PASSAGEM")]);
     // Um bloco de arquitetura sem atributos elétricos não entra, mesmo com nome parecido.
     inserir(&mut d, "PORTA_INTERNA", 9.0, 9.0, &[]);
-    eletroduto(&mut d, (0.0, 0.0), (4.0, 0.0));
+    eletroduto(&mut d, (0.0, 0.0), (2.0, 0.0));
+    eletroduto(&mut d, (2.0, 0.0), (4.0, 0.0));
     eletroduto(&mut d, (4.0, 0.0), (8.0, 0.0));
     eletroduto(&mut d, (4.0, 0.0), (4.0, 1.0));
     eletroduto(&mut d, (0.0, 0.0), (0.0, 3.0));
@@ -346,15 +347,17 @@ fn rede_de_eletrodutos_liga_os_pontos() {
     let d = planta();
     let a = analisar(&d);
     let rede = rota::Rede::montar(&d, &Setup::default(), &a.pontos, 1.0);
-    assert_eq!(rede.trechos, 5);
-    // A caixa de passagem longe da rede não liga; todo o resto liga.
-    assert_eq!(rede.ligacoes.len(), 7);
-    let qd = rede.ligacoes[&quadro(&d)].no;
-    let arvore = rede.arvore(qd);
+    assert_eq!((rede.arestas.len(), rede.soltos.len()), (6, 0));
+    // Todo ponto é um nó; a caixa de passagem longe da rede fica sem aresta.
+    assert_eq!(rede.nos.len(), 8);
+    let caixa = a.pontos.iter().find(|p| p.tipo == TipoPonto::Caixa).unwrap();
+    assert!(!rede.conectado(caixa.handle));
+    let arvore = rede.arvore(rede.no_de(quadro(&d)).unwrap());
     let luz2 = a.pontos.iter().find(|p| p.tag.as_deref() == Some("LUZ-2")).unwrap();
-    assert!(perto(arvore.distancia[rede.ligacoes[&luz2.handle].no], 8.0, 1e-9));
-    // A TUG em (2,0) cortou o trecho do quadro à primeira luz.
-    assert_eq!(arvore.caminho(rede.ligacoes[&luz2.handle].no).unwrap().len(), 3);
+    // Passa pela TUG (0,30 m) em (2,0) e pela primeira luz.
+    let n = rede.no_de(luz2.handle).unwrap();
+    assert_eq!(arvore.caminho(n).unwrap().len(), 3);
+    assert!(perto(arvore.distancia[n], (2.0 + 1.3 + 2.5) + (2.0 + 2.5) + 4.0, 1e-9));
 }
 
 #[test]
@@ -362,28 +365,28 @@ fn rotear_quadro_calcula_comprimento_queda_e_fca() {
     let d = planta();
     let a = analisar(&d);
     let r = rotear_quadro(&d, &a, &Setup::default(), quadro(&d)).unwrap();
-    assert_eq!((r.tag.as_str(), r.fases_quadro, r.trechos_eletroduto), ("QD-01", 3, 5));
+    assert_eq!((r.tag.as_str(), r.fases_quadro, r.trechos_eletroduto), ("QD-01", 3, 6));
     assert_eq!(r.linhas.len(), 3);
     let (c1, c2, c3) = (&r.linhas[0], &r.linhas[1], &r.linhas[2]);
-    // Pé-direito 2,80; quadro a 1,50: perna do quadro 1,30 m. Luz no teto; interruptor a 1,10.
-    // Circuito 1, até a luz 2: 8 m + 1,30 = 9,30 m.
-    assert!(perto(c1.comprimento.unwrap(), 9.3, 1e-9));
-    // Momento até a luz 2: 2,047 A × 4 m + 1,26 A × 4 m + 2,047 A × 1,30 m = 15,89 A·m.
-    let q1 = nbr5410::queda_percentual(15.89, 1.5, 127.0, 1, nbr5410::Isolacao::Pvc);
+    // Pé-direito 2,80; quadro a 1,50. Circuito 1, até a luz 2, passando pela TUG (0,30 m) em (2,0):
+    // (2 + 1,30 + 2,50) + (2 + 2,50) + 4 = 14,30 m.
+    assert!(perto(c1.comprimento.unwrap(), 14.3, 1e-9));
+    // Momento até a luz 2: 2,047 A × 10,30 m + 1,26 A × 4 m = 26,12 A·m.
+    let q1 = nbr5410::queda_percentual((260.0 / 127.0) * 10.3 + (160.0 / 127.0) * 4.0, 1.5, 127.0, 1, nbr5410::Isolacao::Pvc);
     assert!(perto(c1.escolha.queda.unwrap(), q1, 0.001), "{:?} vs {q1}", c1.escolha.queda);
     // Os circuitos 1 e 2 dividem o trecho do quadro até (2,0): FCA 0,80 nos dois.
     assert_eq!((c1.agrupados, c1.fca), (2, 0.8));
     assert_eq!((c2.agrupados, c2.fca), (2, 0.8));
     assert_eq!((c3.agrupados, c3.fca), (1, 1.0));
-    // Circuito 2: até a TUG em (0,3): 3 m + 2,50 de descida + 1,30 = 6,80 m.
+    // Circuito 2: até a TUG em (0,3): 3 m + 1,30 do quadro + 2,50 de descida = 6,80 m.
     assert!(perto(c2.comprimento.unwrap(), 6.8, 1e-9));
     assert_eq!((c2.escolha.secao, c2.escolha.disjuntor), (Some(2.5), Some(10.0)));
     // Chuveiro: 4 mm², 25 A; 5 m + 0,60 + 1,30.
     assert!(perto(c3.comprimento.unwrap(), 6.9, 1e-9));
     assert_eq!((c3.escolha.secao, c3.escolha.disjuntor), (Some(4.0), Some(25.0)));
     assert_eq!(c3.indicacao, "2F+T #4");
-    // Fases: chuveiro em A+B, TUG em C, luz em C (a menos carregada).
-    assert_eq!((c3.fases_texto().as_str(), c2.fases_texto().as_str(), c1.fases_texto().as_str()), ("A+B", "C", "C"));
+    // Fases: chuveiro em R+S, TUG em T, luz em T (a menos carregada).
+    assert_eq!((c3.fases_texto().as_str(), c2.fases_texto().as_str(), c1.fases_texto().as_str()), ("R+S", "T", "T"));
     assert_eq!(r.potencia_total, 6860.0);
     // Materiais: 3 condutores por circuito monofásico, fator 1,10.
     let cabo_25 = r.materiais.iter().find(|(s, _)| *s == 2.5).unwrap().1;
@@ -462,14 +465,15 @@ fn passagem_do_teto_ao_piso_soma_um_pe_direito() {
     let mut d = metros();
     inserir(&mut d, "QD", 0.0, 0.0, &[("TIPO_PONTO", "QUADRO"), ("ALTURA", "1,5")]);
     inserir(&mut d, "TUG", 4.0, 0.0, &[("TIPO_PONTO", "TUG"), ("POTENCIA", "600VA"), ("TENSAO", "127V"), ("CIRCUITO", "1"), ("ALTURA", "0,3")]);
-    eletroduto_em(&mut d, "ELE-ELETRODUTO-PVC-MEDIA-TETO", (0.0, 0.0), (2.0, 0.0));
-    eletroduto_em(&mut d, "ELE-ELETRODUTO-PVC-MEDIA-PISO", (2.0, 0.0), (4.0, 0.0));
+    // A passagem é numa caixa, no teto: sem bloco ali, os trechos não se ligariam.
+    inserir(&mut d, "CX", 2.0, 0.0, &[("TIPO_PONTO", "CAIXA DE PASSAGEM")]);
+    eletroduto_em(&mut d, "ELE-ELETRODUTO-TETO", (0.0, 0.0), (2.0, 0.0));
+    eletroduto_em(&mut d, "ELE-ELETRODUTO-PISO", (2.0, 0.0), (4.0, 0.0));
     let a = analisar(&d);
     let rede = rota::Rede::montar(&d, &Setup::default(), &a.pontos, 1.0);
-    // Dois trechos e a subida entre eles.
-    assert_eq!(rede.arestas.len(), 3);
+    assert_eq!(rede.arestas.len(), 2);
     let r = rotear_quadro(&d, &a, &Setup::default(), quadro(&d)).unwrap();
-    // Quadro no teto (1,30) + 2 m + subida 2,80 + 2 m no piso + tomada 0,30.
+    // Quadro ao teto (1,30) + 2 m + da caixa ao piso (2,80) + 2 m + tomada (0,30).
     assert!(perto(r.linhas[0].comprimento.unwrap(), 1.3 + 2.0 + 2.8 + 2.0 + 0.3, 1e-9), "{:?}", r.linhas[0].comprimento);
     // Com as camadas de piso desligadas tudo corre no teto.
     let teto = Setup { camadas_piso: String::new(), ..Setup::default() };
@@ -483,8 +487,8 @@ fn sem_eletrodutos_estima_e_avisa() {
     inserir(&mut d, "QD", 0.0, 0.0, &[("TIPO_PONTO", "QUADRO"), ("ALTURA", "1,5")]);
     inserir(&mut d, "TUG", 3.0, 4.0, &[("TIPO_PONTO", "TUG"), ("POTENCIA", "600VA"), ("TENSAO", "127V"), ("CIRCUITO", "1"), ("ALTURA", "0,3")]);
     let r = rotear_quadro(&d, &analisar(&d), &Setup::default(), quadro(&d)).unwrap();
-    // Em L: 3 + 4 m, mais as pernas.
-    assert!(perto(r.linhas[0].comprimento.unwrap(), 7.0 + 2.5 + 1.3, 1e-9));
+    // Manhattan 3D: 3 + 4 m + |0,30 - 1,50|.
+    assert!(perto(r.linhas[0].comprimento.unwrap(), 7.0 + 1.2, 1e-9));
     assert_eq!(r.linhas[0].fora_da_rede, 1);
     assert!(r.avisos.iter().any(|w| w.contains("nenhum eletroduto")));
 }
@@ -504,8 +508,8 @@ fn atributo_constante_vem_da_definicao_do_bloco() {
 // ------------------------------------------------------------------ fiação
 
 fn trecho(f: &fiacao::Fiacao, a: (f64, f64), b: (f64, f64)) -> &fiacao::Trecho {
-    let igual = |p: [f64; 2], q: (f64, f64)| perto(p[0], q.0, 1e-6) && perto(p[1], q.1, 1e-6);
-    f.trechos.iter().find(|t| (igual(t.a, a) && igual(t.b, b)) || (igual(t.a, b) && igual(t.b, a))).unwrap_or_else(|| panic!("trecho {a:?}-{b:?}"))
+    let meio = ((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0);
+    f.trechos.iter().find(|t| perto(t.meio[0], meio.0, 1e-6) && perto(t.meio[1], meio.1, 1e-6)).unwrap_or_else(|| panic!("trecho {a:?}-{b:?}"))
 }
 
 fn circ<'a>(t: &'a fiacao::Trecho, id: &str) -> &'a fiacao::Condutores {
@@ -536,76 +540,8 @@ fn fiacao_por_trecho() {
     // Chuveiro bifásico: duas fases e proteção, sem neutro.
     let c3 = circ(trecho(&f, (0.0, 0.0), (0.0, -5.0)), "3");
     assert_eq!((c3.fases, c3.neutro, c3.protecao), (2, false, true));
-    let n = fiacao::contagem(&f);
+    let n = fiacao::contagem(&f.trechos);
     assert_eq!((n["FIACAO-FASE"], n["FIACAO-NEUTRO"], n["FIACAO-RETORNO"], n["FIACAO-PROTECAO"]), (7, 5, 2, 6));
-}
-
-#[test]
-fn ajustar_fiacao_desenha_e_refaz() {
-    let mut d = planta();
-    let qd = quadro(&d);
-    let setup = Setup::default();
-    let f = fiacao::calcular(&d, &analisar(&d), &setup, qd).unwrap();
-    // 20 marcas; em cima, 7 números de circuito e 2 letras de retorno; embaixo, 7 seções e 6 diâmetros.
-    assert_eq!(fiacao::aplicar(&mut d, &f, &setup).unwrap(), 42);
-    for tipo in fiacao::TipoCondutor::TODOS {
-        assert!(d.blocks.contains_key(tipo.bloco()), "{}", tipo.bloco());
-    }
-    assert!(d.layer(fiacao::CAMADA).is_some());
-    assert_eq!(fiacao::gerados(&d, qd).len(), 42);
-    let textos: Vec<String> = d.model.iter().filter_map(|e| if let EntityKind::Text(t) = &e.kind { Some(t.value.clone()) } else { None }).collect();
-    assert!(
-        textos.contains(&"#2,5".to_string())
-            && textos.contains(&"#4".to_string())
-            && textos.contains(&"a".to_string())
-            && textos.iter().filter(|t| *t == "%%c20").count() == 6,
-        "{textos:?}"
-    );
-    // No trecho horizontal (4,0)-(8,0), nada fica um sobre o outro: as marcas vão de -0,05 a
-    // 0,05; o circuito fica acima delas, a seção abaixo e o diâmetro (menor) abaixo da seção.
-    // (valor, centro y, altura): os textos são centrados no ponto de inserção.
-    let no_trecho: Vec<(String, f64, f64)> = d
-        .model
-        .iter()
-        .filter_map(|e| if let EntityKind::Text(t) = &e.kind { Some((t.value.clone(), t.insert.x, t.insert.y, t.height)) } else { None })
-        .filter(|(_, x, y, _)| *x > 4.0 && *x < 8.0 && y.abs() < 0.5)
-        .map(|(v, _, y, h)| (v, y, h))
-        .collect();
-    let (base, topo) = (|t: &(String, f64, f64)| t.1 - t.2 / 2.0, |t: &(String, f64, f64)| t.1 + t.2 / 2.0);
-    let diametro = no_trecho.iter().find(|t| t.0.starts_with("%%c")).expect("diâmetro no trecho");
-    let secoes: Vec<&(String, f64, f64)> = no_trecho.iter().filter(|t| t.0.starts_with('#')).collect();
-    let acima: Vec<&(String, f64, f64)> = no_trecho.iter().filter(|t| t.1 > 0.0).collect();
-    assert!(!secoes.is_empty() && !acima.is_empty(), "{no_trecho:?}");
-    assert!(acima.iter().all(|t| base(t) > 0.05), "circuito encosta nas marcas: {no_trecho:?}");
-    assert!(secoes.iter().all(|t| topo(t) < -0.05), "seção encosta nas marcas: {no_trecho:?}");
-    assert!(secoes.iter().all(|t| topo(diametro) < base(t)), "diâmetro sobre a seção: {no_trecho:?}");
-    assert!(secoes.iter().all(|t| diametro.2 < t.2), "o diâmetro é escrito menor: {no_trecho:?}");
-    // Nos trechos horizontais, textos na mesma linha não se sobrepõem (circuitos vizinhos).
-    let horizontais: Vec<(String, f64, f64, f64)> = d
-        .model
-        .iter()
-        .filter_map(|e| if let EntityKind::Text(t) = &e.kind { Some((t.value.clone(), t.insert.x, t.insert.y, t.height)) } else { None })
-        .filter(|t| t.2.abs() < 0.5)
-        .collect();
-    for (i, a) in horizontais.iter().enumerate() {
-        for b in horizontais.iter().skip(i + 1).filter(|b| (b.2 - a.2).abs() < 1e-9) {
-            let folga = (a.1 - b.1).abs() - (fiacao::largura_texto(&a.0, a.3) + fiacao::largura_texto(&b.0, b.3)) / 2.0;
-            assert!(folga >= 0.0, "\"{}\" e \"{}\" se sobrepõem: {horizontais:?}", a.0, b.0);
-        }
-    }
-    // Rodar de novo não duplica: apaga e refaz.
-    let f = fiacao::calcular(&d, &analisar(&d), &setup, qd).unwrap();
-    assert_eq!(fiacao::aplicar(&mut d, &f, &setup).unwrap(), 42);
-    assert_eq!(fiacao::gerados(&d, qd).len(), 42);
-    // As marcas não viram pontos elétricos nem eletrodutos.
-    assert_eq!(analisar(&d).pontos.len(), 8);
-    // Seção omitida sai do rótulo.
-    let omite = Setup { secoes_omitidas: vec![2.5], ..Setup::default() };
-    fiacao::aplicar(&mut d, &f, &omite).unwrap();
-    let textos: Vec<String> = d.model.iter().filter_map(|e| if let EntityKind::Text(t) = &e.kind { Some(t.value.clone()) } else { None }).collect();
-    assert!(textos.contains(&"2".to_string()) && !textos.iter().any(|t| t.contains("#2,5")), "{textos:?}");
-    assert_eq!(fiacao::limpar(&mut d, qd), 40);
-    assert!(fiacao::gerados(&d, qd).is_empty());
 }
 
 #[test]
@@ -951,11 +887,9 @@ fn eletroduto_em_arco_entra_no_roteamento_e_na_fiacao() {
     let mut d = metros();
     let qd = inserir(&mut d, "QD", 0.0, 0.0, &[("TIPO_PONTO", "QUADRO"), ("ALTURA", "1,50")]);
     let tug = inserir(&mut d, "TUG", 4.0, 0.0, &[("TIPO_PONTO", "TUG"), ("POTENCIA", "600VA"), ("CIRCUITO", "1"), ("ALTURA", "0,30")]);
-    let (a, b) = (eletroduto::posicao(&d, qd).unwrap(), eletroduto::posicao(&d, tug).unwrap());
-    let h = eletroduto::inserir(&mut d, a, b, false, 0.15).unwrap();
+    let h = eletroduto::inserir(&mut d, qd, tug, rota::Instalacao::Teto, 0.15).unwrap();
     assert!(matches!(&d.model.get(h).unwrap().kind, EntityKind::Spline(_)));
     assert_eq!(d.model.get(h).unwrap().common.layer, eletroduto::CAMADA_TETO);
-    assert!(eletroduto::inserir(&mut d, a, a, false, 0.15).is_err(), "mesmo lugar");
     // Comprimento: o arco (2φR = 4,237 m) mais a descida do quadro (1,30) e da tomada (2,50).
     let r = rotear_quadro(&d, &analisar(&d), &Setup::default(), qd).unwrap();
     let raio: f64 = (4.0 + 0.36) / 1.2;
@@ -963,11 +897,18 @@ fn eletroduto_em_arco_entra_no_roteamento_e_na_fiacao() {
     let c = r.linhas[0].comprimento.unwrap();
     assert!(perto(c, arco + 1.3 + 2.5, 0.01), "{c} vs {}", arco + 3.8);
     assert_eq!(r.linhas[0].fora_da_rede, 0);
-    // A fiação marca a curva uma vez só, no pedaço do meio.
+    // A curva é um trecho só, e a tag fica no meio dela.
     let f = fiacao::calcular(&d, &analisar(&d), &Setup::default(), qd).unwrap();
     assert_eq!(f.trechos.len(), 1, "{:?}", f.trechos);
     let t = &f.trechos[0];
-    assert!(((t.a[0] + t.b[0]) / 2.0 - 2.0).abs() < 0.2 && t.a[1] > 0.5, "{t:?}");
+    assert!(perto(t.meio[0], 2.0, 0.01) && perto(t.meio[1], 0.6, 0.01) && perto(t.angulo, 0.0, 0.05), "{t:?}");
+    // Com flecha zero o eletroduto é uma linha.
+    let mut d2 = metros();
+    let a = inserir(&mut d2, "QD", 0.0, 0.0, &[("TIPO_PONTO", "QUADRO")]);
+    let b = inserir(&mut d2, "TUG", 4.0, 0.0, &[("TIPO_PONTO", "TUG")]);
+    let h = eletroduto::inserir(&mut d2, a, b, rota::Instalacao::Piso, 0.0).unwrap();
+    assert!(matches!(&d2.model.get(h).unwrap().kind, EntityKind::Line(_)));
+    assert_eq!(d2.model.get(h).unwrap().common.layer, eletroduto::CAMADA_PISO);
 }
 
 /// Um bloco de tomada com atributos na definição (TIPO_PONTO constante).
@@ -1030,6 +971,612 @@ fn setup_normaliza_a_concessionaria() {
     let mut s = Setup { concessionaria: "nenhuma".into(), edificacao: "hotéis".into(), ..Setup::default() };
     s.normalizar();
     assert_eq!((s.concessionaria.as_str(), s.edificacao.as_str()), ("equatorial-nt001-r07", "Hotéis"));
+}
+
+// ------------------------------------------------------------------ versão 2.0
+
+/// Uma tomada em (x, y).
+fn tug(d: &mut Drawing, x: f64, y: f64, circuito: &str) -> Handle {
+    inserir(d, "TOMADA", x, y, &[("TIPO_PONTO", "TUG"), ("POTENCIA", "600VA"), ("TENSAO", "127V"), ("CIRCUITO", circuito), ("ALTURA", "0,30")])
+}
+
+fn qd(d: &mut Drawing, x: f64, y: f64) -> Handle {
+    inserir(d, "QD", x, y, &[("TIPO_PONTO", "QUADRO"), ("TAG", "QD-01"), ("ALTURA", "1,50")])
+}
+
+fn caixa(d: &mut Drawing, x: f64, y: f64) -> Handle {
+    inserir(d, "CX", x, y, &[("TIPO_PONTO", "CAIXA DE PASSAGEM")])
+}
+
+fn rede_de(d: &Drawing) -> rota::Rede {
+    rota::Rede::montar(d, &Setup::default(), &analisar(d).pontos, 1.0)
+}
+
+#[test]
+fn grafo_estrito_cruzamento_em_x_nao_liga() {
+    let mut d = metros();
+    let q = qd(&mut d, 0.0, 0.0);
+    let t = tug(&mut d, 4.0, 0.0, "1");
+    let (a, b) = (caixa(&mut d, 2.0, -2.0), caixa(&mut d, 2.0, 2.0));
+    eletroduto(&mut d, (0.0, 0.0), (4.0, 0.0));
+    // Uma linha cruza em X a primeira, ligando duas caixas, sem bloco no cruzamento.
+    eletroduto(&mut d, (2.0, -2.0), (2.0, 2.0));
+    let rede = rede_de(&d);
+    assert_eq!(rede.arestas.len(), 2);
+    let arvore = rede.arvore(rede.no_de(q).unwrap());
+    assert!(arvore.distancia[rede.no_de(t).unwrap()].is_finite());
+    assert!(arvore.caminho(rede.no_de(a).unwrap()).is_none(), "o X não pode ligar a caixa ao quadro");
+    assert!(arvore.caminho(rede.no_de(b).unwrap()).is_none());
+}
+
+#[test]
+fn grafo_estrito_t_e_bloco_no_meio_nao_ligam() {
+    let mut d = metros();
+    let q = qd(&mut d, 0.0, 0.0);
+    let longe = tug(&mut d, 6.0, 0.0, "1");
+    // Em T: a ponta encosta no meio do outro eletroduto.
+    let t = tug(&mut d, 3.0, 2.0, "1");
+    // Um bloco em cima do meio do eletroduto.
+    let no_meio = tug(&mut d, 1.5, 0.0, "1");
+    eletroduto(&mut d, (0.0, 0.0), (6.0, 0.0));
+    eletroduto(&mut d, (3.0, 0.0), (3.0, 2.0));
+    let rede = rede_de(&d);
+    let arvore = rede.arvore(rede.no_de(q).unwrap());
+    assert!(arvore.caminho(rede.no_de(longe).unwrap()).is_some());
+    assert!(arvore.caminho(rede.no_de(t).unwrap()).is_none(), "T sem caixa não liga");
+    assert!(arvore.caminho(rede.no_de(no_meio).unwrap()).is_none(), "bloco no meio do trecho não liga");
+    // O ramal em T tem uma ponta sem bloco: fica solto e é apontado.
+    assert_eq!(rede.soltos.len(), 1);
+    assert!(rede.soltos[0].motivo.contains("uma das pontas"), "{:?}", rede.soltos);
+}
+
+#[test]
+fn grafo_estrito_pontas_sem_bloco_nao_se_ligam() {
+    let mut d = metros();
+    let q = qd(&mut d, 0.0, 0.0);
+    let t = tug(&mut d, 4.0, 0.0, "1");
+    // Duas linhas com pontas coincidentes em (2,0), sem bloco ali.
+    eletroduto(&mut d, (0.0, 0.0), (2.0, 0.0));
+    eletroduto(&mut d, (2.0, 0.0), (4.0, 0.0));
+    let rede = rede_de(&d);
+    assert_eq!((rede.arestas.len(), rede.soltos.len()), (0, 2));
+    let r = rotear_quadro(&d, &analisar(&d), &Setup::default(), q).unwrap();
+    // Sem caminho: estimado por Manhattan 3D (4 m + |0,30 - 1,50|).
+    assert!(perto(r.linhas[0].comprimento.unwrap(), 5.2, 1e-9));
+    assert_eq!(r.linhas[0].fora_da_rede, 1);
+    assert!(r.avisos.iter().any(|w| w.contains("sem bloco nas duas pontas")), "{:?}", r.avisos);
+    // Com uma caixa em (2,0), ligam; e passa a valer o comprimento real.
+    caixa(&mut d, 2.0, 0.0);
+    let rede = rede_de(&d);
+    assert_eq!((rede.arestas.len(), rede.soltos.len()), (2, 0));
+    assert!(rede.arvore(rede.no_de(q).unwrap()).caminho(rede.no_de(t).unwrap()).is_some());
+}
+
+#[test]
+fn eletroduto_grava_as_pontas_e_elas_valem_entre_blocos_vizinhos() {
+    let mut d = metros();
+    let q = qd(&mut d, 0.0, 0.0);
+    // Duas tomadas a 10 cm uma da outra, dentro do raio de captura da ponta.
+    let t1 = tug(&mut d, 4.0, 0.0, "1");
+    let t2 = tug(&mut d, 4.1, 0.0, "2");
+    let h = eletroduto::inserir(&mut d, q, t2, rota::Instalacao::Teto, 0.0).unwrap();
+    let xd = xdata::ler(&d.model.get(h).unwrap().common.xdata);
+    assert!(xd.contains(&(rota::CHAVE_DE.to_string(), q.hex())) && xd.contains(&(rota::CHAVE_PARA.to_string(), t2.hex())), "{xd:?}");
+    let rede = rede_de(&d);
+    let a = &rede.arestas[0];
+    assert_eq!((rede.nos[a.de].handle, rede.nos[a.para].handle), (q, t2));
+    let _ = t1;
+    // A cópia do eletroduto noutro lugar: o gravado não encosta, então vale a geometria.
+    let copia = Common { layer: eletroduto::CAMADA_TETO.into(), xdata: d.model.get(h).unwrap().common.xdata.clone(), ..Common::default() };
+    d.add(&Space::Model, copia, EntityKind::Line(Line { a: Vec3::new(20.0, 0.0, 0.0), b: Vec3::new(30.0, 0.0, 0.0) })).unwrap();
+    let rede = rede_de(&d);
+    assert_eq!((rede.arestas.len(), rede.soltos.len()), (1, 1));
+    // Bloco que não é elétrico, ou o mesmo nas duas pontas: erro.
+    assert!(eletroduto::inserir(&mut d, q, q, rota::Instalacao::Teto, 0.15).is_err());
+    assert!(eletroduto::inserir(&mut d, q, Handle(0xFFFF), rota::Instalacao::Teto, 0.15).is_err());
+}
+
+#[test]
+fn comprimento_3d_de_cada_instalacao() {
+    for (instalacao, esperado) in [
+        // 2D + |cota - Z do quadro| + |cota - Z da tomada|; pé-direito 2,80.
+        (rota::Instalacao::Teto, 4.0 + 1.3 + 2.5),
+        (rota::Instalacao::Piso, 4.0 + 1.5 + 0.3),
+        // Na parede a cota é a do bloco A.
+        (rota::Instalacao::Parede, 4.0 + 0.0 + 1.2),
+    ] {
+        let mut d = metros();
+        let q = qd(&mut d, 0.0, 0.0);
+        let t = tug(&mut d, 4.0, 0.0, "1");
+        eletroduto::inserir(&mut d, q, t, instalacao, 0.0).unwrap();
+        let rede = rede_de(&d);
+        assert_eq!(rede.arestas[0].instalacao, instalacao);
+        assert!(perto(rede.arestas[0].comprimento_2d, 4.0, 1e-9));
+        assert!(perto(rede.arestas[0].comprimento, esperado, 1e-9), "{instalacao:?}: {}", rede.arestas[0].comprimento);
+        let r = rotear_quadro(&d, &analisar(&d), &Setup::default(), q).unwrap();
+        assert!(perto(r.linhas[0].comprimento.unwrap(), esperado, 1e-9));
+    }
+}
+
+#[test]
+fn clicar_no_meio_divide_e_insere_caixa() {
+    let mut d = metros();
+    let setup = Setup::default();
+    let q = qd(&mut d, 0.0, 0.0);
+    let t = tug(&mut d, 6.0, 0.0, "1");
+    let h = eletroduto::inserir(&mut d, q, t, rota::Instalacao::Teto, 0.0).unwrap();
+    // Longe de qualquer eletroduto, nada; perto do meio, o eletroduto.
+    assert!(eletroduto::eletroduto_em(&d, &setup, [3.0, 5.0], 1.0).is_none());
+    let (achado, p) = eletroduto::eletroduto_em(&d, &setup, [3.0, 0.1], 1.0).unwrap();
+    assert_eq!(achado, h);
+    assert!(perto(p[0], 3.0, 1e-9) && perto(p[1], 0.0, 1e-9));
+    assert!(eletroduto::dividir(&mut d, &setup, h, [0.0, 0.0], 1.0).is_err(), "na ponta não divide");
+    let cx = eletroduto::dividir(&mut d, &setup, h, p, 1.0).unwrap();
+    let a = analisar(&d);
+    let ponto_cx = a.ponto(cx).unwrap();
+    assert_eq!((ponto_cx.tipo, ponto_cx.posicao), (TipoPonto::Caixa, [3.0, 0.0]));
+    let rede = rede_de(&d);
+    assert_eq!((rede.arestas.len(), rede.soltos.len()), (2, 0));
+    let arvore = rede.arvore(rede.no_de(q).unwrap());
+    assert_eq!(arvore.caminho(rede.no_de(t).unwrap()).unwrap().len(), 2);
+    assert!(perto(arvore.distancia[rede.no_de(cx).unwrap()], 3.0 + 1.3, 1e-9));
+    // A derivação em T agora liga pela caixa.
+    let ramal = tug(&mut d, 3.0, 2.0, "1");
+    eletroduto::inserir(&mut d, cx, ramal, rota::Instalacao::Teto, 0.0).unwrap();
+    let rede = rede_de(&d);
+    assert!(rede.arvore(rede.no_de(q).unwrap()).caminho(rede.no_de(ramal).unwrap()).is_some());
+    // Uma curva também divide.
+    let mut d = metros();
+    let q = qd(&mut d, 0.0, 0.0);
+    let t = tug(&mut d, 6.0, 0.0, "1");
+    let h = eletroduto::inserir(&mut d, q, t, rota::Instalacao::Piso, 0.15).unwrap();
+    let cx = eletroduto::dividir(&mut d, &setup, h, [3.0, 0.9], 1.0).unwrap();
+    assert_eq!(ponto::ler_ponto(&d, cx).unwrap().altura, Some(0.0), "a caixa fica na cota do eletroduto");
+    assert_eq!(rede_de(&d).arestas.len(), 2);
+    assert!(rede_de(&d).arestas.iter().all(|a| a.instalacao == rota::Instalacao::Piso));
+}
+
+#[test]
+fn bootstrap_poe_camadas_e_blocos_uma_vez_e_respeita_os_do_projetista() {
+    let setup = Setup::default();
+    let mut d = metros();
+    let mut proprio = Block::new("QDG");
+    proprio.entities.push(Entity::new(Handle(991), EntityKind::AttDef(atributo("TIPO_PONTO", "QUADRO", true))));
+    d.blocks.insert("QDG".into(), Arc::new(proprio));
+    assert!(biblioteca::falta_base(&d));
+    assert!(biblioteca::garantir_base(&mut d, &setup, 1.0));
+    assert!(!biblioteca::falta_base(&d));
+    assert!(!biblioteca::garantir_base(&mut d, &setup, 1.0), "na segunda vez não muda nada");
+    assert_eq!(d.blocks["QDG"].entities.len(), 1, "o bloco do projetista fica");
+    for c in ["ELE-PONTOS", "ELE-QUADROS", "ELE-FIACAO", "ELE-ELETRODUTO-TETO", "ELE-ELETRODUTO-PISO"] {
+        assert!(d.layer(c).is_some(), "{c}");
+    }
+    // Todos os tipos da barra de inserção existem, e cada um é um ponto do tipo certo.
+    let blocos = biblioteca::blocos(&d);
+    let tipo = |n: &str| blocos.iter().find(|b| b.nome == n).map(|b| b.tipo);
+    assert_eq!(tipo("TOM-SIM-BAIXA"), Some(TipoPonto::Tomada));
+    assert_eq!(tipo("TOM-TUE"), Some(TipoPonto::TomadaEspecifica));
+    assert_eq!(tipo("ILU-OCT"), Some(TipoPonto::Iluminacao));
+    assert_eq!(tipo("CX-PASSAGEM"), Some(TipoPonto::Caixa));
+    assert_eq!(tipo("QDC"), Some(TipoPonto::Quadro));
+    for (n, esperado) in [
+        ("INT-SIM", ponto::TipoInterruptor::Simples1),
+        ("INT-2S", ponto::TipoInterruptor::Simples2),
+        ("INT-3S", ponto::TipoInterruptor::Simples3),
+        ("INT-PAR", ponto::TipoInterruptor::Paralelo),
+        ("INT-INT", ponto::TipoInterruptor::Intermediario),
+    ] {
+        let h = biblioteca::inserir(&mut d, n, [1.0, 1.0], 0.0, &[]).unwrap();
+        let p = ponto::ler_ponto(&d, h).unwrap();
+        assert_eq!((p.tipo, p.tipo_interruptor), (TipoPonto::Interruptor, Some(esperado)), "{n}");
+    }
+    // Em milímetros, o símbolo sai 1000 vezes maior: tem o mesmo tamanho no mundo.
+    let mut mm = Drawing::new_metric();
+    biblioteca::garantir_base(&mut mm, &setup, 0.001);
+    let raio = mm.blocks["INT-SIM"].entities.iter().find_map(|e| if let EntityKind::Circle(c) = &e.kind { Some(c.radius) } else { None }).unwrap();
+    assert!(perto(raio, 75.0, 1e-9));
+}
+
+#[test]
+fn rotacao_alinha_a_parede_mais_proxima() {
+    let setup = Setup::default();
+    let mut d = metros();
+    // Uma parede vertical em x = 2.
+    d.add(
+        &Space::Model,
+        Common { layer: "PAREDES".into(), ..Common::default() },
+        EntityKind::Line(Line { a: Vec3::new(2.0, 0.0, 0.0), b: Vec3::new(2.0, 5.0, 0.0) }),
+    )
+    .unwrap();
+    // Um eletroduto não é parede.
+    eletroduto(&mut d, (0.0, 0.0), (0.0, 5.0));
+    assert!(perto(biblioteca::alinhar_a_parede(&d, &setup, [2.1, 2.0], 1.0).unwrap(), 90.0, 1e-9));
+    assert!(biblioteca::alinhar_a_parede(&d, &setup, [5.0, 2.0], 1.0).is_none(), "longe da parede");
+    assert!(biblioteca::alinhar_a_parede(&d, &setup, [0.1, 2.0], 1.0).is_none(), "o eletroduto não alinha");
+}
+
+#[test]
+fn esquema_tensao_e_fases_travadas_do_circuito() {
+    let mut d = planta();
+    let qd = quadro(&d);
+    // F+N: sem proteção, um condutor a menos no eletroduto e na indicação.
+    editar::definir_esquema(&mut d, qd, "2", Some(nbr5410::Esquema::Fn)).unwrap();
+    let r = rotear_quadro(&d, &analisar(&d), &Setup::default(), qd).unwrap();
+    assert_eq!((r.linhas[1].esquema, r.linhas[1].condutores), (nbr5410::Esquema::Fn, 2));
+    assert_eq!(r.linhas[1].indicacao, "F+N #2,5");
+    let f = fiacao::calcular(&d, &analisar(&d), &Setup::default(), qd).unwrap();
+    let c2 = circ(trecho(&f, (0.0, 0.0), (0.0, 3.0)), "2");
+    assert_eq!((c2.fases, c2.neutro, c2.protecao), (1, true, false));
+    // A tensão do circuito vale sobre a dos pontos: 1200 VA a 220 V = 5,45 A.
+    editar::definir_tensao_circuito(&mut d, qd, "2", Some(220.0)).unwrap();
+    assert!(editar::definir_tensao_circuito(&mut d, qd, "2", Some(-1.0)).is_err());
+    let r = rotear_quadro(&d, &analisar(&d), &Setup::default(), qd).unwrap();
+    assert!(perto(r.linhas[1].escolha.ib, 1200.0 / 220.0, 1e-9));
+    assert_eq!(r.linhas[1].tensao, 220.0);
+    // Fases: sem trava o chuveiro vai para R+S e a TUG para T; travada, a TUG fica em R.
+    assert_eq!(r.linhas[1].fases_texto(), "T");
+    editar::travar_fases(&mut d, qd, "2", Some("r")).unwrap();
+    assert!(editar::travar_fases(&mut d, qd, "2", Some("X")).is_err());
+    let r = rotear_quadro(&d, &analisar(&d), &Setup::default(), qd).unwrap();
+    assert_eq!((r.linhas[1].fases_texto().as_str(), r.linhas[1].fases_travadas), ("R", true));
+    assert_eq!(r.carga_por_fase.iter().sum::<f64>(), r.potencia_total);
+    // Excluir o circuito apaga o que foi escolhido para ele.
+    editar::excluir_circuito(&mut d, qd, "2").unwrap();
+    assert!(!quadro::propriedades(analisar(&d).ponto(qd).unwrap()).contains_key("2"));
+}
+
+#[test]
+fn corrente_corrigida_e_alimentador() {
+    let d = planta();
+    let r = rotear_quadro(&d, &analisar(&d), &Setup::default(), quadro(&d)).unwrap();
+    // I'b = Ib / (FCT × FCA): a TUG tem FCA 0,80.
+    let c2 = &r.linhas[1];
+    assert!(perto(c2.escolha.ib_corrigida, c2.escolha.ib / 0.8, 1e-9));
+    // Alimentador pela corrente demandada: 5580 VA trifásico a 380 V = 8,5 A... em 2,5 mm².
+    let a = &r.alimentador;
+    assert!(perto(a.ib, r.corrente_demandada, 1e-12));
+    assert_eq!((a.secao, a.disjuntor, a.dr), (Some(2.5), Some(10.0), Some(25.0)));
+    assert!(perto(a.dps_uc, 1.1 * 220.0, 1e-9));
+    // Corrente acima da tabela: sem seção, sem disjuntor e sem DR.
+    let cfg = nbr5410::Config { isolacao: nbr5410::Isolacao::Pvc, ..Config::default() };
+    let grande = quadro::alimentador(5000.0, 3, 220.0, &cfg);
+    assert_eq!((grande.secao, grande.disjuntor, grande.dr), (None, None, None));
+}
+
+#[test]
+fn interruptor_paralelo_leva_retornos_paralelos() {
+    let mut d = metros();
+    let q = qd(&mut d, 0.0, 0.0);
+    let par = [
+        ("TIPO_PONTO", "INTERRUPTOR"),
+        ("TIPO_INTERRUPTOR", "PARALELO"),
+        ("POTENCIA", "0W"),
+        ("TENSAO", "127V"),
+        ("CIRCUITO", "1"),
+        ("COMANDO", "a"),
+        ("ALTURA", "1,10"),
+    ];
+    let s1 = inserir(&mut d, "INT", 2.0, 0.0, &par);
+    let s2 = inserir(&mut d, "INT", 4.0, 0.0, &par);
+    let luz =
+        inserir(&mut d, "LUZ", 6.0, 0.0, &[("TIPO_PONTO", "ILUM"), ("POTENCIA", "100VA"), ("TENSAO", "127V"), ("CIRCUITO", "1"), ("COMANDO", "a")]);
+    for (a, b) in [(q, s1), (s1, s2), (s2, luz)] {
+        eletroduto::inserir(&mut d, a, b, rota::Instalacao::Teto, 0.0).unwrap();
+    }
+    let f = fiacao::calcular(&d, &analisar(&d), &Setup::default(), q).unwrap();
+    // Do quadro ao primeiro: a fase, e o neutro e a proteção que seguem até a luz.
+    let c = circ(trecho(&f, (0.0, 0.0), (2.0, 0.0)), "1");
+    assert_eq!((c.fases, c.neutro, c.protecao, c.retornos.len()), (1, true, true, 0));
+    // Entre os dois: os dois retornos paralelos, sem fase.
+    let c = circ(trecho(&f, (2.0, 0.0), (4.0, 0.0)), "1");
+    assert_eq!(c.fases, 0);
+    assert_eq!(c.retornos.iter().map(String::as_str).collect::<Vec<_>>(), ["a\"", "a'"]);
+    // Do último à luz: o retorno comum.
+    let c = circ(trecho(&f, (4.0, 0.0), (6.0, 0.0)), "1");
+    assert_eq!((c.fases, c.retornos.iter().map(String::as_str).collect::<Vec<_>>()), (0, vec!["a"]));
+    assert!(f.avisos.is_empty(), "{:?}", f.avisos);
+    assert_eq!(ponto::TipoInterruptor::de_texto("intermediário"), Some(ponto::TipoInterruptor::Intermediario));
+    assert_eq!(ponto::TipoInterruptor::Simples3.teclas(), 3);
+}
+
+/// A tag do eletroduto e a inserção dela.
+fn tag_de(d: &Drawing, eletroduto: Handle) -> (Handle, Insert) {
+    let (t, _) = fiacao::tags(d).into_iter().find(|(_, p)| *p == eletroduto).expect("tag do eletroduto");
+    let EntityKind::Insert(i) = &d.model.get(t).unwrap().kind else { panic!("a tag é um bloco") };
+    (t, i.clone())
+}
+
+/// Os textos do bloco de uma tag.
+fn textos_da_tag(d: &Drawing, i: &Insert) -> Vec<String> {
+    d.blocks[&i.block].entities.iter().filter_map(|e| if let EntityKind::Text(t) = &e.kind { Some(t.value.clone()) } else { None }).collect()
+}
+
+/// Os handles de todos os eletrodutos da planta.
+fn eletrodutos(d: &Drawing) -> Vec<Handle> {
+    rede_de(d).arestas.iter().map(|a| a.eletroduto).collect()
+}
+
+#[test]
+fn tags_de_fiacao_guardam_a_posicao_e_acompanham_o_projeto() {
+    let mut d = planta();
+    let setup = Setup::default();
+    let qd = quadro(&d);
+    let todos = eletrodutos(&d);
+    let r = fiacao::regenerar(&mut d, &setup, Some(&todos)).unwrap();
+    assert_eq!((r.criadas, r.tags), (6, 0));
+    // Rodar de novo sem pedir tags novas só atualiza: nada duplica.
+    let r = fiacao::regenerar(&mut d, &setup, None).unwrap();
+    assert_eq!((r.criadas, r.tags), (0, 6));
+    assert_eq!(fiacao::tags(&d).len(), 6);
+    for tipo in fiacao::TipoCondutor::TODOS {
+        assert!(d.blocks.contains_key(tipo.bloco()), "{}", tipo.bloco());
+    }
+    assert_eq!(analisar(&d).pontos.len(), 8, "as tags não viram pontos elétricos");
+
+    // A tag do trecho do chuveiro: no meio dele, com circuito, seção e diâmetro.
+    let rede = rede_de(&d);
+    let aresta = rede.arestas.iter().find(|a| perto(a.meio[1], -2.5, 1e-9)).unwrap().eletroduto;
+    let (tag, ins) = tag_de(&d, aresta);
+    assert!(perto(ins.insert.x, 0.0, 1e-9) && perto(ins.insert.y, -2.5, 1e-9), "{ins:?}");
+    assert!(perto(ins.rotation, std::f64::consts::FRAC_PI_2, 1e-9), "trecho vertical lê de baixo para cima: {}", ins.rotation);
+    let textos = textos_da_tag(&d, &ins);
+    assert!(textos.contains(&"3".to_string()) && textos.contains(&"#4".to_string()) && textos.contains(&"%%c20".to_string()), "{textos:?}");
+    // O eletroduto guarda as pontas, a tag, o diâmetro e os fios.
+    let xd = xdata::ler(&d.model.get(aresta).unwrap().common.xdata);
+    assert!(xd.contains(&(rota::CHAVE_TAG.to_string(), tag.hex())), "{xd:?}");
+    assert!(xd.iter().any(|(k, v)| k == "passing_wires.0" && v == "3:F,F,PE:4"), "{xd:?}");
+    assert!(xd.iter().any(|(k, v)| k == rota::CHAVE_DIAMETRO && v == "20"), "{xd:?}");
+
+    // O projetista move a tag; a seção do circuito muda; regenerar não mexe na posição.
+    let mut e = (**d.model.get(tag).unwrap()).clone();
+    if let EntityKind::Insert(i) = &mut e.kind {
+        i.insert = Vec3::new(1.0, -2.5, 0.0);
+    }
+    d.model.replace(e);
+    editar::definir_sobrescrita(&mut d, qd, "3", Some(6.0), None).unwrap();
+    assert!(fiacao::regenerar_se_houver(&mut d, &setup).unwrap().is_some());
+    let (t2, ins) = tag_de(&d, aresta);
+    assert_eq!(t2, tag, "a mesma tag");
+    assert!(perto(ins.insert.x, 1.0, 1e-9) && perto(ins.insert.y, -2.5, 1e-9), "a tag ficou onde o projetista pôs: {ins:?}");
+    let textos = textos_da_tag(&d, &ins);
+    assert!(textos.contains(&"#6".to_string()) && !textos.contains(&"#4".to_string()), "{textos:?}");
+    // Afastada, a tag ganha a linha de chamada até o meio do eletroduto.
+    let chamada =
+        d.blocks[&ins.block].entities.iter().find_map(|e| if let EntityKind::Line(l) = &e.kind { Some(l.clone()) } else { None }).expect("chamada");
+    // Girada 90°: o ponto (-1, 0) do mundo, em relação à tag, é (0, 1) no bloco.
+    assert!(perto(chamada.b.x, 0.0, 1e-9) && perto(chamada.b.y, 1.0, 1e-9), "{chamada:?}");
+
+    // O eletroduto apagado leva a tag junto.
+    d.model.remove(aresta);
+    let r = fiacao::regenerar(&mut d, &setup, None).unwrap();
+    assert_eq!(r.apagadas, 1);
+    assert_eq!(fiacao::tags(&d).len(), 5);
+    assert!(!d.blocks.contains_key(&format!("{}{}", fiacao::PREFIXO_TAG, aresta.hex())));
+    assert_eq!(fiacao::limpar(&mut d, None), 5);
+    assert!(fiacao::tags(&d).is_empty());
+    assert!(fiacao::regenerar_se_houver(&mut d, &setup).unwrap().is_none(), "sem tags nem tabelas, nada a fazer");
+}
+
+#[test]
+fn tag_sem_dados_mostra_o_aviso_e_marcas_antigas_somem() {
+    let mut d = metros();
+    let setup = Setup::default();
+    let q = qd(&mut d, 0.0, 0.0);
+    let c = caixa(&mut d, 3.0, 0.0);
+    let h = eletroduto::inserir(&mut d, q, c, rota::Instalacao::Teto, 0.0).unwrap();
+    // Uma marca solta da versão 1.
+    let mut x = Vec::new();
+    xdata::gravar(&mut x, "FIACAO", Some(&q.hex()));
+    let antiga = d
+        .add(&Space::Model, Common { xdata: x, ..Common::default() }, EntityKind::Line(Line { a: Vec3::ZERO, b: Vec3::new(1.0, 0.0, 0.0) }))
+        .unwrap();
+    let r = fiacao::regenerar(&mut d, &setup, Some(&[h])).unwrap();
+    assert_eq!((r.criadas, r.apagadas), (1, 1));
+    assert!(d.model.get(antiga).is_none());
+    let (_, ins) = tag_de(&d, h);
+    let textos = textos_da_tag(&d, &ins);
+    assert!(textos.contains(&"?".to_string()) && textos.contains(&"%%c?".to_string()), "{textos:?}");
+}
+
+#[test]
+fn textos_da_tag_nao_se_sobrepoem() {
+    let mut d = planta();
+    let setup = Setup::default();
+    let todos = eletrodutos(&d);
+    fiacao::regenerar(&mut d, &setup, Some(&todos)).unwrap();
+    // O primeiro trecho leva dois circuitos.
+    let rede = rede_de(&d);
+    let a = rede.arestas.iter().find(|a| perto(a.meio[0], 1.0, 1e-9) && perto(a.meio[1], 0.0, 1e-9)).unwrap().eletroduto;
+    let (_, ins) = tag_de(&d, a);
+    let textos: Vec<Text> =
+        d.blocks[&ins.block].entities.iter().filter_map(|e| if let EntityKind::Text(t) = &e.kind { Some(t.clone()) } else { None }).collect();
+    let (base, topo) = (|t: &Text| t.insert.y - t.height / 2.0, |t: &Text| t.insert.y + t.height / 2.0);
+    let diametro = textos.iter().find(|t| t.value.starts_with("%%c")).unwrap();
+    let secoes: Vec<&Text> = textos.iter().filter(|t| t.value.starts_with('#')).collect();
+    assert_eq!(secoes.len(), 2);
+    assert!(textos.iter().filter(|t| t.insert.y > 0.0).all(|t| base(t) > 0.05), "circuito encosta nas marcas");
+    assert!(secoes.iter().all(|t| topo(t) < -0.05 && topo(diametro) < base(t) && diametro.height < t.height));
+    // Textos na mesma linha não se sobrepõem (circuitos vizinhos).
+    for (i, a) in textos.iter().enumerate() {
+        for b in textos.iter().skip(i + 1).filter(|b| (b.insert.y - a.insert.y).abs() < 1e-9) {
+            let folga =
+                (a.insert.x - b.insert.x).abs() - (fiacao::largura_texto(&a.value, a.height) + fiacao::largura_texto(&b.value, b.height)) / 2.0;
+            assert!(folga >= 0.0, "\"{}\" e \"{}\" se sobrepõem", a.value, b.value);
+        }
+    }
+}
+
+#[test]
+fn diametro_travado_a_mao_vale_e_e_conferido() {
+    let mut d = planta();
+    let setup = Setup::default();
+    let qd = quadro(&d);
+    let rede = rede_de(&d);
+    let primeiro = rede.arestas.iter().find(|a| perto(a.meio[0], 1.0, 1e-9)).unwrap().eletroduto;
+    eletroduto::travar_diametro(&mut d, primeiro, Some(32.0)).unwrap();
+    assert!(eletroduto::travar_diametro(&mut d, primeiro, Some(-1.0)).is_err());
+    let f = fiacao::calcular(&d, &analisar(&d), &setup, qd).unwrap();
+    let t = trecho(&f, (0.0, 0.0), (2.0, 0.0));
+    assert_eq!((t.eletroduto.as_ref().map(|e| e.nominal), t.diametro_travado), (Some(32.0), true));
+    // Regenerar não troca o diâmetro travado.
+    fiacao::regenerar(&mut d, &setup, Some(&[primeiro])).unwrap();
+    assert_eq!(fiacao::diametro_travado(&d, primeiro), Some(32.0));
+    // Travado pequeno demais: passa do limite e avisa.
+    eletroduto::travar_diametro(&mut d, primeiro, Some(16.0)).unwrap();
+    let f = fiacao::calcular(&d, &analisar(&d), &setup, qd).unwrap();
+    assert!(trecho(&f, (0.0, 0.0), (2.0, 0.0)).ocupacao_excedida());
+    assert!(f.avisos.iter().any(|w| w.contains("travado")), "{:?}", f.avisos);
+    // Destravado: volta a ser automático.
+    eletroduto::travar_diametro(&mut d, primeiro, None).unwrap();
+    assert_eq!(fiacao::diametro_travado(&d, primeiro), None);
+    // A instalação muda com a camada.
+    eletroduto::definir_instalacao(&mut d, primeiro, rota::Instalacao::Parede).unwrap();
+    assert_eq!(d.model.get(primeiro).unwrap().common.layer, eletroduto::CAMADA_PAREDE);
+    assert_eq!(rede_de(&d).arestas.iter().find(|a| a.eletroduto == primeiro).unwrap().instalacao, rota::Instalacao::Parede);
+}
+
+#[test]
+fn tabela_do_quadro_no_desenho_se_refaz_no_mesmo_lugar() {
+    let mut d = planta();
+    let setup = Setup::default();
+    let qd = quadro(&d);
+    let a = analisar(&d);
+    let h = tabela::inserir(&mut d, &a, &setup, qd, [20.0, 10.0]).unwrap();
+    assert_eq!(tabela::tabelas(&d), [(h, qd)]);
+    let textos = |d: &Drawing| -> Vec<String> {
+        d.blocks[&format!("{}{}", tabela::PREFIXO, qd.hex())]
+            .entities
+            .iter()
+            .filter_map(|e| if let EntityKind::Text(t) = &e.kind { Some(t.value.clone()) } else { None })
+            .collect()
+    };
+    let t = textos(&d);
+    assert!(t.contains(&"PAINEL: QD-01".to_string()) && t.contains(&"CIRCUITO".to_string()) && t.contains(&"FASE T (VA)".to_string()), "{t:?}");
+    assert!(t.iter().any(|x| x.starts_with("ALIMENTADOR:")) && t.iter().any(|x| x.starts_with("DEMANDA:")), "{t:?}");
+    assert_eq!(analisar(&d).pontos.len(), 8, "a tabela não é ponto elétrico");
+    // O projetista move a tabela e muda uma descrição: ela se refaz sem sair do lugar.
+    let mut e = (**d.model.get(h).unwrap()).clone();
+    if let EntityKind::Insert(i) = &mut e.kind {
+        i.insert = Vec3::new(30.0, 15.0, 0.0);
+    }
+    d.model.replace(e);
+    editar::definir_descricao(&mut d, qd, "2", Some("Tomadas da sala")).unwrap();
+    let r = fiacao::regenerar_se_houver(&mut d, &setup).unwrap().unwrap();
+    assert_eq!(r.tabelas, 1);
+    assert!(textos(&d).contains(&"Tomadas da sala".to_string()));
+    let EntityKind::Insert(i) = &d.model.get(h).unwrap().kind else { panic!() };
+    assert_eq!((i.insert.x, i.insert.y), (30.0, 15.0));
+    // Inserir de novo só move: um quadro, uma tabela.
+    let a = analisar(&d);
+    assert_eq!(tabela::inserir(&mut d, &a, &setup, qd, [1.0, 1.0]).unwrap(), h);
+    assert_eq!(tabela::tabelas(&d).len(), 1);
+    assert!(tabela::inserir(&mut d, &a, &setup, Handle(0xFFFF), [1.0, 1.0]).is_err());
+    assert!(tabela::inserir(&mut d, &a, &setup, qd, [f64::NAN, 1.0]).is_err());
+    // O quadro apagado leva a tabela junto.
+    d.model.remove(qd);
+    let a = analisar(&d);
+    tabela::regenerar(&mut d, &a, &setup).unwrap();
+    assert!(tabela::tabelas(&d).is_empty());
+}
+
+#[test]
+fn inspecao_classifica_pontos_e_eletrodutos() {
+    use inspecao::{Nivel, inspecionar};
+    let setup = Setup::default();
+    let mut d = metros();
+    let q = qd(&mut d, 0.0, 0.0);
+    let ok = tug(&mut d, 3.0, 0.0, "1");
+    let sem_circuito = inserir(&mut d, "TOMADA", 3.0, 5.0, &[("TIPO_PONTO", "TUG"), ("POTENCIA", "100VA")]);
+    let sem_caminho = tug(&mut d, 9.0, 9.0, "1");
+    let no_meio = tug(&mut d, 1.5, 0.0, "1");
+    let interruptor = inserir(&mut d, "INT", 5.0, 0.0, &[("TIPO_PONTO", "INTERRUPTOR"), ("POTENCIA", "0W"), ("CIRCUITO", "1"), ("COMANDO", "z")]);
+    eletroduto::inserir(&mut d, q, ok, rota::Instalacao::Teto, 0.0).unwrap();
+    eletroduto(&mut d, (20.0, 0.0), (21.0, 0.0));
+    let itens = inspecionar(&d, &analisar(&d), &setup);
+    let nivel = |h: Handle| itens.iter().find(|i| i.handle == h).map(|i| (i.nivel, i.motivo.clone())).unwrap();
+    assert_eq!(nivel(q).0, Nivel::Verde);
+    assert_eq!(nivel(ok).0, Nivel::Verde);
+    assert_eq!(nivel(sem_circuito).0, Nivel::Vermelho);
+    assert_eq!(nivel(interruptor).0, Nivel::Vermelho);
+    assert!(nivel(interruptor).1.contains("luminária"));
+    assert_eq!(nivel(sem_caminho).0, Nivel::Laranja);
+    assert!(nivel(no_meio).1.contains("meio de um eletroduto"), "{:?}", nivel(no_meio));
+    let solto = itens.iter().find(|i| i.eletroduto).unwrap();
+    assert_eq!(solto.nivel, Nivel::Laranja);
+    // Do mais grave ao menos grave.
+    assert_eq!(itens[0].nivel, Nivel::Vermelho);
+    // Queda acima do limite e ocupação acima do limite: amarelo.
+    let mut d = metros();
+    let q = qd(&mut d, 0.0, 0.0);
+    let t = tug(&mut d, 3.0, 0.0, "1");
+    let h = eletroduto::inserir(&mut d, q, t, rota::Instalacao::Teto, 0.0).unwrap();
+    editar::definir_sobrescrita(&mut d, q, "1", Some(1.5), Some(6.0)).unwrap();
+    eletroduto::travar_diametro(&mut d, h, Some(16.0)).unwrap();
+    let apertado = Setup { queda_admissivel: 0.5, ..Setup::default() };
+    let itens = inspecionar(&d, &analisar(&d), &apertado);
+    assert_eq!(itens.iter().find(|i| i.handle == t).unwrap().nivel, Nivel::Amarelo, "{itens:?}");
+}
+
+#[test]
+fn novos_nomes_do_xdata_e_vinculo_do_comando() {
+    let mut d = planta();
+    let a = analisar(&d);
+    let sw = a.pontos.iter().find(|p| p.tipo == TipoPonto::Interruptor).unwrap().handle;
+    let luz = a.pontos.iter().find(|p| p.tag.as_deref() == Some("LUZ-1")).unwrap().handle;
+    editar::vincular_luminaria(&mut d, sw, "a", luz).unwrap();
+    editar::vincular_luminaria(&mut d, sw, "a", luz).unwrap();
+    let e = d.model.get(sw).unwrap();
+    assert_eq!(e.common.xdata[0].value, "FREE_ELETRICA");
+    assert_eq!(xdata::ler(&e.common.xdata), [("target_handles.a".to_string(), luz.hex())]);
+    // Um trecho de um nome antigo é lido e migrado na próxima gravação.
+    let mut x = vec![RawTag { code: 1001, value: "FREEELETRICA".into() }, RawTag { code: 1000, value: "CIRCUITO=3".into() }];
+    assert_eq!(xdata::ler(&x).len(), 1);
+    xdata::gravar(&mut x, "COMANDO", Some("a"));
+    assert_eq!(x[0].value, "FREE_ELETRICA");
+    // A letra livre conta as de interruptores de várias teclas.
+    let mut d = planta();
+    let a = analisar(&d);
+    let sw = a.pontos.iter().find(|p| p.tipo == TipoPonto::Interruptor).unwrap().handle;
+    editar::definir_comando(&mut d, sw, "ab").unwrap();
+    let qd = quadro(&d);
+    assert_eq!(circuito::proxima_letra(&analisar(&d).pontos, Some(qd), Some("1")), "c");
+    // Remover do circuito.
+    assert_eq!(editar::remover_do_circuito(&mut d, &[sw]).unwrap(), 1);
+    assert_eq!(ponto::ler_ponto(&d, sw).unwrap().circuito, None);
+    assert_eq!(editar::remover_do_circuito(&mut d, &[sw]).unwrap(), 0);
+    assert!(editar::remover_do_circuito(&mut d, &[Handle(0xFFFF)]).is_err());
+}
+
+#[test]
+fn letra_nova_entra_nas_teclas_livres() {
+    use circuito::comando_com_letra as c;
+    assert_eq!(c("", "a", 1), "a");
+    assert_eq!(c("a", "b", 1), "b", "uma tecla só: troca");
+    assert_eq!(c("a", "b", 2), "ab");
+    assert_eq!(c("ab", "a", 2), "ab", "a letra que já tem não muda nada");
+    assert_eq!(c("ab", "x", 2), "ax", "sem tecla livre, troca a última");
+    assert_eq!(c("a", "", 2), "a");
+}
+
+#[test]
+fn bloco_no_clique_e_modelo_do_eletroduto() {
+    let setup = Setup::default();
+    let mut d = metros();
+    let t = tug(&mut d, 3.0, 0.0, "1");
+    let longe = tug(&mut d, 3.1, 0.0, "1");
+    assert_eq!(eletroduto::bloco_em(&d, &setup, [3.02, 0.0], 1.0), Some(t), "o mais perto");
+    assert_eq!(eletroduto::bloco_em(&d, &setup, [3.09, 0.0], 1.0), Some(longe));
+    assert_eq!(eletroduto::bloco_em(&d, &setup, [9.0, 0.0], 1.0), None);
+    // Cada desenho tem o seu modelo.
+    let m = eletroduto::ModeloEletroduto { instalacao: rota::Instalacao::Piso, flecha: 0.0 };
+    eletroduto::definir_modelo(991_001, m);
+    assert_eq!(eletroduto::modelo(991_001), m);
+    assert_eq!(eletroduto::modelo(991_002), eletroduto::ModeloEletroduto::default());
+    circuito::definir_ativo(991_001, Some((t, "1".into())));
+    assert_eq!(circuito::ativo(991_001), Some((t, "1".to_string())));
+    assert_eq!(circuito::ativo(991_002), None);
+    circuito::definir_ativo(991_001, None);
+    assert_eq!(circuito::ativo(991_001), None);
 }
 
 #[test]

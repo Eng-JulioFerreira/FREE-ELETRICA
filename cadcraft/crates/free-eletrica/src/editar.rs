@@ -5,9 +5,12 @@
 
 use cadcraft_doc::{Drawing, EntityKind, Handle};
 
-use crate::nbr5410::Isolacao;
+use crate::nbr5410::{Esquema, Isolacao};
 use crate::ponto::{TAGS_CIRCUITO, TAGS_COMANDO, TAGS_QUADRO, ler_ponto};
-use crate::quadro::{CHAVE_DESCRICAO, CHAVE_DISJUNTOR, CHAVE_ISOLACAO, CHAVE_ISOLACAO_CIRCUITO, CHAVE_SECAO};
+use crate::quadro::{
+    CHAVE_DESCRICAO, CHAVE_DISJUNTOR, CHAVE_ESQUEMA, CHAVE_FASE, CHAVE_ISOLACAO, CHAVE_ISOLACAO_CIRCUITO, CHAVE_SECAO, CHAVE_TENSAO, NOMES_FASES,
+    fases_de_texto,
+};
 use crate::xdata;
 
 /// Grava (ou apaga) uma chave do XDATA do Free Elétrica num bloco.
@@ -34,7 +37,7 @@ fn pontos_do_circuito(doc: &Drawing, quadro: Handle, circuito: &str) -> Vec<Hand
 /// Apaga do quadro as escolhas e a descrição de um circuito.
 fn esquecer_circuito(doc: &mut Drawing, quadro: Handle, circuito: &str) -> Result<(), String> {
     let id = circuito.trim().to_uppercase();
-    for prefixo in [CHAVE_SECAO, CHAVE_DISJUNTOR, CHAVE_DESCRICAO, CHAVE_ISOLACAO_CIRCUITO] {
+    for prefixo in [CHAVE_SECAO, CHAVE_DISJUNTOR, CHAVE_DESCRICAO, CHAVE_ISOLACAO_CIRCUITO, CHAVE_ESQUEMA, CHAVE_TENSAO, CHAVE_FASE] {
         gravar_xdata(doc, quadro, &format!("{prefixo}{id}"), None)?;
     }
     Ok(())
@@ -56,6 +59,59 @@ pub fn definir_isolacao_circuito(doc: &mut Drawing, quadro: Handle, circuito: &s
 /// Isolação dos condutores do quadro; `None` volta à das configurações.
 pub fn definir_isolacao(doc: &mut Drawing, quadro: Handle, isolacao: Option<Isolacao>) -> Result<(), String> {
     gravar_xdata(doc, quadro, CHAVE_ISOLACAO, isolacao.map(Isolacao::codigo))
+}
+
+/// Esquema de condutores de um circuito; `None` volta ao que os pontos dizem.
+pub fn definir_esquema(doc: &mut Drawing, quadro: Handle, circuito: &str, esquema: Option<Esquema>) -> Result<(), String> {
+    gravar_xdata(doc, quadro, &chave_do_circuito(CHAVE_ESQUEMA, circuito)?, esquema.map(Esquema::codigo))
+}
+
+/// Tensão de um circuito (V); `None` volta à dos pontos.
+pub fn definir_tensao_circuito(doc: &mut Drawing, quadro: Handle, circuito: &str, tensao: Option<f64>) -> Result<(), String> {
+    if let Some(t) = tensao
+        && !(t.is_finite() && t > 0.0)
+    {
+        return Err(format!("tensão {t} inválida"));
+    }
+    gravar_xdata(doc, quadro, &chave_do_circuito(CHAVE_TENSAO, circuito)?, tensao.map(|t| t.to_string()).as_deref())
+}
+
+/// Trava as fases de um circuito ("R", "RS"...); `None` volta ao balanceamento automático.
+pub fn travar_fases(doc: &mut Drawing, quadro: Handle, circuito: &str, fases: Option<&str>) -> Result<(), String> {
+    let normal = match fases {
+        Some(t) => {
+            let v = fases_de_texto(t).ok_or_else(|| format!("fases \"{t}\" inválidas: use R, S, T"))?;
+            Some(v.iter().filter_map(|f| NOMES_FASES.get(*f).copied()).collect::<String>())
+        }
+        None => None,
+    };
+    gravar_xdata(doc, quadro, &chave_do_circuito(CHAVE_FASE, circuito)?, normal.as_deref())
+}
+
+/// Tira pontos do circuito deles (ficam sem circuito e sem quadro). Devolve quantos saíram.
+pub fn remover_do_circuito(doc: &mut Drawing, pontos: &[Handle]) -> Result<usize, String> {
+    let mut n = 0;
+    for h in pontos {
+        let p = ler_ponto(doc, *h).ok_or_else(|| format!("o objeto {} não é um ponto elétrico", h.hex()))?;
+        if p.circuito.is_some() {
+            definir(doc, *h, TAGS_CIRCUITO, None)?;
+            definir(doc, *h, TAGS_QUADRO, None)?;
+            n += 1;
+        }
+    }
+    Ok(n)
+}
+
+/// Grava no XDATA do interruptor as luminárias da letra: `target_handles.<letra>`.
+pub fn vincular_luminaria(doc: &mut Drawing, interruptor: Handle, letra: &str, luminaria: Handle) -> Result<(), String> {
+    let chave = format!("target_handles.{}", letra.trim().to_lowercase());
+    let p = ler_ponto(doc, interruptor).ok_or("o interruptor não é um ponto elétrico")?;
+    let atual = p.extras.iter().find(|(k, _)| k.eq_ignore_ascii_case(&chave)).map(|(_, v)| v.clone()).unwrap_or_default();
+    let mut lista: Vec<String> = atual.split(',').map(str::trim).filter(|t| !t.is_empty()).map(str::to_string).collect();
+    if !lista.iter().any(|h| h.eq_ignore_ascii_case(&luminaria.hex())) {
+        lista.push(luminaria.hex());
+    }
+    gravar_xdata(doc, interruptor, &chave, Some(&lista.join(",")))
 }
 
 /// Descrição do circuito no quadro de cargas (`None` apaga). Um circuito descrito existe no

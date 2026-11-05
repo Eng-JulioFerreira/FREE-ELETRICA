@@ -342,6 +342,7 @@ impl Default for TamanhoEletroduto {
 /// Confira com o fabricante.
 pub fn eletrodutos_padrao() -> Vec<TamanhoEletroduto> {
     [
+        (16.0, "3/8\"", 12.6),
         (20.0, "1/2\"", 16.4),
         (25.0, "3/4\"", 21.3),
         (32.0, "1\"", 27.5),
@@ -477,6 +478,12 @@ impl Setup {
             .map(|e| (e, ocupada / area(e.interno)))
             .find(|(_, oc)| *oc <= limite + 1e-9)
             .map(|(e, oc)| (e.clone(), oc))
+    }
+
+    /// A ocupação (0-1) de condutores com estes diâmetros externos num eletroduto dado.
+    pub fn ocupacao_em(&self, diametros: &[f64], e: &TamanhoEletroduto) -> Option<f64> {
+        let area = |d: f64| std::f64::consts::PI * d * d / 4.0;
+        (e.interno > 0.0).then(|| diametros.iter().map(|d| area(*d)).sum::<f64>() / area(e.interno))
     }
 
     /// A seção não é escrita nas indicações.

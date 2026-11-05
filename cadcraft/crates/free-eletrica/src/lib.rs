@@ -14,11 +14,13 @@ pub mod demanda;
 pub mod editar;
 pub mod eletroduto;
 pub mod fiacao;
+pub mod inspecao;
 pub mod nbr5410;
 pub mod ponto;
 pub mod quadro;
 pub mod rota;
 pub mod setup;
+pub mod tabela;
 pub mod xdata;
 
 #[cfg(test)]

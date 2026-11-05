@@ -76,6 +76,9 @@ pub fn capture_tab(ctx: &egui::Context, raw: &mut egui::RawInput) {
 /// Tab on the command line: cycle the object snaps under the cursor, type the Dynamic Input
 /// separator (`,` or `<`) after a value, or complete a command name.
 fn tab(app: &mut CadApp) {
+    if crate::eletrica::tab(app) {
+        return;
+    }
     // Grip dimensional input: Tab locks the typed value and moves to the next field.
     if crate::grip_dyn::tab(app) {
         return;

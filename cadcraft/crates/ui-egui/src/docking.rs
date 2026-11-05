@@ -18,6 +18,8 @@ pub enum Panel {
     ExternalRefs,
     /// Free Elétrica: projeto elétrico (NBR 5410).
     Eletrica,
+    /// Free Elétrica: o painel de baixo (quadro de cargas, eletrodutos, pontos, conferência).
+    QuadroCargas,
 }
 
 impl Panel {
@@ -31,6 +33,7 @@ impl Panel {
             Self::Properties => "properties",
             Self::ExternalRefs => "externalReferences",
             Self::Eletrica => "eletrica",
+            Self::QuadroCargas => "quadroCargas",
         }
     }
     fn label(self) -> &'static str {
@@ -42,6 +45,7 @@ impl Panel {
             Self::Properties => "Properties",
             Self::ExternalRefs => "External References",
             Self::Eletrica => "Electrical",
+            Self::QuadroCargas => "Load Panel",
         }
     }
     fn default_side(self) -> Zone {
@@ -53,10 +57,11 @@ impl Panel {
             Self::Properties => Zone::Right,
             Self::ExternalRefs => Zone::Right,
             Self::Eletrica => Zone::Right,
+            Self::QuadroCargas => Zone::Bottom,
         }
     }
     /// Palettes outside the default arrangement, opened on request (QUICKCALC, ELETRICA).
-    pub const ON_DEMAND: &[Self] = &[Self::QuickCalc, Self::Eletrica];
+    pub const ON_DEMAND: &[Self] = &[Self::QuickCalc, Self::Eletrica, Self::QuadroCargas];
     fn parse(id: &str) -> Result<Self, String> {
         Self::ALL.iter().chain(Self::ON_DEMAND).copied().find(|panel| panel.id() == id).ok_or_else(|| format!("Unknown panel: {id}"))
     }
@@ -370,6 +375,7 @@ pub fn show(app: &mut crate::CadApp, ui: &mut egui::Ui) {
                 egui::ScrollArea::both().id_salt("dock-xrefs").auto_shrink([false, false]).show(ui, |ui| crate::xrefs::section(app, ui));
             }
             Panel::Eletrica => crate::eletrica::show(app, ui),
+            Panel::QuadroCargas => crate::eletrica::painel(app, ui),
         },
     );
     // Existing panel close buttons and commands still own their visibility switches.
@@ -401,6 +407,7 @@ fn panel_limits(panel: &Panel) -> PanelLimits {
         Panel::ToolSets => (egui::vec2(220.0, 150.0), 480.0),
         Panel::Layers | Panel::Properties | Panel::ExternalRefs => (egui::vec2(220.0, 100.0), 720.0),
         Panel::Eletrica => (egui::vec2(200.0, 120.0), 900.0),
+        Panel::QuadroCargas => (egui::vec2(400.0, 96.0), 1_000_000.0),
     };
     PanelLimits { min, max: egui::vec2(max_width, 1_000_000.0) }
 }

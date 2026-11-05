@@ -100,6 +100,68 @@ impl Isolacao {
     }
 }
 
+/// O esquema de condutores de um circuito.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Esquema {
+    /// Fase e neutro.
+    Fn,
+    /// Fase, neutro e proteção.
+    Fnt,
+    /// Duas fases e proteção.
+    Fft,
+    /// Três fases, neutro e proteção.
+    Fffnt,
+}
+
+impl Esquema {
+    pub const TODOS: [Esquema; 4] = [Self::Fn, Self::Fnt, Self::Fft, Self::Fffnt];
+
+    pub fn codigo(self) -> &'static str {
+        match self {
+            Self::Fn => "F+N",
+            Self::Fnt => "F+N+T",
+            Self::Fft => "2F+T",
+            Self::Fffnt => "3F+N+T",
+        }
+    }
+
+    pub fn de_codigo(t: &str) -> Option<Self> {
+        let t = t.trim();
+        Self::TODOS.into_iter().find(|e| e.codigo().eq_ignore_ascii_case(t))
+    }
+
+    /// O esquema de quem não escolheu, pelas fases dos pontos.
+    pub fn padrao(fases: u8) -> Self {
+        match fases {
+            0 | 1 => Self::Fnt,
+            2 => Self::Fft,
+            _ => Self::Fffnt,
+        }
+    }
+
+    pub fn fases(self) -> u8 {
+        match self {
+            Self::Fn | Self::Fnt => 1,
+            Self::Fft => 2,
+            Self::Fffnt => 3,
+        }
+    }
+
+    pub fn neutro(self) -> bool {
+        self != Self::Fft
+    }
+
+    pub fn protecao(self) -> bool {
+        self != Self::Fn
+    }
+
+    /// Condutores no eletroduto, para o levantamento de material.
+    pub fn condutores(self) -> u8 {
+        self.fases() + u8::from(self.neutro()) + u8::from(self.protecao())
+    }
+}
+
 /// Tabela 42, condutores agrupados em feixe ou num mesmo eletroduto: (circuitos, fator).
 const FCA_AGRUPAMENTO: [(usize, f64); 12] =
     [(1, 1.00), (2, 0.80), (3, 0.70), (4, 0.65), (5, 0.60), (6, 0.57), (7, 0.54), (8, 0.52), (11, 0.50), (15, 0.45), (19, 0.41), (usize::MAX, 0.38)];
@@ -200,6 +262,8 @@ pub struct Dimensionamento {
     pub tensao: f64,
     /// Corrente de projeto (A).
     pub ib: f64,
+    /// Corrente de projeto corrigida (A): I'b = Ib / (FCT × FCA).
+    pub ib_corrigida: f64,
     /// Seção do condutor (mm²). `None`: a corrente passa da tabela.
     pub secao: Option<f64>,
     /// Capacidade de condução já corrigida por FCT e FCA (A).
@@ -209,6 +273,23 @@ pub struct Dimensionamento {
     /// Queda de tensão na seção escolhida (%), quando o comprimento é conhecido.
     pub queda: Option<f64>,
     pub avisos: Vec<String>,
+}
+
+/// I'b = Ib / (FCT × FCA).
+pub fn corrente_corrigida(ib: f64, cfg: &Config) -> f64 {
+    let fator = cfg.fct * cfg.fca;
+    if fator > 0.0 { ib / fator } else { ib }
+}
+
+/// A menor seção e o disjuntor para uma corrente, sem queda de tensão: o alimentador do quadro.
+/// Devolve (seção, Iz corrigida, disjuntor). `None`: a corrente passa da tabela.
+pub fn secao_para_corrente(ib: f64, carregados: u8, cfg: &Config) -> Option<(f64, f64, f64)> {
+    let fator = cfg.fct * cfg.fca;
+    SECOES.iter().copied().enumerate().filter(|(_, s)| *s >= 2.5).find_map(|(i, secao)| {
+        let iz = capacidade(i, carregados, cfg.isolacao)? * fator;
+        let disjuntor = DISJUNTORES.iter().copied().find(|d| *d >= ib && *d <= iz)?;
+        Some((secao, iz, disjuntor))
+    })
 }
 
 /// Escolhe seção e disjuntor só pela corrente (sem comprimento).
@@ -240,10 +321,19 @@ pub fn dimensionar_com(c: &Circuito, cfg: &Config, momento: Option<f64>) -> Dime
         if queda.is_some_and(|q| q > cfg.queda_admissivel) {
             continue;
         }
-        return Dimensionamento { tensao, ib, secao: Some(secao), iz: Some(iz), disjuntor: Some(disjuntor), queda, avisos };
+        return Dimensionamento {
+            tensao,
+            ib,
+            ib_corrigida: corrente_corrigida(ib, cfg),
+            secao: Some(secao),
+            iz: Some(iz),
+            disjuntor: Some(disjuntor),
+            queda,
+            avisos,
+        };
     }
     avisos.push("nenhuma seção até 120 mm² atende corrente e queda de tensão".into());
-    Dimensionamento { tensao, ib, secao: None, iz: None, disjuntor: None, queda: None, avisos }
+    Dimensionamento { tensao, ib, ib_corrigida: corrente_corrigida(ib, cfg), secao: None, iz: None, disjuntor: None, queda: None, avisos }
 }
 
 /// Confere uma escolha feita à mão (seção e disjuntor sobrescritos): calcula Iz e queda e avisa
@@ -268,5 +358,5 @@ pub fn verificar(c: &Circuito, cfg: &Config, momento: Option<f64>, secao: f64, d
     if queda.is_some_and(|q| q > cfg.queda_admissivel) {
         avisos.push(format!("queda de tensão acima de {} %", cfg.queda_admissivel));
     }
-    Dimensionamento { tensao, ib, secao: Some(secao), iz, disjuntor: Some(disjuntor), queda, avisos }
+    Dimensionamento { tensao, ib, ib_corrigida: corrente_corrigida(ib, cfg), secao: Some(secao), iz, disjuntor: Some(disjuntor), queda, avisos }
 }

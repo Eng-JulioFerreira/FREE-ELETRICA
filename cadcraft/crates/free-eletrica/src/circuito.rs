@@ -83,9 +83,49 @@ pub fn proxima_letra(pontos: &[PontoEletrico], quadro: Option<Handle>, circuito:
     let usadas: Vec<String> = pontos
         .iter()
         .filter(|p| p.quadro == quadro && circuito.is_some_and(|c| p.circuito.as_deref().is_some_and(|pc| pc.eq_ignore_ascii_case(c))))
-        .filter_map(|p| p.comando.as_ref().map(|c| c.to_ascii_lowercase()))
+        .filter_map(|p| p.comando.as_deref())
+        .flat_map(crate::fiacao::letras)
         .collect();
     ('a'..='z').map(|l| l.to_string()).find(|l| !usadas.contains(l)).unwrap_or_else(|| "a".into())
+}
+
+/// O COMANDO de um interruptor de `teclas` teclas depois de usar `letra`: a letra entra nas que ele
+/// já tem, enquanto houver tecla livre; sem tecla livre, a última dá lugar a ela.
+pub fn comando_com_letra(atual: &str, letra: &str, teclas: usize) -> String {
+    let mut v = crate::fiacao::letras(atual);
+    let nova = crate::fiacao::letras(letra);
+    for l in nova {
+        if v.contains(&l) {
+            continue;
+        }
+        if v.len() >= teclas.max(1) {
+            v.pop();
+        }
+        v.push(l);
+    }
+    v.concat()
+}
+
+/// O circuito em que o ELECIRCUITO está trabalhando, por desenho: a barra de cima edita o circuito
+/// enquanto os pontos são clicados.
+static ATIVO: std::sync::Mutex<std::collections::BTreeMap<u64, (Handle, String)>> = std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+/// Marca (ou limpa) o circuito em que o ELECIRCUITO está trabalhando no desenho `desenho`.
+pub fn definir_ativo(desenho: u64, ativo: Option<(Handle, String)>) {
+    let mut g = ATIVO.lock().unwrap_or_else(|e| e.into_inner());
+    match ativo {
+        Some(a) => {
+            g.insert(desenho, a);
+        }
+        None => {
+            g.remove(&desenho);
+        }
+    }
+}
+
+/// O circuito em que o ELECIRCUITO está trabalhando no desenho `desenho`.
+pub fn ativo(desenho: u64) -> Option<(Handle, String)> {
+    ATIVO.lock().unwrap_or_else(|e| e.into_inner()).get(&desenho).cloned()
 }
 
 /// Quadro e circuito já escolhidos para o próximo ELECIRCUITO (o quadro de cargas usa para

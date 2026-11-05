@@ -1348,6 +1348,17 @@
 	Circuit Properties	Властивості кола
 	Demand Tables	Таблиці попиту
 	Insert Conduit	Вставити кабелепровід
+	Remove Points from Circuit	Вилучити точки з кола
+	Wiring Tags	Позначки проводки
+	Regenerate Electrical Drawing	Перегенерувати електричне креслення
+	Load Schedule Table	Таблиця навантажень у кресленні
+	Prepare Electrical Drawing	Підготувати електричне креслення
+	Conduit Template	Шаблон кабелепроводу
+	Split Conduit	Розділити кабелепровід
+	Conduit Properties	Властивості кабелепроводу
+	Conduit Summary	Зведення кабелепроводів
+	Inspect Electrical Project	Перевірити електричний проєкт
+	Load Panel	Панель навантажень
 	Insert Electrical Point	Вставити електричну точку
 	Electrical Point Blocks	Блоки електричних точок
 	Point Template	Шаблон точки

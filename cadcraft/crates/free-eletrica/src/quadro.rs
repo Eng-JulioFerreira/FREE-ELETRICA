@@ -17,7 +17,7 @@ use crate::ponto::{PontoEletrico, TipoPonto, br};
 use crate::rota::{self, Rede};
 use crate::setup::Setup;
 
-pub const NOMES_FASES: [&str; 3] = ["A", "B", "C"];
+pub const NOMES_FASES: [&str; 3] = ["R", "S", "T"];
 
 /// Chaves do XDATA do quadro com as escolhas feitas à mão: `SECAO.<circuito>` e
 /// `DISJ.<circuito>`.
@@ -30,12 +30,35 @@ pub const CHAVE_DESCRICAO: &str = "DESC.";
 pub const CHAVE_ISOLACAO: &str = "ISOLACAO";
 /// Isolação de um circuito: `ISOL.<circuito>`; sem ela vale a do quadro.
 pub const CHAVE_ISOLACAO_CIRCUITO: &str = "ISOL.";
+/// Esquema de condutores de um circuito: `ESQUEMA.<circuito>` (`F+N`, `F+N+T`, `2F+T`, `3F+N+T`).
+pub const CHAVE_ESQUEMA: &str = "ESQUEMA.";
+/// Tensão de um circuito: `TENSAO.<circuito>`; vale sobre a dos pontos.
+pub const CHAVE_TENSAO: &str = "TENSAO.";
+/// Fases travadas à mão de um circuito: `FASE.<circuito>` (`R`, `S`, `T`, `RS`, `RST`...).
+pub const CHAVE_FASE: &str = "FASE.";
 /// O que o projetista definiu para um circuito no quadro de cargas (o tipo de carga e o FP
 /// vêm dos blocos: atributos TIPO_CARGA e FP).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Propriedades {
     pub isolacao: Option<nbr5410::Isolacao>,
+    pub esquema: Option<nbr5410::Esquema>,
+    pub tensao: Option<f64>,
+    /// Fases travadas à mão: índices em [`NOMES_FASES`].
+    pub fases: Option<Vec<usize>>,
+}
+
+/// As fases de um texto como "R", "RS" ou "R+S+T". `None`: vazio ou letra que não é fase.
+pub fn fases_de_texto(t: &str) -> Option<Vec<usize>> {
+    let mut v = Vec::new();
+    for c in t.chars().filter(|c| !matches!(c, '+' | ' ' | ',')) {
+        let i = NOMES_FASES.iter().position(|n| n.eq_ignore_ascii_case(&c.to_string()))?;
+        if !v.contains(&i) {
+            v.push(i);
+        }
+    }
+    v.sort_unstable();
+    (!v.is_empty()).then_some(v)
 }
 
 /// As propriedades gravadas no quadro, por circuito (em maiúsculas).
@@ -45,6 +68,12 @@ pub fn propriedades(quadro: &PontoEletrico) -> HashMap<String, Propriedades> {
         let k = k.to_uppercase();
         if let Some(c) = k.strip_prefix(CHAVE_ISOLACAO_CIRCUITO) {
             m.entry(c.to_string()).or_default().isolacao = nbr5410::Isolacao::de_codigo(v);
+        } else if let Some(c) = k.strip_prefix(CHAVE_ESQUEMA) {
+            m.entry(c.to_string()).or_default().esquema = nbr5410::Esquema::de_codigo(v);
+        } else if let Some(c) = k.strip_prefix(CHAVE_TENSAO) {
+            m.entry(c.to_string()).or_default().tensao = crate::ponto::numero(v).filter(|t| *t > 0.0);
+        } else if let Some(c) = k.strip_prefix(CHAVE_FASE) {
+            m.entry(c.to_string()).or_default().fases = fases_de_texto(v);
         }
     }
     m
@@ -164,6 +193,10 @@ pub struct Linha {
     pub tensao: f64,
     /// Potência por fase do quadro (VA).
     pub carga_fase: [f64; 3],
+    /// Esquema de condutores do circuito.
+    pub esquema: nbr5410::Esquema,
+    /// As fases foram travadas à mão.
+    pub fases_travadas: bool,
 }
 
 impl Linha {
@@ -210,7 +243,44 @@ pub struct ResumoQuadro {
     /// Corrente da potência instalada e da demandada (A), por fase.
     pub corrente_instalada: f64,
     pub corrente_demandada: f64,
+    /// O alimentador do quadro, pela demanda.
+    pub alimentador: Alimentador,
     pub avisos: Vec<String>,
+}
+
+/// O alimentador do quadro, pela corrente demandada. DR e DPS são sugestões a conferir no projeto.
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Alimentador {
+    /// Corrente de projeto (A), por fase.
+    pub ib: f64,
+    /// Seção das fases (mm²). `None`: a corrente passa da tabela.
+    pub secao: Option<f64>,
+    /// Capacidade corrigida pela temperatura (A).
+    pub iz: Option<f64>,
+    /// Disjuntor geral (A).
+    pub disjuntor: Option<f64>,
+    /// DR sugerido (NBR 5410, 5.1.3.2.2): corrente nominal (A); residual de 30 mA.
+    pub dr: Option<f64>,
+    /// DPS sugerido (NBR 5410, 6.3.5): classe II, In ≥ 5 kA, Uc ≥ 1,1 × Uo (V).
+    pub dps_uc: f64,
+}
+
+/// Correntes nominais de DR (A).
+const CORRENTES_DR: [f64; 6] = [25.0, 40.0, 63.0, 80.0, 100.0, 125.0];
+
+/// Dimensiona o alimentador do quadro pela corrente demandada.
+pub fn alimentador(ib: f64, fases: u8, tensao_fn: f64, cfg: &nbr5410::Config) -> Alimentador {
+    let escolha = nbr5410::secao_para_corrente(ib, nbr5410::condutores_carregados(fases), cfg);
+    let disjuntor = escolha.map(|e| e.2);
+    Alimentador {
+        ib,
+        secao: escolha.map(|e| e.0),
+        iz: escolha.map(|e| e.1),
+        disjuntor,
+        dr: disjuntor.and_then(|d| CORRENTES_DR.iter().copied().find(|c| *c >= d)),
+        dps_uc: 1.1 * tensao_fn,
+    }
 }
 
 /// Tensões do quadro (fase-neutro, fase-fase) pelo atributo TENSAO no formato "220/127V"; sem
@@ -244,12 +314,8 @@ pub fn quadros(analise: &Analise) -> Vec<&PontoEletrico> {
 }
 
 /// Indicação de fiação: "F+N+T #2,5", "2F+T #4", "3F+N+T #6". A seção sai quando é omitida.
-fn indicacao(fases: u8, secao: Option<f64>, setup: &Setup) -> String {
-    let condutores = match fases {
-        0 | 1 => "F+N+T",
-        2 => "2F+T",
-        _ => "3F+N+T",
-    };
+fn indicacao(esquema: nbr5410::Esquema, secao: Option<f64>, setup: &Setup) -> String {
+    let condutores = esquema.codigo();
     match secao {
         Some(s) if !setup.omitida(s) => format!("{condutores} #{}", br(s)),
         _ => condutores.to_string(),
@@ -267,15 +333,37 @@ pub fn rotear(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle) -
     (cfg_base.tensao_fn, cfg_base.tensao_ff) = tensoes_do_quadro(q, (cfg_base.tensao_fn, cfg_base.tensao_ff));
     let descr = descricoes(q);
     let fases_quadro = q.fases.unwrap_or(cfg_base.fases_padrao).clamp(1, 3);
-    let circuitos: Vec<&Circuito> = analise.circuitos.iter().filter(|c| c.quadro == Some(quadro)).collect();
+    let props = propriedades(q);
+    // Os circuitos do quadro com o que foi escolhido para eles (esquema e tensão).
+    let esquema_de = |c: &Circuito| props.get(&c.id.to_uppercase()).and_then(|p| p.esquema).unwrap_or_else(|| nbr5410::Esquema::padrao(c.fases));
+    let circuitos: Vec<Circuito> = analise
+        .circuitos
+        .iter()
+        .filter(|c| c.quadro == Some(quadro))
+        .map(|c| {
+            let mut c = c.clone();
+            let p = props.get(&c.id.to_uppercase());
+            if p.and_then(|p| p.esquema).is_some() {
+                c.fases = esquema_de(&c).fases();
+            }
+            if let Some(t) = p.and_then(|p| p.tensao) {
+                c.tensao = Some(t);
+            }
+            c
+        })
+        .collect();
 
     let rede = Rede::montar(doc, setup, &analise.pontos, metros);
-    if rede.trechos == 0 {
-        avisos.push(format!("nenhum eletroduto nas camadas \"{}\": comprimentos estimados em L a partir do quadro", setup.camadas_eletroduto));
-    } else if !rede.ligacoes.contains_key(&quadro) {
-        avisos.push("o quadro não encosta em nenhum eletroduto (raio de captura): comprimentos estimados".into());
+    let trechos_eletroduto = rede.arestas.len() + rede.soltos.len();
+    if trechos_eletroduto == 0 {
+        avisos.push(format!("nenhum eletroduto nas camadas \"{}\": comprimentos estimados pela distância de Manhattan 3D", setup.camadas_eletroduto));
+    } else if !rede.conectado(quadro) {
+        avisos.push("nenhum eletroduto liga o quadro: comprimentos estimados pela distância de Manhattan 3D".into());
     }
-    let arvore = rede.ligacoes.get(&quadro).map(|l| rede.arvore(l.no));
+    if !rede.soltos.is_empty() {
+        avisos.push(format!("{} eletroduto(s) sem bloco nas duas pontas: ficam fora do roteamento", rede.soltos.len()));
+    }
+    let arvore = rede.no_de(quadro).filter(|_| rede.conectado(quadro)).map(|n| rede.arvore(n));
 
     // Roteia todos primeiro: o FCA depende de quantos circuitos dividem cada trecho.
     let rotas: Vec<rota::RotaCircuito> = circuitos
@@ -283,8 +371,14 @@ pub fn rotear(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle) -
         .map(|c| {
             let membros: Vec<&PontoEletrico> = analise.pontos.iter().filter(|p| c.pontos.contains(&p.handle)).collect();
             let (tensao, _) = nbr5410::tensao_circuito(c, &cfg_base);
+            // A tensão escolhida para o circuito vale sobre a de cada ponto.
+            let forcada = props.get(&c.id.to_uppercase()).and_then(|p| p.tensao);
             let corrente = |p: &PontoEletrico| {
-                if p.tipo.e_carga() { nbr5410::corrente_projeto(p.potencia.unwrap_or(0.0), p.tensao.unwrap_or(tensao), c.fases) } else { 0.0 }
+                if p.tipo.e_carga() {
+                    nbr5410::corrente_projeto(p.potencia.unwrap_or(0.0), forcada.or(p.tensao).unwrap_or(tensao), c.fases)
+                } else {
+                    0.0
+                }
             };
             rota::rotear_circuito(&rede, arvore.as_ref(), q, &membros, corrente, setup)
         })
@@ -296,14 +390,13 @@ pub fn rotear(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle) -
         }
     }
     let manuais = sobrescritas(q);
-    let props = propriedades(q);
 
     let mut linhas: Vec<Linha> = circuitos
         .iter()
         .zip(&rotas)
         .map(|(c, r)| {
             let agrupados = r.arestas.iter().filter_map(|e| por_aresta.get(e).copied()).max().unwrap_or(1).max(1);
-            let p = props.get(&c.id.to_uppercase()).copied().unwrap_or_default();
+            let p = props.get(&c.id.to_uppercase()).cloned().unwrap_or_default();
             let isolacao_circuito = p.isolacao.unwrap_or(isolacao);
             // Tipo de carga e FP vêm de cada ponto (atributos TIPO_CARGA e FP).
             let cargas: Vec<&PontoEletrico> = analise.pontos.iter().filter(|p| c.pontos.contains(&p.handle) && p.tipo.e_carga()).collect();
@@ -331,9 +424,10 @@ pub fn rotear(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle) -
                 (Some(s), Some(d)) if sobrescrita != Sobrescrita::default() => nbr5410::verificar(c, &cfg, r.momento, s, d),
                 _ => automatico.clone(),
             };
-            let condutores = nbr5410::condutores_total(c.fases);
+            let esquema = esquema_de(c);
+            let condutores = esquema.condutores();
             Linha {
-                circuito: (*c).clone(),
+                circuito: c.clone(),
                 descricao: descr.iter().find(|(id, _)| id.eq_ignore_ascii_case(&c.id)).map(|(_, d)| d.clone()).unwrap_or_default(),
                 fases: Vec::new(),
                 fct: cfg.fct,
@@ -342,7 +436,7 @@ pub fn rotear(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle) -
                 comprimento: r.comprimento,
                 fora_da_rede: r.fora_da_rede.len(),
                 queda_admissivel: cfg.queda_admissivel,
-                indicacao: indicacao(c.fases, escolha.secao, setup),
+                indicacao: indicacao(esquema, escolha.secao, setup),
                 automatico,
                 escolha,
                 sobrescrita,
@@ -355,23 +449,43 @@ pub fn rotear(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle) -
                 fp,
                 tensao: nbr5410::tensao_circuito(c, &cfg).0,
                 carga_fase: [0.0; 3],
+                esquema,
+                fases_travadas: p.fases.is_some(),
             }
         })
         .collect();
 
-    // Balanceamento: maiores cargas primeiro, cada uma nas fases menos carregadas.
+    // Balanceamento: primeiro os circuitos travados à mão; depois as maiores cargas, cada uma nas
+    // fases menos carregadas.
     let mut carga = [0.0f64; 3];
+    let travadas = |l: &Linha| props.get(&l.circuito.id.to_uppercase()).and_then(|p| p.fases.clone());
     let mut ordem: Vec<usize> = (0..linhas.len()).collect();
-    ordem.sort_by(|a, b| linhas[*b].circuito.potencia.total_cmp(&linhas[*a].circuito.potencia));
+    ordem.sort_by(|a, b| {
+        travadas(&linhas[*b])
+            .is_some()
+            .cmp(&travadas(&linhas[*a]).is_some())
+            .then(linhas[*b].circuito.potencia.total_cmp(&linhas[*a].circuito.potencia))
+    });
     for i in ordem {
         let pedidas = linhas[i].circuito.fases;
         if pedidas > fases_quadro {
             avisos.push(format!("circuito {} pede {pedidas} fases e o quadro tem {fases_quadro}", linhas[i].circuito.id));
         }
-        let n = usize::from(pedidas.min(fases_quadro));
-        let mut livres: Vec<usize> = (0..usize::from(fases_quadro)).collect();
-        livres.sort_by(|a, b| carga[*a].total_cmp(&carga[*b]));
-        let mut escolhidas: Vec<usize> = livres.into_iter().take(n).collect();
+        let mut escolhidas: Vec<usize> =
+            match travadas(&linhas[i]).map(|v| v.into_iter().filter(|f| *f < usize::from(fases_quadro)).collect::<Vec<_>>()) {
+                Some(v) if !v.is_empty() => {
+                    if v.len() != usize::from(pedidas.min(fases_quadro)) {
+                        avisos.push(format!("circuito {}: as fases travadas não batem com o esquema do circuito", linhas[i].circuito.id));
+                    }
+                    v
+                }
+                _ => {
+                    let mut livres: Vec<usize> = (0..usize::from(fases_quadro)).collect();
+                    livres.sort_by(|a, b| carga[*a].total_cmp(&carga[*b]));
+                    livres.into_iter().take(usize::from(pedidas.min(fases_quadro))).collect()
+                }
+            };
+        let n = escolhidas.len().max(1);
         for f in &escolhidas {
             let parte = linhas[i].circuito.potencia / n as f64;
             carga[*f] += parte;
@@ -410,6 +524,7 @@ pub fn rotear(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle) -
     let demanda = demanda::calcular(setup.tabela_demanda(), &setup.edificacao, &cargas);
     let (tensao_fn, tensao_ff) = (cfg_base.tensao_fn, cfg_base.tensao_ff);
     let vazios = circuitos_do_quadro(analise, quadro).into_iter().filter(|c| c.circuito.is_none()).collect();
+    let corrente_demandada = corrente_quadro(demanda.demandada, fases_quadro, tensao_fn, tensao_ff);
 
     Ok(ResumoQuadro {
         quadro,
@@ -418,7 +533,8 @@ pub fn rotear(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle) -
         fases_quadro,
         vazios,
         corrente_instalada: corrente_quadro(demanda.instalada, fases_quadro, tensao_fn, tensao_ff),
-        corrente_demandada: corrente_quadro(demanda.demandada, fases_quadro, tensao_fn, tensao_ff),
+        corrente_demandada,
+        alimentador: alimentador(corrente_demandada, fases_quadro, tensao_fn, &cfg_base),
         demanda,
         tensao_fn,
         tensao_ff,
@@ -428,7 +544,7 @@ pub fn rotear(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle) -
         desequilibrio,
         materiais,
         metros_por_unidade: metros,
-        trechos_eletroduto: rede.trechos,
+        trechos_eletroduto,
         avisos,
     })
 }
