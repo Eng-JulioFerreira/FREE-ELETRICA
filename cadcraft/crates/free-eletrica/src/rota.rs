@@ -17,7 +17,7 @@ use std::collections::{BinaryHeap, HashMap, HashSet};
 
 use cadcraft_doc::geom::{Arc as GArc, Polyline, Vec2};
 use cadcraft_doc::{Drawing, EntityKind, Handle};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::ponto::{PontoEletrico, TipoPonto};
 use crate::setup::Setup;
@@ -34,6 +34,8 @@ pub const CHAVE_TRAVA_DIAMETRO: &str = "manual_diameter_lock";
 pub const CHAVE_FIOS: &str = "passing_wires";
 pub const CHAVE_TAG: &str = "tag_handle";
 pub const CHAVE_TIPO: &str = "conduit_type";
+/// O perfil de eletroduto do trecho, pelo nome: dele vem a tabela de diâmetros.
+pub const CHAVE_PERFIL: &str = "conduit_profile";
 pub const CHAVE_ESQUEMA: &str = "schema_ver";
 pub const VERSAO_ESQUEMA: &str = "2";
 
@@ -42,7 +44,7 @@ fn dist(a: P, b: P) -> f64 {
 }
 
 /// Onde o trecho horizontal do eletroduto corre.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Instalacao {
     #[default]
@@ -78,7 +80,7 @@ impl Instalacao {
 }
 
 /// O tipo de um eletroduto: entra na ocupação, nos materiais e nas propriedades.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum TipoEletroduto {
     CorrugadoLeve,
@@ -194,6 +196,8 @@ pub struct Aresta {
     pub para: usize,
     pub instalacao: Instalacao,
     pub tipo: TipoEletroduto,
+    /// O perfil de eletroduto do trecho.
+    pub perfil: Option<String>,
     /// Comprimento em planta (m).
     pub comprimento_2d: f64,
     /// Comprimento com as subidas e descidas até os blocos (m).
@@ -355,6 +359,7 @@ impl Rede {
                         .find(|(k, _)| k.eq_ignore_ascii_case(CHAVE_TIPO))
                         .and_then(|(_, v)| TipoEletroduto::de_codigo(v))
                         .unwrap_or_default();
+                    let perfil = xd.iter().find(|(k, _)| k.eq_ignore_ascii_case(CHAVE_PERFIL)).map(|(_, v)| v.clone());
                     let (za, zb) = (rede.nos[de].z, rede.nos[para].z);
                     let cota = match instalacao {
                         Instalacao::Teto => setup.pe_direito,
@@ -364,7 +369,7 @@ impl Rede {
                     let comprimento_2d = comprimento_tracado(&tr) * metros;
                     let comprimento = comprimento_2d + (cota - za).abs() + (cota - zb).abs();
                     let i = rede.arestas.len();
-                    rede.arestas.push(Aresta { eletroduto: e.handle, de, para, instalacao, tipo, comprimento_2d, comprimento, meio, angulo });
+                    rede.arestas.push(Aresta { eletroduto: e.handle, de, para, instalacao, tipo, perfil, comprimento_2d, comprimento, meio, angulo });
                     rede.adj[de].push((para, i));
                     rede.adj[para].push((de, i));
                 }

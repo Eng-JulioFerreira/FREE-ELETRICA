@@ -260,6 +260,23 @@ fn paleta_ferramentas_e_fluxo_completo() {
     h.query_all_by_label("Eletrodutos").last().unwrap().click();
     h.run_steps(3);
     h.get_by_label("Diâmetro mínimo");
+    // Os perfis: linha, cor, caminhamento e a tabela de diâmetros de cada um.
+    for campo in [
+        "+ Novo perfil",
+        "Eletroduto PVC Flexível - Teto",
+        "Eletroduto PEAD - Piso",
+        "Tipo de Linha",
+        "Cor da linha",
+        "Caminhamento 3D",
+        "Tabela de Diâmetros Comerciais",
+        "Excluir perfil",
+        "+ Diâmetro",
+    ] {
+        assert!(h.query_all_by_label(campo).count() >= 1, "{campo}");
+    }
+    h.get_by_label("+ Novo perfil").click();
+    h.run_steps(3);
+    h.get_by_label("Perfil 5");
     h.get_by_label("Demanda / Concessionárias").click();
     h.run_steps(3);
     h.get_by_label("Concessionária");
@@ -278,6 +295,18 @@ fn paleta_ferramentas_e_fluxo_completo() {
     h.get_by_label("Fibra óptica N12");
     h.get_by_label("Cadastrar novo cabo");
     h.get_by_label("Diâmetro externo");
+    // Os dois catálogos, com editar e excluir em cada cabo, inclusive os de fábrica.
+    h.get_by_label("Cabos elétricos");
+    h.get_by_label("Cadastrar novo cabo elétrico");
+    assert!(h.query_all_by_label("Excluir").count() >= 10);
+    assert!(h.query_all_by_label("Editar").count() >= 10);
+    h.query_all_by_label("Editar").next().unwrap().click();
+    h.run_steps(3);
+    h.get_by_label("Editar cabo elétrico");
+    h.get_by_label("Salvar cabo elétrico");
+    h.get_by_label("Cancelar edição").click();
+    h.run_steps(3);
+    h.get_by_label("Cadastrar novo cabo elétrico");
     h.get_by_label("Cancelar").click();
     h.run_steps(3);
     assert!(h.query_by_label("Cadastrar novo cabo").is_none());
@@ -592,23 +621,21 @@ fn paleta_ferramentas_e_fluxo_completo() {
 
     h.get_by_label("Inserir eletroduto").click();
     h.run_steps(3);
-    h.get_by_label("Cota");
-    h.get_by_label("Traçado");
-    // Flecha só no arco.
-    h.state_mut().run("eletrica.eletroduto.modelo", json!({ "tracado": "ARC" })).unwrap();
+    // A mini-barra só tem o perfil e os três traçados.
+    h.get_by_label("Perfil");
+    for fora in ["Cota", "Traçado", "Flecha", "Ortogonal", "Piso", "Teto", "Parede", "Inverter"] {
+        assert!(h.query_by_label(fora).is_none(), "{fora} saiu da mini-barra");
+    }
+    h.get_by_label("Reto");
+    h.get_by_label("Arco");
+    h.get_by_label("Ângulo 45°").click();
     h.run_steps(3);
-    h.get_by_label("Flecha");
-    h.get_by_label("Ortogonal").click();
-    h.run_steps(3);
-    assert!(h.query_by_label("Flecha").is_none());
-    assert_eq!(free_eletrica::eletroduto::modelo(h.state().session.state().unwrap().uid).tracado, free_eletrica::eletroduto::Tracado::Ortogonal);
-    assert!(h.query_all_by_label("Tipo").count() >= 1);
-    h.get_by_label("Piso").click();
+    assert_eq!(free_eletrica::eletroduto::modelo(uid).tracado, free_eletrica::eletroduto::Tracado::Angulo45);
+    // O perfil vale sem interromper o comando, e traz o caminhamento.
+    h.state_mut().run("eletrica.eletroduto.modelo", json!({ "perfil": "Eletroduto PEAD - Piso" })).unwrap();
     h.run_steps(3);
     assert_eq!(free_eletrica::eletroduto::modelo(uid).instalacao, free_eletrica::rota::Instalacao::Piso);
     assert!(h.state().session.running.is_some());
-    h.get_by_label("Teto").click();
-    h.run_steps(3);
     h.state_mut().session.input(Input::Enter).unwrap();
     h.run_steps(3);
 

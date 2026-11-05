@@ -19,6 +19,8 @@ use crate::{Analise, fiacao, quadro};
 pub struct ItemCabo {
     pub secao: f64,
     pub tipo: TipoCabo,
+    /// O nome do cabo no catálogo.
+    pub nome: String,
     pub metros: f64,
 }
 
@@ -70,7 +72,7 @@ pub fn levantar(doc: &Drawing, analise: &Analise, setup: &Setup) -> Materiais {
     let mut m = Materiais::default();
     // Chaves numéricas em milésimos: f64 não ordena num mapa.
     let chave = |v: f64| (v * 1000.0).round() as i64;
-    let mut cabos: BTreeMap<(i64, &'static str), ItemCabo> = BTreeMap::new();
+    let mut cabos: BTreeMap<(i64, String), ItemCabo> = BTreeMap::new();
     let mut disjuntores: Vec<f64> = Vec::new();
     let mut grupos: Vec<String> = Vec::new();
     for q in analise.quadros() {
@@ -78,7 +80,12 @@ pub fn levantar(doc: &Drawing, analise: &Analise, setup: &Setup) -> Materiais {
             Ok(r) => {
                 for l in &r.linhas {
                     if let Some(secao) = l.escolha.secao {
-                        let item = cabos.entry((chave(secao), l.tipo_cabo.codigo())).or_insert(ItemCabo { secao, tipo: l.tipo_cabo, metros: 0.0 });
+                        let item = cabos.entry((chave(secao), l.nome_cabo.clone())).or_insert_with(|| ItemCabo {
+                            secao,
+                            tipo: l.tipo_cabo,
+                            nome: l.nome_cabo.clone(),
+                            metros: 0.0,
+                        });
                         item.metros += l.cabo;
                     }
                     disjuntores.extend(l.escolha.disjuntor);
@@ -106,7 +113,7 @@ pub fn levantar(doc: &Drawing, analise: &Analise, setup: &Setup) -> Materiais {
     // O condutor de proteção compartilhado não vai para a compra.
     for t in &trechos {
         for (secao, tipo) in &t.pe_removidos {
-            if let Some(c) = cabos.get_mut(&(chave(*secao), tipo.codigo())) {
+            if let Some(c) = cabos.values_mut().find(|c| chave(c.secao) == chave(*secao) && c.tipo == *tipo) {
                 c.metros = (c.metros - t.comprimento * setup.fator_materiais).max(0.0);
             }
         }

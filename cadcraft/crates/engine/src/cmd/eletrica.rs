@@ -46,7 +46,7 @@ pub fn specs() -> Vec<CommandSpec> {
             .params("{quadro?: hex | TAG, ponto: [x, y]} → draws the load schedule as a block at the point (moves it if the board already has one): {tabela}")
             .interactive(|_| Ok(Box::new(TabelaM::default()))),
         CommandSpec::new("eleeletroduto", "Insert Conduit", run_eletroduto)
-            .params("{de: hex | [x, y], para: hex | [x, y], instalacao?: \"CEILING\" | \"FLOOR\" | \"WALL\", tipo?: PVC_CORR_LIGHT | PVC_CORR_HEAVY | PVC_RIGID | HDPE_CORR | STEEL_ELECTRO | STEEL_HOT_DIP, tracado?: STRAIGHT | ORTHOGONAL | ARC, desvios?: [[x, y]], verticalPrimeiro?: bool, flecha?: number (arc bulge as a fraction of the chord: + left, - right, 0 straight; default 0.15)} (a point on a conduit splits it with a pull box) → {eletroduto}")
+            .params("{de: hex | [x, y], para: hex | [x, y], instalacao?: \"CEILING\" | \"FLOOR\" | \"WALL\", tipo?: PVC_CORR_LIGHT | PVC_CORR_HEAVY | PVC_RIGID | HDPE_CORR | STEEL_ELECTRO | STEEL_HOT_DIP, perfil?: profile name (applies its type, route, linetype, color and diameters), tracado?: STRAIGHT | ANGLE45 | ARC, desvios?: [[x, y]], diagonalPrimeiro?: bool, flecha?: number (arc bulge as a fraction of the chord: + left, - right, 0 straight; default 0.15)} (a point on a conduit splits it with a pull box) → {eletroduto}")
             .interactive(|_| Ok(Box::new(EletrodutoM::default()))),
         CommandSpec::new("eleponto", "Insert Electrical Point", run_ponto)
             .params("{bloco, pontos: [[x, y]], rotacao?: degrees, rotacaoAuto?: bool (align to the nearest wall), altura?: m, quadro?: hex | TAG, valores?: {TAG: value}} → {pontos: [hex]}")
@@ -91,11 +91,11 @@ pub fn specs() -> Vec<CommandSpec> {
             .noundo(),
         CommandSpec::new("eletrica.ponto.excluir", "Delete Electrical Points", run_excluir_pontos).params("{pontos: [hex]} → {excluidos}"),
         CommandSpec::new("eletrica.eletroduto.modelo", "Conduit Template", run_modelo_eletroduto)
-            .params("{instalacao?: \"CEILING\" | \"FLOOR\" | \"WALL\", tipo?: PVC_CORR_LIGHT | PVC_CORR_HEAVY | PVC_RIGID | HDPE_CORR | STEEL_ELECTRO | STEEL_HOT_DIP, tracado?: STRAIGHT | ORTHOGONAL | ARC, flecha?: number} → what ELEELETRODUTO uses, also while it runs")
+            .params("{instalacao?: \"CEILING\" | \"FLOOR\" | \"WALL\", tipo?: PVC_CORR_LIGHT | PVC_CORR_HEAVY | PVC_RIGID | HDPE_CORR | STEEL_ELECTRO | STEEL_HOT_DIP, perfil?: profile name | null, tracado?: STRAIGHT | ANGLE45 | ARC, flecha?: number} → what ELEELETRODUTO uses, also while it runs")
             .noundo(),
         CommandSpec::new("eletrica.eletroduto.dividir", "Split Conduit", run_dividir).params("{eletroduto: hex, ponto: [x, y]} → splits it with a pull box: {caixa}"),
         CommandSpec::new("eletrica.eletroduto.definir", "Conduit Properties", run_definir_eletroduto)
-            .params("{eletroduto: hex, diametro?: mm | null (a number locks it; null: back to automatic), instalacao?: \"CEILING\" | \"FLOOR\" | \"WALL\", tipo?: conduit type code} → {eletroduto}"),
+            .params("{eletroduto: hex, diametro?: mm | null (a number locks it; null: back to automatic), instalacao?: \"CEILING\" | \"FLOOR\" | \"WALL\", tipo?: conduit type code, perfil?: profile name} → {eletroduto}"),
         CommandSpec::new("eletrica.eletrodutos", "Conduit Summary", run_eletrodutos).params("{} → {trechos, soltos, avisos}").noundo(),
         CommandSpec::new("eletrica.inspecionar", "Inspect Electrical Project", run_inspecionar)
             .params("{} → [{handle, pos, nivel: vermelho | laranja | amarelo | verde, motivo, eletroduto}]")
@@ -119,7 +119,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("eletrica.circuito.juntar", "Merge Circuits", run_juntar)
             .params("{quadro?: hex | TAG, de, para} (the points of `de` go to `para`) → {quadro, de, para, pontos}"),
         CommandSpec::new("eletrica.circuito.definir", "Circuit Properties", run_definir).params(
-            "{quadro?: hex | TAG, circuito, grupoDr?: text | null, cabo?: FLEX_PVC_70 | UNI_PVC_70 | HEPR_XLPE_90 | LSZH_70 | LSZH_HEPR_90 | null, isolacao?: \"PVC\" | \"EPR\" | \"XLPE\" | null, esquema?: \"F+N\" | \"F+N+T\" | \"2F+T\" | \"3F+N+T\" | null, tensao?: V | null, fases?: \"R\" | \"RS\" ... | null (a value locks the phases), descricao?} (null: back to automatic) → {quadro, circuito}. Load type and power factor come from the block attributes TIPO_CARGA and FP.",
+            "{quadro?: hex | TAG, circuito, grupoDr?: text | null, cabo?: FLEX_PVC_70 | UNI_PVC_70 | HEPR_XLPE_90 | LSZH_70 | LSZH_HEPR_90 | null, caboNome?: catalog name | null, isolacao?: \"PVC\" | \"EPR\" | \"XLPE\" | null, esquema?: \"F+N\" | \"F+N+T\" | \"2F+T\" | \"3F+N+T\" | null, tensao?: V | null, fases?: \"R\" | \"RS\" ... | null (a value locks the phases), descricao?} (null: back to automatic) → {quadro, circuito}. Load type and power factor come from the block attributes TIPO_CARGA and FP.",
         ),
         CommandSpec::new("eletrica.demanda.tabelas", "Demand Tables", run_tabelas_demanda)
             .params("{} → the factory and custom demand tables (id, nome, fonte, edificacoes, aparelhos, aquecimento, arCondicionado, bombas, motores, propria)")
@@ -221,7 +221,7 @@ fn tipo_de(cmd: &str, v: &Value) -> Result<ele::rota::TipoEletroduto> {
 }
 
 fn tracado_de(cmd: &str, v: &Value) -> Result<ele::eletroduto::Tracado> {
-    v.as_str().and_then(ele::eletroduto::Tracado::de_codigo).ok_or_else(|| bad(cmd, "`tracado` must be STRAIGHT, ORTHOGONAL or ARC"))
+    v.as_str().and_then(ele::eletroduto::Tracado::de_codigo).ok_or_else(|| bad(cmd, "`tracado` must be STRAIGHT, ANGLE45 or ARC"))
 }
 
 fn numero_finito(cmd: &str, v: &Value, k: &str) -> Result<f64> {
@@ -353,6 +353,7 @@ fn run_juntar(s: &mut Session, p: &Value) -> Result<Value> {
 struct Propriedades {
     isolacao: Option<Option<ele::nbr5410::Isolacao>>,
     cabo: Option<Option<ele::nbr5410::TipoCabo>>,
+    cabo_nome: Option<Option<String>>,
     grupo_dr: Option<Option<String>>,
     esquema: Option<Option<ele::nbr5410::Esquema>>,
     tensao: Option<Option<f64>>,
@@ -381,6 +382,12 @@ impl Propriedades {
                         .and_then(ele::nbr5410::TipoCabo::de_codigo)
                         .ok_or_else(|| bad(cmd, "`cabo` must be FLEX_PVC_70, UNI_PVC_70, HEPR_XLPE_90, LSZH_70 or LSZH_HEPR_90"))?,
                 ),
+            });
+        }
+        if let Some(v) = p.get("caboNome") {
+            d.cabo_nome = Some(match v {
+                Value::Null => None,
+                v => Some(v.as_str().ok_or_else(|| bad(cmd, "`caboNome` must be text or null"))?.to_string()),
             });
         }
         if let Some(v) = p.get("grupoDr") {
@@ -422,6 +429,7 @@ impl Propriedades {
     fn vazio(&self) -> bool {
         self.isolacao.is_none()
             && self.cabo.is_none()
+            && self.cabo_nome.is_none()
             && self.grupo_dr.is_none()
             && self.esquema.is_none()
             && self.tensao.is_none()
@@ -436,6 +444,13 @@ impl Propriedades {
         }
         if let Some(c) = self.cabo {
             ele::editar::definir_cabo_circuito(doc, q, id, c).map_err(erro)?;
+            // O nome acompanha a classe: sem um novo, volta ao da classe.
+            if self.cabo_nome.is_none() {
+                ele::editar::definir_nome_cabo(doc, q, id, None).map_err(erro)?;
+            }
+        }
+        if let Some(n) = &self.cabo_nome {
+            ele::editar::definir_nome_cabo(doc, q, id, n.as_deref()).map_err(erro)?;
         }
         if let Some(g) = &self.grupo_dr {
             ele::editar::definir_grupo_dr(doc, q, id, g.as_deref()).map_err(erro)?;
@@ -1200,9 +1215,21 @@ fn ponta(s: &mut Session, cmd: &str, p: &Value, k: &str) -> Result<Handle> {
     }
 }
 
+/// Um perfil de eletroduto pelo nome: a escolha que não existe é um erro, para não desenhar sem ele.
+fn perfil_de(cmd: &str, v: &Value) -> Result<ele::setup::PerfilEletroduto> {
+    let nome = v.as_str().ok_or_else(|| bad(cmd, "`perfil` must be the name of a conduit profile"))?;
+    ele::setup::atual().perfil(nome).cloned().ok_or_else(|| bad(cmd, format!("there is no conduit profile named `{nome}`")))
+}
+
 fn run_eletroduto(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "eleeletroduto";
     let modelo = ele::eletroduto::modelo(s.state()?.uid);
+    // O pedido no JSON ou o da mini-barra, a não ser que o JSON peça outro tipo ou outra instalação.
+    let perfil = match p.get("perfil").filter(|v| !v.is_null()) {
+        Some(v) => Some(perfil_de(CMD, v)?),
+        None if ["tipo", "instalacao", "piso"].iter().any(|k| p.get(*k).is_some_and(|v| !v.is_null())) => None,
+        None => modelo.perfil.as_deref().and_then(|n| ele::setup::atual().perfil(n).cloned()),
+    };
     let instalacao = match p.get("instalacao") {
         None | Some(Value::Null) => match p.get("piso").and_then(Value::as_bool) {
             Some(true) => Instalacao::Piso,
@@ -1240,9 +1267,12 @@ fn run_eletroduto(s: &mut Session, p: &Value) -> Result<Value> {
             .map(|q| ponto_de(q).ok_or_else(|| bad(CMD, "`desvios` must be [[x, y]]")))
             .collect::<Result<Vec<_>>>()?,
     };
-    let vertical_primeiro = p.get("verticalPrimeiro").and_then(Value::as_bool).unwrap_or(false);
-    let percurso = ele::eletroduto::Percurso { tracado, flecha, desvios, vertical_primeiro };
-    let h = ele::eletroduto::inserir_percurso(s.doc_mut()?, de, para, instalacao, &percurso, tipo).map_err(erro)?;
+    let diagonal_primeiro = p.get("diagonalPrimeiro").or_else(|| p.get("verticalPrimeiro")).and_then(Value::as_bool).unwrap_or(false);
+    let percurso = ele::eletroduto::Percurso { tracado, flecha, desvios, diagonal_primeiro };
+    let h = match &perfil {
+        Some(f) => ele::eletroduto::inserir_com_perfil(s.doc_mut()?, de, para, &percurso, f).map_err(erro)?,
+        None => ele::eletroduto::inserir_percurso(s.doc_mut()?, de, para, instalacao, &percurso, tipo).map_err(erro)?,
+    };
     Ok(json!({ "eletroduto": h.hex(), "de": de.hex(), "para": para.hex() }))
 }
 
@@ -1250,11 +1280,19 @@ fn run_modelo_eletroduto(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "eletrica.eletroduto.modelo";
     let uid = s.state()?.uid;
     let mut m = ele::eletroduto::modelo(uid);
+    // Escolher outro tipo ou outra instalação à mão sai do perfil.
     if let Some(v) = p.get("instalacao").filter(|v| !v.is_null()) {
         m.instalacao = instalacao_de(CMD, v)?;
+        m.perfil = None;
     }
     if let Some(v) = p.get("tipo").filter(|v| !v.is_null()) {
         m.tipo = tipo_de(CMD, v)?;
+        m.perfil = None;
+    }
+    match p.get("perfil") {
+        None => {}
+        Some(Value::Null) => m.perfil = None,
+        Some(v) => m = m.com_perfil(&perfil_de(CMD, v)?),
     }
     if let Some(v) = p.get("tracado").filter(|v| !v.is_null()) {
         m.tracado = tracado_de(CMD, v)?;
@@ -1262,7 +1300,7 @@ fn run_modelo_eletroduto(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(v) = p.get("flecha").filter(|v| !v.is_null()) {
         m.flecha = numero_finito(CMD, v, "flecha")?.clamp(-ele::eletroduto::FLECHA_MAXIMA, ele::eletroduto::FLECHA_MAXIMA);
     }
-    ele::eletroduto::definir_modelo(uid, m);
+    ele::eletroduto::definir_modelo(uid, m.clone());
     json_de(&m)
 }
 
@@ -1288,8 +1326,12 @@ fn run_definir_eletroduto(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let instalacao = p.get("instalacao").filter(|v| !v.is_null()).map(|v| instalacao_de(CMD, v)).transpose()?;
     let tipo = p.get("tipo").filter(|v| !v.is_null()).map(|v| tipo_de(CMD, v)).transpose()?;
-    if diametro.is_none() && instalacao.is_none() && tipo.is_none() {
-        return Err(bad(CMD, "give `diametro`, `instalacao` or `tipo`"));
+    let perfil = p.get("perfil").filter(|v| !v.is_null()).map(|v| perfil_de(CMD, v)).transpose()?;
+    if diametro.is_none() && instalacao.is_none() && tipo.is_none() && perfil.is_none() {
+        return Err(bad(CMD, "give `diametro`, `instalacao`, `tipo` or `perfil`"));
+    }
+    if let Some(f) = &perfil {
+        ele::eletroduto::aplicar_perfil(s.doc_mut()?, e, f).map_err(erro)?;
     }
     if let Some(t) = tipo {
         ele::eletroduto::definir_tipo(s.doc_mut()?, e, t).map_err(erro)?;
@@ -1309,8 +1351,8 @@ struct EletrodutoM {
     pedindo_tipo: bool,
     /// Os pontos de passagem do trecho em andamento.
     desvios: Vec<[f64; 2]>,
-    /// No ortogonal, sobe antes de andar.
-    vertical_primeiro: bool,
+    /// No 45°, a diagonal vem antes do trecho reto.
+    diagonal_primeiro: bool,
     anterior: Option<Handle>,
     /// Lado do arco: 1 à esquerda de quem vai do anterior ao próximo, -1 à direita.
     lado: f64,
@@ -1323,7 +1365,7 @@ impl Default for EletrodutoM {
         EletrodutoM {
             pedindo_tipo: false,
             desvios: Vec::new(),
-            vertical_primeiro: false,
+            diagonal_primeiro: false,
             anterior: None,
             lado: 1.0,
             pedindo_flecha: false,
@@ -1339,7 +1381,7 @@ impl EletrodutoM {
             tracado: m.tracado,
             flecha: self.lado * m.flecha,
             desvios: self.desvios.clone(),
-            vertical_primeiro: self.vertical_primeiro,
+            diagonal_primeiro: self.diagonal_primeiro,
         }
     }
 
@@ -1355,7 +1397,12 @@ impl EletrodutoM {
         if let Some(a) = self.anterior {
             let m = ele::eletroduto::modelo(s.state()?.uid);
             let percurso = self.percurso(&m);
-            match ele::eletroduto::inserir_percurso(s.doc_mut()?, a, h, m.instalacao, &percurso, m.tipo) {
+            let perfil = m.perfil.as_deref().and_then(|n| ele::setup::atual().perfil(n).cloned());
+            let feito = match &perfil {
+                Some(f) => ele::eletroduto::inserir_com_perfil(s.doc_mut()?, a, h, &percurso, f),
+                None => ele::eletroduto::inserir_percurso(s.doc_mut()?, a, h, m.instalacao, &percurso, m.tipo),
+            };
+            match feito {
                 Ok(_) => {
                     self.feitos += 1;
                     self.desvios.clear();
@@ -1378,6 +1425,13 @@ impl Interactive for EletrodutoM {
     fn begin(&mut self, s: &mut Session) -> Result<Step> {
         s.set_selection(Vec::new());
         preparar(s)?;
+        // Na primeira vez no desenho, começa no primeiro perfil do projeto.
+        let uid = s.state()?.uid;
+        if !ele::eletroduto::modelo_definido(uid)
+            && let Some(p) = ele::setup::atual().perfis_eletroduto.first()
+        {
+            ele::eletroduto::definir_modelo(uid, ele::eletroduto::modelo(uid).com_perfil(p));
+        }
         Ok(Step::Continue)
     }
     fn prompt(&self, s: &Session) -> Prompt {
@@ -1388,15 +1442,15 @@ impl Interactive for EletrodutoM {
         if self.pedindo_flecha {
             return Prompt::new("Flecha do arco (fração da corda, de 0 a 0,5)", Accept::TEXT).default(ele::ponto::br(m.flecha));
         }
-        let onde = format!("{}, {}", m.instalacao.nome().to_lowercase(), m.tipo.abreviado());
+        let onde = m.perfil.clone().unwrap_or_else(|| format!("{}, {}", m.instalacao.nome().to_lowercase(), m.tipo.abreviado()));
         let msg = match self.anterior {
             None => format!("Clique no primeiro bloco ou no meio de um eletroduto ({onde})"),
             Some(_) => format!("Clique no próximo bloco ou no meio de um eletroduto ({onde}; Enter termina)"),
         };
         let chaves: &[&str] = if self.anterior.is_some() {
-            &["Reto", "Ortogonal", "Arco", "Teto", "Piso", "Parede", "Tipo", "Inverter", "Flecha"]
+            &["Reto", "Angulo45", "Arco", "Teto", "Piso", "Parede", "Tipo", "Inverter", "Flecha"]
         } else {
-            &["Reto", "Ortogonal", "Arco", "Teto", "Piso", "Parede", "Tipo", "Flecha"]
+            &["Reto", "Angulo45", "Arco", "Teto", "Piso", "Parede", "Tipo", "Flecha"]
         };
         Prompt::new(msg, Accept::POINT).kw(chaves)
     }
@@ -1414,7 +1468,9 @@ impl Interactive for EletrodutoM {
             self.pedindo_tipo = false;
             if let Input::Text(t) | Input::Keyword(t) = &i {
                 match ele::rota::TipoEletroduto::de_codigo(t) {
-                    Some(tipo) => ele::eletroduto::definir_modelo(uid, ele::eletroduto::ModeloEletroduto { tipo, ..ele::eletroduto::modelo(uid) }),
+                    Some(tipo) => {
+                        ele::eletroduto::definir_modelo(uid, ele::eletroduto::ModeloEletroduto { tipo, perfil: None, ..ele::eletroduto::modelo(uid) })
+                    }
                     None if t.trim().is_empty() => {}
                     None => s.echo("Tipo inválido."),
                 }
@@ -1442,15 +1498,15 @@ impl Interactive for EletrodutoM {
             Input::Keyword(k) | Input::Text(k) => {
                 let mut m = ele::eletroduto::modelo(uid);
                 match k.trim().to_ascii_lowercase().as_str() {
-                    "teto" => m.instalacao = Instalacao::Teto,
-                    "piso" => m.instalacao = Instalacao::Piso,
-                    "parede" => m.instalacao = Instalacao::Parede,
+                    "teto" => (m.instalacao, m.perfil) = (Instalacao::Teto, None),
+                    "piso" => (m.instalacao, m.perfil) = (Instalacao::Piso, None),
+                    "parede" => (m.instalacao, m.perfil) = (Instalacao::Parede, None),
                     "inverter" => {
                         self.lado = -self.lado;
-                        self.vertical_primeiro = !self.vertical_primeiro;
+                        self.diagonal_primeiro = !self.diagonal_primeiro;
                     }
                     "reto" => m.tracado = ele::eletroduto::Tracado::Reto,
-                    "ortogonal" => m.tracado = ele::eletroduto::Tracado::Ortogonal,
+                    "angulo45" | "45" | "ortogonal" => m.tracado = ele::eletroduto::Tracado::Angulo45,
                     "arco" => m.tracado = ele::eletroduto::Tracado::Arco,
                     "flecha" => self.pedindo_flecha = true,
                     "tipo" => self.pedindo_tipo = true,

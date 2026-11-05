@@ -12,7 +12,7 @@ use cadcraft_doc::{Common, Drawing, EntityKind, Handle, Line, Lineweight, Space}
 use crate::biblioteca;
 use crate::ponto::ler_ponto;
 use crate::rota::{self, Instalacao, TipoEletroduto};
-use crate::setup::Setup;
+use crate::setup::{PerfilEletroduto, Setup};
 use crate::xdata;
 
 /// Camadas do eletroduto.
@@ -133,26 +133,58 @@ pub fn inserir_percurso(
     doc.add(&Space::Model, common, percurso.entidade(a, b)).map_err(|e| e.to_string())
 }
 
+/// Garante o tipo de linha no desenho, com a definição da biblioteca padrão.
+fn garantir_tipo_de_linha(doc: &mut Drawing, nome: &str) {
+    if doc.linetype(nome).is_some() {
+        return;
+    }
+    if let Some(l) = cadcraft_doc::library::standard_linetypes_for(doc).into_iter().find(|l| l.name.eq_ignore_ascii_case(nome)) {
+        doc.linetypes.push(l);
+    }
+}
+
+/// Aplica um perfil a um eletroduto: o tipo, o caminhamento, a camada, o tipo de linha e a cor.
+pub fn aplicar_perfil(doc: &mut Drawing, h: Handle, perfil: &PerfilEletroduto) -> Result<(), String> {
+    garantir_camada(doc, perfil.caminhamento);
+    garantir_tipo_de_linha(doc, perfil.tipo_linha.no_desenho());
+    let mut e = doc.model.get(h).map(|e| (**e).clone()).ok_or("eletroduto não encontrado")?;
+    xdata::gravar(&mut e.common.xdata, rota::CHAVE_PERFIL, Some(&perfil.nome));
+    xdata::gravar(&mut e.common.xdata, rota::CHAVE_TIPO, Some(perfil.tipo.codigo()));
+    xdata::gravar(&mut e.common.xdata, rota::CHAVE_INSTALACAO, Some(perfil.caminhamento.codigo()));
+    e.common.layer = camada(perfil.caminhamento).into();
+    e.common.linetype = perfil.tipo_linha.no_desenho().into();
+    e.common.color = Color::Index(perfil.cor.max(1));
+    doc.model.replace(e);
+    Ok(())
+}
+
+/// Cria o eletroduto entre dois blocos elétricos, com tudo o que o perfil define.
+pub fn inserir_com_perfil(doc: &mut Drawing, de: Handle, para: Handle, percurso: &Percurso, perfil: &PerfilEletroduto) -> Result<Handle, String> {
+    let h = inserir_percurso(doc, de, para, perfil.caminhamento, percurso, perfil.tipo)?;
+    aplicar_perfil(doc, h, perfil)?;
+    Ok(h)
+}
+
 /// O desenho do eletroduto entre os blocos.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Tracado {
     /// Em linha reta entre os pontos.
     Reto,
-    /// Só na horizontal e na vertical.
-    Ortogonal,
+    /// Um trecho reto e um trecho a 45°.
+    Angulo45,
     /// Em arco ou curva suave.
     #[default]
     Arco,
 }
 
 impl Tracado {
-    pub const TODOS: [Tracado; 3] = [Self::Reto, Self::Ortogonal, Self::Arco];
+    pub const TODOS: [Tracado; 3] = [Self::Reto, Self::Angulo45, Self::Arco];
 
     pub fn nome(self) -> &'static str {
         match self {
             Self::Reto => "Reto",
-            Self::Ortogonal => "Ortogonal",
+            Self::Angulo45 => "Ângulo 45°",
             Self::Arco => "Arco",
         }
     }
@@ -160,13 +192,17 @@ impl Tracado {
     pub fn codigo(self) -> &'static str {
         match self {
             Self::Reto => "STRAIGHT",
-            Self::Ortogonal => "ORTHOGONAL",
+            Self::Angulo45 => "ANGLE45",
             Self::Arco => "ARC",
         }
     }
 
     pub fn de_codigo(t: &str) -> Option<Self> {
         let t = t.trim();
+        // Scripts da versão anterior ainda pedem ORTHOGONAL, que o 45° substituiu.
+        if t.eq_ignore_ascii_case("ORTHOGONAL") || t.eq_ignore_ascii_case("ORTOGONAL") || t == "45" {
+            return Some(Self::Angulo45);
+        }
         Self::TODOS.into_iter().find(|i| i.codigo().eq_ignore_ascii_case(t) || i.nome().eq_ignore_ascii_case(t))
     }
 }
@@ -179,8 +215,8 @@ pub struct Percurso {
     pub flecha: f64,
     /// Pontos de passagem entre os blocos, para contornar pilares e paredes.
     pub desvios: Vec<P>,
-    /// No ortogonal, sobe primeiro e depois anda; sem isso, anda e depois sobe.
-    pub vertical_primeiro: bool,
+    /// No 45°, faz a diagonal primeiro e depois o trecho reto; sem isso, o contrário.
+    pub diagonal_primeiro: bool,
 }
 
 impl Percurso {
@@ -190,12 +226,20 @@ impl Percurso {
         match self.tracado {
             Tracado::Arco if self.desvios.is_empty() && self.flecha.abs() >= 1e-9 => pontos_do_arco(a, b, self.flecha, n_arco),
             Tracado::Arco | Tracado::Reto => passagem,
-            Tracado::Ortogonal => {
+            Tracado::Angulo45 => {
                 let mut v: Vec<P> = Vec::new();
                 for par in passagem.windows(2) {
                     let (p, q) = (par[0], par[1]);
                     v.push(p);
-                    let canto = if self.vertical_primeiro { [p[0], q[1]] } else { [q[0], p[1]] };
+                    let (dx, dy) = (q[0] - p[0], q[1] - p[1]);
+                    // A diagonal cobre o menor dos dois lados; o resto é o trecho reto.
+                    let diagonal = dx.abs().min(dy.abs());
+                    let (sx, sy) = (dx.signum(), dy.signum());
+                    let canto = if self.diagonal_primeiro {
+                        [p[0] + sx * diagonal, p[1] + sy * diagonal]
+                    } else {
+                        [q[0] - sx * diagonal, q[1] - sy * diagonal]
+                    };
                     if (canto[0] - p[0]).hypot(canto[1] - p[1]) > 1e-9 && (canto[0] - q[0]).hypot(canto[1] - q[1]) > 1e-9 {
                         v.push(canto);
                     }
@@ -227,18 +271,36 @@ impl Percurso {
 }
 
 /// O que o próximo trecho de ELEELETRODUTO usa: a barra de cima muda enquanto o comando corre.
-#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModeloEletroduto {
     pub instalacao: Instalacao,
     pub flecha: f64,
     pub tipo: TipoEletroduto,
     pub tracado: Tracado,
+    /// O perfil escolhido na mini-barra. `None`: o tipo e a instalação acima, sem perfil.
+    pub perfil: Option<String>,
+}
+
+impl ModeloEletroduto {
+    /// O modelo com um perfil: o tipo e a instalação passam a ser os dele.
+    pub fn com_perfil(mut self, perfil: &PerfilEletroduto) -> Self {
+        self.instalacao = perfil.caminhamento;
+        self.tipo = perfil.tipo;
+        self.perfil = Some(perfil.nome.clone());
+        self
+    }
 }
 
 impl Default for ModeloEletroduto {
     fn default() -> Self {
-        ModeloEletroduto { instalacao: Instalacao::Teto, flecha: FLECHA_PADRAO, tipo: TipoEletroduto::CorrugadoReforcado, tracado: Tracado::Arco }
+        ModeloEletroduto {
+            instalacao: Instalacao::Teto,
+            flecha: FLECHA_PADRAO,
+            tipo: TipoEletroduto::CorrugadoReforcado,
+            tracado: Tracado::Arco,
+            perfil: None,
+        }
     }
 }
 
@@ -252,7 +314,12 @@ pub fn definir_modelo(desenho: u64, m: ModeloEletroduto) {
 
 /// A instalação e a flecha em uso no desenho `desenho`.
 pub fn modelo(desenho: u64) -> ModeloEletroduto {
-    MODELO.lock().unwrap_or_else(|e| e.into_inner()).get(&desenho).copied().unwrap_or_default()
+    MODELO.lock().unwrap_or_else(|e| e.into_inner()).get(&desenho).cloned().unwrap_or_default()
+}
+
+/// O desenho já tem um modelo escolhido, pela mini-barra ou por comando.
+pub fn modelo_definido(desenho: u64) -> bool {
+    MODELO.lock().unwrap_or_else(|e| e.into_inner()).contains_key(&desenho)
 }
 
 /// O bloco elétrico mais perto de `q`, dentro do raio de captura.
@@ -394,6 +461,8 @@ pub fn travar_diametro(doc: &mut Drawing, h: Handle, diametro: Option<f64>) -> R
 pub fn definir_tipo(doc: &mut Drawing, h: Handle, tipo: TipoEletroduto) -> Result<(), String> {
     let mut e = doc.model.get(h).map(|e| (**e).clone()).ok_or("eletroduto não encontrado")?;
     xdata::gravar(&mut e.common.xdata, rota::CHAVE_TIPO, Some(tipo.codigo()));
+    // O tipo escolhido à mão sai do perfil: a tabela de diâmetros passa a ser a do tipo.
+    xdata::gravar(&mut e.common.xdata, rota::CHAVE_PERFIL, None);
     doc.model.replace(e);
     Ok(())
 }

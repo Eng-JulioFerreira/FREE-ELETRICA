@@ -520,7 +520,7 @@ fn tracados_dimensionamento_e_atributos_por_comandos() {
     let e = |s: &mut Session, p: Value| s.execute("eleeletroduto", &p).unwrap()["eletroduto"].as_str().unwrap().to_string();
     let h = e(&mut s, json!({ "de": q, "para": a, "tracado": "STRAIGHT" }));
     assert!(matches!(tipo(&s, &h), EntityKind::Line(_)));
-    let h = e(&mut s, json!({ "de": q, "para": a, "tracado": "ORTHOGONAL", "verticalPrimeiro": true }));
+    let h = e(&mut s, json!({ "de": q, "para": a, "tracado": "ANGLE45", "diagonalPrimeiro": true }));
     assert!(matches!(tipo(&s, &h), EntityKind::LwPolyline(_)));
     let h = e(&mut s, json!({ "de": q, "para": a, "tracado": "ARC", "desvios": [[2.0, 3.0]] }));
     assert!(matches!(tipo(&s, &h), EntityKind::Spline(_)));
@@ -1078,4 +1078,61 @@ fn configuracao_de_cada_quadro_por_comando() {
     assert_eq!(s.execute("eletrica.rotear", &json!({})).unwrap()["tensaoFn"], 127.0);
     s.execute("eletrica.quadro", &json!({ "cabo": null })).unwrap();
     assert!(s.execute("eletrica.rotear", &json!({})).unwrap()["config"]["cabo"].is_null());
+}
+
+#[test]
+fn perfil_de_eletroduto_por_comando() {
+    let (d, [qd, luz, ..]) = planta();
+    let mut s = Session::default();
+    s.open_drawing(d, "Perfil", None);
+    let nome = "Eletroduto PEAD - Piso";
+    // Um perfil que não existe é erro: não desenha sem ele.
+    assert!(s.execute("eleeletroduto", &json!({ "de": qd.hex(), "para": luz.hex(), "perfil": "Nenhum" })).is_err());
+    assert!(s.execute("eleeletroduto", &json!({ "de": qd.hex(), "para": luz.hex(), "perfil": 3 })).is_err());
+    assert!(s.execute("eletrica.eletroduto.modelo", &json!({ "perfil": "Nenhum" })).is_err());
+    let h = s.execute("eleeletroduto", &json!({ "de": qd.hex(), "para": luz.hex(), "perfil": nome, "tracado": "ANGLE45" })).unwrap()["eletroduto"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let e = s.doc().unwrap().model.get(Handle::parse_hex(&h).unwrap()).unwrap().clone();
+    assert_eq!((e.common.linetype.as_str(), e.common.layer.as_str()), ("DASHED", free_eletrica::eletroduto::CAMADA_PISO));
+    // A mini-barra: o perfil traz o tipo e o caminhamento; escolher um tipo à mão sai do perfil.
+    let m = s.execute("eletrica.eletroduto.modelo", &json!({ "perfil": nome })).unwrap();
+    assert_eq!((m["perfil"].as_str(), m["instalacao"].as_str(), m["tipo"].as_str()), (Some(nome), Some("piso"), Some("peadCorrugado")));
+    let m = s.execute("eletrica.eletroduto.modelo", &json!({ "tipo": "PVC_RIGID" })).unwrap();
+    assert!(m["perfil"].is_null());
+    let uid = s.state().unwrap().uid;
+    assert!(free_eletrica::eletroduto::modelo_definido(uid));
+    // Interativo, num desenho novo: começa no primeiro perfil do projeto.
+    let (d, [qd2, luz2, ..]) = planta();
+    let mut s2 = Session::default();
+    s2.open_drawing(d, "Perfil 2", None);
+    s2.start("eleeletroduto").unwrap();
+    s2.input(Input::Pick(vec![qd2])).unwrap();
+    s2.input(Input::Keyword("Reto".into())).unwrap();
+    s2.input(Input::Pick(vec![luz2])).unwrap();
+    s2.input(Input::Enter).unwrap();
+    let t = s2.execute("eletrica.eletrodutos", &json!({})).unwrap();
+    let achado = t["trechos"].as_array().unwrap().iter().find(|x| x["perfil"] == "Eletroduto PVC Flexível - Teto");
+    assert!(achado.is_some(), "{t}");
+    // Aplicar um perfil a um trecho existente.
+    s.execute("eletrica.eletroduto.definir", &json!({ "eletroduto": h, "perfil": "Eletroduto Aço Galvanizado" })).unwrap();
+    let e = s.doc().unwrap().model.get(Handle::parse_hex(&h).unwrap()).unwrap().clone();
+    assert_eq!(e.common.linetype, "DASHDOT");
+}
+
+#[test]
+fn nome_do_cabo_do_catalogo_por_comando() {
+    let (d, [qd, luz, ..]) = planta();
+    let mut s = Session::default();
+    s.open_drawing(d, "Cabo", None);
+    s.execute("elecircuito", &json!({ "quadro": qd.hex(), "circuito": "1", "pontos": [luz.hex()] })).unwrap();
+    assert!(s.execute("eletrica.circuito.definir", &json!({ "circuito": "1", "caboNome": 3 })).is_err());
+    s.execute("eletrica.circuito.definir", &json!({ "circuito": "1", "cabo": "LSZH_70", "caboNome": "Cabo da obra" })).unwrap();
+    let r = s.execute("eletrica.rotear", &json!({})).unwrap();
+    assert_eq!((r["linhas"][0]["tipoCabo"].as_str(), r["linhas"][0]["nomeCabo"].as_str()), (Some("lszh70"), Some("Cabo da obra")));
+    // Trocar a classe sem dar nome volta ao nome da classe.
+    s.execute("eletrica.circuito.definir", &json!({ "circuito": "1", "cabo": "HEPR_XLPE_90" })).unwrap();
+    let r = s.execute("eletrica.rotear", &json!({})).unwrap();
+    assert_ne!(r["linhas"][0]["nomeCabo"], "Cabo da obra");
 }

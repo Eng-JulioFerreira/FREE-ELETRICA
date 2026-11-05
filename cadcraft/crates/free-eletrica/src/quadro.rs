@@ -32,6 +32,8 @@ pub const CHAVE_ISOLACAO: &str = "ISOLACAO";
 pub const CHAVE_ISOLACAO_CIRCUITO: &str = "ISOL.";
 /// Tipo de cabo de um circuito: `CABO.<circuito>`; vale sobre `ISOL.`, dos desenhos anteriores.
 pub const CHAVE_CABO: &str = "CABO.";
+/// O nome do cabo no catálogo: `CABONOME.<circuito>`. A classe que vale no cálculo fica em `CABO.`.
+pub const CHAVE_CABO_NOME: &str = "CABONOME.";
 /// Grupo de DR de um circuito: `DR.<circuito>`.
 pub const CHAVE_DR: &str = "DR.";
 /// O último dimensionamento de um circuito: `DIM.<circuito>` = `seção;disjuntor;FCA;queda`.
@@ -170,6 +172,8 @@ pub fn quadro_que_alimenta(q: &PontoEletrico) -> Option<Handle> {
 pub struct Propriedades {
     pub isolacao: Option<nbr5410::Isolacao>,
     pub cabo: Option<nbr5410::TipoCabo>,
+    /// O nome do cabo no catálogo.
+    pub cabo_nome: Option<String>,
     pub grupo_dr: Option<String>,
     pub calculado: Option<Calculado>,
     pub esquema: Option<nbr5410::Esquema>,
@@ -240,6 +244,8 @@ pub fn propriedades(quadro: &PontoEletrico) -> HashMap<String, Propriedades> {
             m.entry(c.to_string()).or_default().calculado = Calculado::de_texto(v);
         } else if let Some(c) = k.strip_prefix(CHAVE_CABO) {
             m.entry(c.to_string()).or_default().cabo = nbr5410::TipoCabo::de_codigo(v);
+        } else if let Some(c) = k.strip_prefix(CHAVE_CABO_NOME) {
+            m.entry(c.to_string()).or_default().cabo_nome = Some(v.trim().to_string()).filter(|n| !n.is_empty());
         } else if let Some(c) = k.strip_prefix(CHAVE_ESQUEMA) {
             m.entry(c.to_string()).or_default().esquema = nbr5410::Esquema::de_codigo(v);
         } else if let Some(c) = k.strip_prefix(CHAVE_TENSAO) {
@@ -387,6 +393,8 @@ pub struct Linha {
     pub isolacao: nbr5410::Isolacao,
     /// O tipo de cabo do circuito.
     pub tipo_cabo: nbr5410::TipoCabo,
+    /// O nome do cabo no catálogo.
+    pub nome_cabo: String,
     /// O grupo de DR do circuito.
     pub grupo_dr: Option<String>,
     /// O que o último "Processar cálculo" gravou.
@@ -704,6 +712,7 @@ pub fn rotear(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle) -
                 cabo: r.percurso * f64::from(condutores) * setup.fator_materiais,
                 isolacao: isolacao_circuito,
                 tipo_cabo: p.cabo.unwrap_or(cabo_padrao),
+                nome_cabo: p.cabo_nome.clone().unwrap_or_else(|| setup.nome_do_cabo(p.cabo.unwrap_or(cabo_padrao))),
                 grupo_dr: p.grupo_dr.clone(),
                 calculado: p.calculado,
                 isolacao_propria: p.isolacao.is_some(),

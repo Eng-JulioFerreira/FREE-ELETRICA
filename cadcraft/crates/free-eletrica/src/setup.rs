@@ -357,6 +357,105 @@ pub fn eletrodutos_padrao() -> Vec<TamanhoEletroduto> {
     .collect()
 }
 
+/// Um cabo elétrico do catálogo: o nome que o projetista usa e a classe que vale no cálculo.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct CaboEletrico {
+    pub nome: String,
+    /// Isolação e tensão: entram no dimensionamento (NBR 5410) e no diâmetro externo.
+    pub classe: TipoCabo,
+    pub observacao: String,
+}
+
+/// O catálogo de fábrica: um cabo de cada classe.
+pub fn cabos_eletricos_padrao() -> Vec<CaboEletrico> {
+    TipoCabo::TODOS.into_iter().map(|classe| CaboEletrico { nome: classe.nome().to_string(), classe, observacao: String::new() }).collect()
+}
+
+/// O tipo de linha de um perfil de eletroduto.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TipoLinha {
+    #[default]
+    Continua,
+    Tracejada,
+    TracoPonto,
+    Pontilhada,
+}
+
+impl TipoLinha {
+    pub const TODOS: [TipoLinha; 4] = [Self::Continua, Self::Tracejada, Self::TracoPonto, Self::Pontilhada];
+
+    pub fn nome(self) -> &'static str {
+        match self {
+            Self::Continua => "Contínua (Continuous)",
+            Self::Tracejada => "Tracejada (Dashed)",
+            Self::TracoPonto => "Traço e ponto (DashDot)",
+            Self::Pontilhada => "Pontilhada (Dotted)",
+        }
+    }
+
+    /// O nome do tipo de linha no desenho.
+    pub fn no_desenho(self) -> &'static str {
+        match self {
+            Self::Continua => "Continuous",
+            Self::Tracejada => "DASHED",
+            Self::TracoPonto => "DASHDOT",
+            Self::Pontilhada => "DOT",
+        }
+    }
+}
+
+/// As cores oferecidas para os perfis: (índice de cor do CAD, nome, RGB para a tela).
+pub const CORES_DE_LINHA: [(u8, &str, [u8; 3]); 8] = [
+    (1, "Vermelho", [255, 0, 0]),
+    (2, "Amarelo", [255, 255, 0]),
+    (3, "Verde", [0, 255, 0]),
+    (4, "Ciano", [0, 255, 255]),
+    (5, "Azul", [0, 0, 255]),
+    (6, "Magenta", [255, 0, 255]),
+    (7, "Branco", [255, 255, 255]),
+    (8, "Cinza", [128, 128, 128]),
+];
+
+/// Um perfil de eletroduto: o que a mini-barra escolhe e o que cada trecho desenhado aplica.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct PerfilEletroduto {
+    pub nome: String,
+    /// O material: entra na lista de materiais.
+    pub tipo: crate::rota::TipoEletroduto,
+    pub tipo_linha: TipoLinha,
+    /// Índice de cor do CAD.
+    pub cor: u8,
+    /// Onde o trecho corre em 3D.
+    pub caminhamento: crate::rota::Instalacao,
+    /// A tabela de diâmetros comerciais: nominal e interno real (mm).
+    pub diametros: Vec<TamanhoEletroduto>,
+}
+
+/// Os perfis de fábrica. Os diâmetros internos são típicos de catálogo: confira com o fabricante.
+pub fn perfis_padrao() -> Vec<PerfilEletroduto> {
+    use crate::rota::{Instalacao as I, TipoEletroduto as E};
+    let s = Setup { perfis_eletroduto: Vec::new(), ..Setup::default_sem_perfis() };
+    [
+        ("Eletroduto PVC Flexível - Teto", E::CorrugadoReforcado, TipoLinha::Continua, 4, I::Teto),
+        ("Eletroduto PVC Flexível - Parede", E::CorrugadoLeve, TipoLinha::Tracejada, 3, I::Parede),
+        ("Eletroduto PEAD - Piso", E::PeadCorrugado, TipoLinha::Tracejada, 6, I::Piso),
+        ("Eletroduto Aço Galvanizado", E::AcoEletrolitico, TipoLinha::TracoPonto, 1, I::Teto),
+    ]
+    .into_iter()
+    .map(|(nome, tipo, tipo_linha, cor, caminhamento)| PerfilEletroduto {
+        nome: nome.into(),
+        tipo,
+        tipo_linha,
+        cor,
+        caminhamento,
+        diametros: s.tamanhos_de(tipo),
+    })
+    .collect()
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Setup {
@@ -391,6 +490,12 @@ pub struct Setup {
     /// Distância máxima (m) entre um ponto e o eletroduto que chega nele.
     pub raio_captura: f64,
     pub cabos_telecom: Vec<CaboTelecom>,
+    /// Os cabos de telecom de fábrica que o projetista excluiu: não voltam sozinhos.
+    pub cabos_telecom_excluidos: Vec<String>,
+    /// O catálogo de cabos elétricos.
+    pub cabos_eletricos: Vec<CaboEletrico>,
+    /// Os perfis de eletroduto.
+    pub perfis_eletroduto: Vec<PerfilEletroduto>,
     /// O cabo de um circuito novo; cada circuito pode ter o seu.
     pub cabo_padrao: TipoCabo,
     /// Circuitos no mesmo eletroduto podem dividir um condutor de proteção, da maior seção entre eles.
@@ -415,6 +520,12 @@ pub struct Setup {
 
 impl Default for Setup {
     fn default() -> Self {
+        Setup { perfis_eletroduto: perfis_padrao(), ..Setup::default_sem_perfis() }
+    }
+}
+
+impl Setup {
+    fn default_sem_perfis() -> Self {
         Setup {
             sistema: Sistema::default(),
             temperatura_ambiente: 30.0,
@@ -433,6 +544,9 @@ impl Default for Setup {
             camadas_piso: "*PISO*".into(),
             raio_captura: 0.30,
             cabos_telecom: cabos_padrao(),
+            cabos_telecom_excluidos: Vec::new(),
+            cabos_eletricos: cabos_eletricos_padrao(),
+            perfis_eletroduto: Vec::new(),
             cabo_padrao: TipoCabo::default(),
             compartilhar_pe: false,
             fca_manual: None,
@@ -521,13 +635,37 @@ impl Setup {
         }
     }
 
+    /// Os tamanhos de um trecho: os do perfil dele ou, sem perfil, os do tipo.
+    pub fn tamanhos_do_trecho(&self, perfil: Option<&str>, tipo: crate::rota::TipoEletroduto) -> Vec<TamanhoEletroduto> {
+        match perfil.and_then(|n| self.perfil(n)).filter(|p| !p.diametros.is_empty()) {
+            Some(p) => p.diametros.clone(),
+            None => self.tamanhos_de(tipo),
+        }
+    }
+
+    /// Um perfil de eletroduto pelo nome.
+    pub fn perfil(&self, nome: &str) -> Option<&PerfilEletroduto> {
+        self.perfis_eletroduto.iter().find(|p| p.nome.eq_ignore_ascii_case(nome.trim()))
+    }
+
     /// O menor eletroduto do tipo (a partir do mínimo) que comporta condutores com estes diâmetros
     /// externos (mm), com a ocupação máxima da NBR 5410. Devolve o tamanho e a ocupação (0-1).
     pub fn eletroduto_do_tipo(&self, diametros: &[f64], tipo: crate::rota::TipoEletroduto) -> Option<(TamanhoEletroduto, f64)> {
+        self.eletroduto_do_trecho(diametros, None, tipo)
+    }
+
+    /// O menor eletroduto do trecho (a partir do mínimo) que comporta condutores com estes diâmetros
+    /// externos (mm), pela tabela do perfil ou do tipo.
+    pub fn eletroduto_do_trecho(
+        &self,
+        diametros: &[f64],
+        perfil: Option<&str>,
+        tipo: crate::rota::TipoEletroduto,
+    ) -> Option<(TamanhoEletroduto, f64)> {
         let area = |d: f64| std::f64::consts::PI * d * d / 4.0;
         let ocupada: f64 = diametros.iter().map(|d| area(*d)).sum();
         let limite = ocupacao_maxima(diametros.len());
-        self.tamanhos_de(tipo)
+        self.tamanhos_do_trecho(perfil, tipo)
             .into_iter()
             .filter(|e| e.nominal + 1e-9 >= self.eletroduto_minimo && e.interno > 0.0)
             .map(|e| {
@@ -583,8 +721,31 @@ impl Setup {
                 // Preferências antigas não tinham diâmetro.
                 Some(x) if x.diametro <= 0.0 => x.diametro = c.diametro,
                 Some(_) => {}
+                None if self.cabos_telecom_excluidos.iter().any(|n| n.eq_ignore_ascii_case(&c.nome)) => {}
                 None => self.cabos_telecom.insert(0, c),
             }
+        }
+        if self.cabos_eletricos.is_empty() {
+            self.cabos_eletricos = cabos_eletricos_padrao();
+        }
+        // Perfis com nome único, cor válida e diâmetros em ordem; nunca sem nenhum.
+        let mut vistos: Vec<String> = Vec::new();
+        self.perfis_eletroduto.retain(|p| {
+            let chave = p.nome.trim().to_lowercase();
+            let bom = !chave.is_empty() && !vistos.contains(&chave);
+            if bom {
+                vistos.push(chave);
+            }
+            bom
+        });
+        for p in &mut self.perfis_eletroduto {
+            p.nome = p.nome.trim().to_string();
+            p.cor = p.cor.max(1);
+            p.diametros.retain(|d| d.nominal.is_finite() && d.nominal > 0.0 && d.interno.is_finite() && d.interno > 0.0);
+            p.diametros.sort_by(|a, b| a.nominal.total_cmp(&b.nominal));
+        }
+        if self.perfis_eletroduto.is_empty() {
+            self.perfis_eletroduto = perfis_padrao();
         }
         if self.diametros_condutor.is_empty() {
             self.diametros_condutor = diametros_padrao();
@@ -677,11 +838,85 @@ impl Setup {
         Ok(())
     }
 
-    /// Remove um cabo cadastrado pelo usuário. Os de fábrica ficam.
+    /// Exclui um cabo de telecom. Um de fábrica fica anotado, para não voltar ao abrir o programa.
     pub fn remover_cabo(&mut self, nome: &str) -> bool {
         let antes = self.cabos_telecom.len();
-        self.cabos_telecom.retain(|c| c.padrao || !c.nome.eq_ignore_ascii_case(nome));
+        let padrao = self.cabos_telecom.iter().any(|c| c.padrao && c.nome.eq_ignore_ascii_case(nome));
+        self.cabos_telecom.retain(|c| !c.nome.eq_ignore_ascii_case(nome));
+        if padrao {
+            self.cabos_telecom_excluidos.push(nome.trim().to_string());
+        }
         self.cabos_telecom.len() != antes
+    }
+
+    /// Altera um cabo de telecom. Mudar o nome de um de fábrica equivale a excluí-lo e cadastrar outro.
+    pub fn atualizar_cabo(&mut self, nome: &str, mut novo: CaboTelecom) -> Result<(), String> {
+        let Some(i) = self.cabos_telecom.iter().position(|c| c.nome.eq_ignore_ascii_case(nome)) else {
+            return Err(format!("não há cabo \"{nome}\" no catálogo"));
+        };
+        novo.nome = novo.nome.trim().to_string();
+        if novo.nome.is_empty() {
+            return Err("informe o nome do cabo".into());
+        }
+        if self.cabos_telecom.iter().enumerate().any(|(k, c)| k != i && c.nome.eq_ignore_ascii_case(&novo.nome)) {
+            return Err(format!("já existe um cabo \"{}\" no catálogo", novo.nome));
+        }
+        if !(novo.diametro.is_finite() && novo.diametro > 0.0) {
+            return Err("informe o diâmetro externo do cabo (mm): ele entra no cálculo de ocupação dos eletrodutos".into());
+        }
+        let antigo = &self.cabos_telecom[i];
+        let renomeado = !antigo.nome.eq_ignore_ascii_case(&novo.nome);
+        novo.padrao = antigo.padrao && !renomeado;
+        if antigo.padrao && renomeado {
+            self.cabos_telecom_excluidos.push(antigo.nome.clone());
+        }
+        novo.quantidade = novo.quantidade.max(1);
+        self.cabos_telecom[i] = novo;
+        Ok(())
+    }
+
+    /// Cadastra um cabo elétrico. O nome é obrigatório e único.
+    pub fn cadastrar_cabo_eletrico(&mut self, mut cabo: CaboEletrico) -> Result<(), String> {
+        cabo.nome = cabo.nome.trim().to_string();
+        if cabo.nome.is_empty() {
+            return Err("informe o nome do cabo".into());
+        }
+        if self.cabos_eletricos.iter().any(|c| c.nome.eq_ignore_ascii_case(&cabo.nome)) {
+            return Err(format!("já existe um cabo \"{}\" no catálogo", cabo.nome));
+        }
+        self.cabos_eletricos.push(cabo);
+        Ok(())
+    }
+
+    /// Altera um cabo elétrico. Os circuitos que já usam o nome antigo continuam com ele.
+    pub fn atualizar_cabo_eletrico(&mut self, nome: &str, mut novo: CaboEletrico) -> Result<(), String> {
+        let Some(i) = self.cabos_eletricos.iter().position(|c| c.nome.eq_ignore_ascii_case(nome)) else {
+            return Err(format!("não há cabo \"{nome}\" no catálogo"));
+        };
+        novo.nome = novo.nome.trim().to_string();
+        if novo.nome.is_empty() {
+            return Err("informe o nome do cabo".into());
+        }
+        if self.cabos_eletricos.iter().enumerate().any(|(k, c)| k != i && c.nome.eq_ignore_ascii_case(&novo.nome)) {
+            return Err(format!("já existe um cabo \"{}\" no catálogo", novo.nome));
+        }
+        self.cabos_eletricos[i] = novo;
+        Ok(())
+    }
+
+    /// Exclui um cabo elétrico do catálogo. O último fica: sem nenhum, não há o que escolher.
+    pub fn remover_cabo_eletrico(&mut self, nome: &str) -> bool {
+        if self.cabos_eletricos.len() <= 1 {
+            return false;
+        }
+        let antes = self.cabos_eletricos.len();
+        self.cabos_eletricos.retain(|c| !c.nome.eq_ignore_ascii_case(nome));
+        self.cabos_eletricos.len() != antes
+    }
+
+    /// O nome de uma classe de cabo no catálogo.
+    pub fn nome_do_cabo(&self, classe: TipoCabo) -> String {
+        self.cabos_eletricos.iter().find(|c| c.classe == classe).map_or_else(|| classe.nome().to_string(), |c| c.nome.clone())
     }
 
     /// A camada é de eletroduto.

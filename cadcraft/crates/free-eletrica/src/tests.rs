@@ -324,7 +324,10 @@ fn catalogo_de_telecom() {
     assert!(s.cadastrar_cabo(CaboTelecom::default()).is_err(), "sem nome");
     assert_eq!(s.cabos_telecom.last().unwrap().nome, "UTP Cat 6A");
     // Os de fábrica não saem; os cadastrados saem.
-    assert!(!s.remover_cabo("UTP Cat 5"));
+    // Os de fábrica também saem, e não voltam ao normalizar as preferências.
+    assert!(s.remover_cabo("UTP Cat 5"));
+    s.normalizar();
+    assert!(s.cabos_telecom.iter().all(|c| c.nome != "UTP Cat 5"));
     assert!(s.remover_cabo("utp cat 6a"));
     // Preferências antigas sem algum cabo de fábrica ganham ele de volta.
     let mut velho = Setup { cabos_telecom: Vec::new(), ..Setup::default() };
@@ -2088,6 +2091,140 @@ fn lista_de_materiais_separa_por_tipo_e_diametro() {
 }
 
 #[test]
+fn perfis_de_eletroduto_aplicam_linha_cor_caminhamento_e_diametros() {
+    use eletroduto::{Percurso, Tracado};
+    use setup::{PerfilEletroduto, TamanhoEletroduto, TipoLinha};
+    let padrao = Setup::default();
+    let nomes: Vec<&str> = padrao.perfis_eletroduto.iter().map(|p| p.nome.as_str()).collect();
+    assert_eq!(nomes, ["Eletroduto PVC Flexível - Teto", "Eletroduto PVC Flexível - Parede", "Eletroduto PEAD - Piso", "Eletroduto Aço Galvanizado"]);
+    assert!(padrao.perfis_eletroduto.iter().all(|p| !p.diametros.is_empty()));
+    // Um perfil próprio com tabela curta: Ø30 interno 26.
+    let perfil = PerfilEletroduto {
+        nome: "Meu perfil".into(),
+        tipo: rota::TipoEletroduto::AcoFogo,
+        tipo_linha: TipoLinha::Tracejada,
+        cor: 5,
+        caminhamento: rota::Instalacao::Piso,
+        diametros: vec![TamanhoEletroduto { nominal: 30.0, polegadas: String::new(), interno: 26.0 }],
+    };
+    let mut s = Setup::default();
+    s.perfis_eletroduto.push(perfil.clone());
+    let mut d = metros();
+    let q = qd(&mut d, 0.0, 0.0);
+    let a = tug(&mut d, 4.0, 0.0, "1");
+    let h = eletroduto::inserir_com_perfil(&mut d, q, a, &Percurso { tracado: Tracado::Reto, ..Percurso::default() }, &perfil).unwrap();
+    let e = d.model.get(h).unwrap();
+    assert_eq!((e.common.linetype.as_str(), e.common.layer.as_str()), ("DASHED", eletroduto::CAMADA_PISO));
+    assert_eq!(e.common.color, cadcraft_doc::color::Color::Index(5));
+    assert!(d.linetype("DASHED").is_some(), "o tipo de linha entra no desenho");
+    let (m, _) = s.unidade.metros(d.header.i64("INSUNITS", 0));
+    let rede = rota::Rede::montar(&d, &s, &analisar(&d).pontos, m);
+    assert_eq!(
+        (rede.arestas[0].perfil.as_deref(), rede.arestas[0].instalacao, rede.arestas[0].tipo),
+        (Some("Meu perfil"), rota::Instalacao::Piso, rota::TipoEletroduto::AcoFogo)
+    );
+    // O diâmetro sai da tabela do perfil.
+    let f = fiacao::calcular(&d, &analisar(&d), &s, q).unwrap();
+    assert_eq!(f.trechos[0].eletroduto.as_ref().map(|e| e.nominal), Some(30.0));
+    assert_eq!(s.tamanhos_do_trecho(Some("Meu perfil"), rota::TipoEletroduto::PvcRigido)[0].nominal, 30.0);
+    // Sem o perfil (excluído depois), o trecho volta à tabela do tipo.
+    assert_eq!(s.tamanhos_do_trecho(Some("Excluído"), rota::TipoEletroduto::AcoFogo), s.tamanhos_de(rota::TipoEletroduto::AcoFogo));
+    let f = fiacao::calcular(&d, &analisar(&d), &Setup::default(), q).unwrap();
+    assert_eq!(f.trechos[0].eletroduto.as_ref().map(|e| e.nominal), Some(20.0));
+    // Trocar o tipo à mão tira o perfil.
+    eletroduto::definir_tipo(&mut d, h, rota::TipoEletroduto::PvcRigido).unwrap();
+    let rede = rota::Rede::montar(&d, &s, &analisar(&d).pontos, m);
+    assert_eq!(rede.arestas[0].perfil, None);
+    // Dividir o trecho mantém a linha e a cor nas duas partes.
+    eletroduto::aplicar_perfil(&mut d, h, &perfil).unwrap();
+    eletroduto::dividir(&mut d, &s, h, [2.0, 0.0], m).unwrap();
+    let partes: Vec<_> = d.model.iter().filter(|e| e.common.layer == eletroduto::CAMADA_PISO).collect();
+    assert_eq!(partes.len(), 2);
+    assert!(partes.iter().all(|e| e.common.linetype == "DASHED" && e.common.color == cadcraft_doc::color::Color::Index(5)));
+    // Preferências hostis: nome vazio ou repetido sai, diâmetro inválido sai; nunca fica sem perfil.
+    let mut h1 = Setup::default();
+    h1.perfis_eletroduto.push(PerfilEletroduto { nome: "  ".into(), ..PerfilEletroduto::default() });
+    h1.perfis_eletroduto.push(PerfilEletroduto { nome: "eletroduto pead - piso".into(), ..PerfilEletroduto::default() });
+    h1.perfis_eletroduto.push(PerfilEletroduto {
+        nome: "Cor zero".into(),
+        diametros: vec![TamanhoEletroduto { nominal: f64::NAN, polegadas: String::new(), interno: 1.0 }],
+        ..PerfilEletroduto::default()
+    });
+    h1.normalizar();
+    assert_eq!(h1.perfis_eletroduto.len(), 5);
+    let ultimo = h1.perfis_eletroduto.last().unwrap();
+    assert!(ultimo.cor >= 1 && ultimo.diametros.is_empty());
+    h1.perfis_eletroduto.clear();
+    h1.normalizar();
+    assert_eq!(h1.perfis_eletroduto.len(), 4);
+    // Scripts antigos ainda pedem ORTHOGONAL.
+    assert_eq!(Tracado::de_codigo("ORTHOGONAL"), Some(Tracado::Angulo45));
+}
+
+#[test]
+fn catalogos_de_cabos_com_edicao_e_exclusao() {
+    use nbr5410::TipoCabo as C;
+    use setup::{CaboEletrico, CaboTelecom, CategoriaTelecom};
+    let mut s = Setup::default();
+    // Elétricos: cadastrar, editar, excluir, nunca ficar sem nenhum.
+    assert_eq!(s.cabos_eletricos.len(), C::TODOS.len());
+    assert!(s.cadastrar_cabo_eletrico(CaboEletrico { nome: " ".into(), ..CaboEletrico::default() }).is_err());
+    let novo = CaboEletrico { nome: "Sil Afitox 750".into(), classe: C::Lszh70, observacao: "obra X".into() };
+    s.cadastrar_cabo_eletrico(novo.clone()).unwrap();
+    assert!(s.cadastrar_cabo_eletrico(novo.clone()).is_err(), "nome repetido");
+    assert!(s.atualizar_cabo_eletrico("não existe", novo.clone()).is_err());
+    let outro = s.cabos_eletricos[0].nome.clone();
+    assert!(s.atualizar_cabo_eletrico("Sil Afitox 750", CaboEletrico { nome: outro.clone(), ..novo.clone() }).is_err(), "nome de outro cabo");
+    s.atualizar_cabo_eletrico("Sil Afitox 750", CaboEletrico { nome: "Sil Afitox".into(), classe: C::LszhHepr90, observacao: String::new() })
+        .unwrap();
+    assert_eq!(s.cabos_eletricos.last().unwrap().classe, C::LszhHepr90);
+    assert!(s.remover_cabo_eletrico("Sil Afitox"));
+    assert!(!s.remover_cabo_eletrico("Sil Afitox"));
+    while s.cabos_eletricos.len() > 1 {
+        let n = s.cabos_eletricos[0].nome.clone();
+        assert!(s.remover_cabo_eletrico(&n));
+    }
+    let n = s.cabos_eletricos[0].nome.clone();
+    assert!(!s.remover_cabo_eletrico(&n), "o último fica");
+    // O nome do catálogo chega ao circuito e aos materiais; a classe vale no cálculo.
+    let mut s = Setup::default();
+    s.cadastrar_cabo_eletrico(CaboEletrico { nome: "Sil Afitox".into(), classe: C::HeprXlpe90, observacao: String::new() }).unwrap();
+    let mut d = metros();
+    let q = qd(&mut d, 0.0, 0.0);
+    let a = tug(&mut d, 4.0, 0.0, "1");
+    eletroduto::inserir(&mut d, q, a, rota::Instalacao::Teto, 0.0).unwrap();
+    editar::definir_cabo_circuito(&mut d, q, "1", Some(C::HeprXlpe90)).unwrap();
+    editar::definir_nome_cabo(&mut d, q, "1", Some("Sil Afitox")).unwrap();
+    let r = rotear_quadro(&d, &analisar(&d), &s, q).unwrap();
+    assert_eq!((r.linhas[0].tipo_cabo, r.linhas[0].nome_cabo.as_str()), (C::HeprXlpe90, "Sil Afitox"));
+    let m = materiais::levantar(&d, &analisar(&d), &s);
+    assert!(m.cabos.iter().any(|c| c.nome == "Sil Afitox" && c.tipo == C::HeprXlpe90 && c.metros > 0.0), "{:?}", m.cabos);
+    // Sem nome próprio: o da classe no catálogo.
+    editar::definir_nome_cabo(&mut d, q, "1", None).unwrap();
+    assert_eq!(rotear_quadro(&d, &analisar(&d), &s, q).unwrap().linhas[0].nome_cabo, C::HeprXlpe90.nome());
+    // Telecom: editar um de fábrica sem mudar o nome o mantém de fábrica; renomear libera o nome antigo.
+    let mut t = Setup::default();
+    let base = CaboTelecom {
+        nome: "UTP Cat 6".into(),
+        categoria: CategoriaTelecom::Utp,
+        quantidade: 4,
+        diametro: 6.3,
+        observacao: "lote".into(),
+        padrao: false,
+    };
+    t.atualizar_cabo("UTP Cat 6", base.clone()).unwrap();
+    let c = t.cabos_telecom.iter().find(|c| c.nome == "UTP Cat 6").unwrap();
+    assert!(c.padrao && c.diametro == 6.3);
+    assert!(t.atualizar_cabo("UTP Cat 6", CaboTelecom { diametro: f64::NAN, ..base.clone() }).is_err());
+    assert!(t.atualizar_cabo("UTP Cat 6", CaboTelecom { nome: "UTP Cat 5".into(), ..base.clone() }).is_err(), "nome de outro cabo");
+    t.atualizar_cabo("UTP Cat 6", CaboTelecom { nome: "UTP Cat 6 blindado".into(), ..base }).unwrap();
+    t.normalizar();
+    assert!(t.cabos_telecom.iter().all(|c| c.nome != "UTP Cat 6"), "o nome antigo não volta");
+    let volta: Setup = serde_json::from_str(&serde_json::to_string(&t).unwrap()).unwrap();
+    assert_eq!(volta.cabos_telecom, t.cabos_telecom);
+}
+
+#[test]
 fn liberar_fases_devolve_ao_balanceamento() {
     let mut d = planta();
     let qd = quadro(&d);
@@ -2121,15 +2258,25 @@ fn tracados_de_eletroduto_e_comprimento_real() {
     let (h, l2d, l3d) = inserir(&mut d, Percurso { tracado: T::Reto, ..Percurso::default() });
     assert!(matches!(d.model.get(h).unwrap().kind, EntityKind::Line(_)));
     assert!(perto(l2d, 5.0, 1e-9) && perto(l3d, 5.0 + 1.3 + 2.5, 1e-9));
-    // Ortogonal: anda e sobe; o outro lado passa pelo outro canto.
-    let (h, l2d, _) = inserir(&mut d, Percurso { tracado: T::Ortogonal, ..Percurso::default() });
+    // 45°: de (0,0) a (4,3), um trecho reto de 1 e uma diagonal de 3; invertido, a diagonal vem antes.
+    let quarenta_e_cinco = 1.0 + 3.0 * 2.0_f64.sqrt();
+    let (h, l2d, _) = inserir(&mut d, Percurso { tracado: T::Angulo45, ..Percurso::default() });
     let EntityKind::LwPolyline(pl) = &d.model.get(h).unwrap().kind else { panic!("polilinha") };
-    assert_eq!((pl.vertices[1].p.x, pl.vertices[1].p.y), (4.0, 0.0));
-    assert!(perto(l2d, 7.0, 1e-9));
-    let (h, l2d, _) = inserir(&mut d, Percurso { tracado: T::Ortogonal, vertical_primeiro: true, ..Percurso::default() });
+    assert_eq!((pl.vertices[1].p.x, pl.vertices[1].p.y), (1.0, 0.0));
+    assert!(perto(l2d, quarenta_e_cinco, 1e-9), "{l2d}");
+    let (h, l2d, _) = inserir(&mut d, Percurso { tracado: T::Angulo45, diagonal_primeiro: true, ..Percurso::default() });
     let EntityKind::LwPolyline(pl) = &d.model.get(h).unwrap().kind else { panic!("polilinha") };
-    assert_eq!((pl.vertices[1].p.x, pl.vertices[1].p.y), (0.0, 3.0));
-    assert!(perto(l2d, 7.0, 1e-9));
+    assert_eq!((pl.vertices[1].p.x, pl.vertices[1].p.y), (3.0, 3.0));
+    assert!(perto(l2d, quarenta_e_cinco, 1e-9), "{l2d}");
+    // Para todos os lados, cada trecho é reto ou a 45° exatos.
+    for destino in [[-5.0, 2.0], [2.0, -5.0], [-3.0, -7.0], [6.0, 1.0]] {
+        let v = Percurso { tracado: T::Angulo45, ..Percurso::default() }.pontos([0.0, 0.0], destino, 5);
+        assert_eq!((v.first().copied(), v.last().copied()), (Some([0.0, 0.0]), Some(destino)));
+        for w in v.windows(2) {
+            let (dx, dy) = ((w[1][0] - w[0][0]).abs(), (w[1][1] - w[0][1]).abs());
+            assert!(dx < 1e-9 || dy < 1e-9 || (dx - dy).abs() < 1e-9, "{v:?}");
+        }
+    }
     // Arco: mais comprido que a corda.
     let (h, l2d, _) = inserir(&mut d, Percurso { tracado: T::Arco, flecha: 0.2, ..Percurso::default() });
     assert!(matches!(d.model.get(h).unwrap().kind, EntityKind::Spline(_)));
@@ -2140,13 +2287,13 @@ fn tracados_de_eletroduto_e_comprimento_real() {
     assert!(perto(l2d, 8.0_f64.sqrt() + 5.0_f64.sqrt(), 1e-9), "{l2d}");
     let (h, _, _) = inserir(&mut d, Percurso { tracado: T::Arco, desvios: desvios.clone(), ..Percurso::default() });
     assert!(matches!(d.model.get(h).unwrap().kind, EntityKind::Spline(_)));
-    let (_, l2d, _) = inserir(&mut d, Percurso { tracado: T::Ortogonal, desvios, ..Percurso::default() });
-    assert!(perto(l2d, 7.0, 1e-9), "{l2d}");
+    let (_, l2d, _) = inserir(&mut d, Percurso { tracado: T::Angulo45, desvios, ..Percurso::default() });
+    assert!(perto(l2d, 1.0 + 3.0 * 2.0_f64.sqrt(), 1e-9), "{l2d}");
     assert!(rede_de(&d).soltos.is_empty(), "todos ligam os dois blocos");
-    // Alinhados: o ortogonal é uma linha; entrada hostil recusa.
+    // Alinhados: o 45° é uma linha; entrada hostil recusa.
     let b = tug(&mut d, 4.0, 0.0, "1");
     let h =
-        eletroduto::inserir_percurso(&mut d, q, b, rota::Instalacao::Teto, &Percurso { tracado: T::Ortogonal, ..Percurso::default() }, tipo).unwrap();
+        eletroduto::inserir_percurso(&mut d, q, b, rota::Instalacao::Teto, &Percurso { tracado: T::Angulo45, ..Percurso::default() }, tipo).unwrap();
     assert!(matches!(d.model.get(h).unwrap().kind, EntityKind::Line(_)));
     let ruim = Percurso { desvios: vec![[f64::NAN, 0.0]], ..Percurso::default() };
     assert!(eletroduto::inserir_percurso(&mut d, q, b, rota::Instalacao::Teto, &ruim, tipo).is_err());
@@ -2314,8 +2461,9 @@ fn bloco_no_clique_e_modelo_do_eletroduto() {
         flecha: 0.0,
         tipo: rota::TipoEletroduto::AcoFogo,
         tracado: eletroduto::Tracado::Reto,
+        perfil: None,
     };
-    eletroduto::definir_modelo(991_001, m);
+    eletroduto::definir_modelo(991_001, m.clone());
     assert_eq!(eletroduto::modelo(991_001), m);
     assert_eq!(eletroduto::modelo(991_002), eletroduto::ModeloEletroduto::default());
     circuito::definir_ativo(991_001, Some((t, "1".into())));

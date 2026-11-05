@@ -214,6 +214,8 @@ pub struct Trecho {
     pub para: Handle,
     pub instalacao: Instalacao,
     pub tipo: rota::TipoEletroduto,
+    /// O perfil de eletroduto do trecho: dele vem a tabela de diâmetros.
+    pub perfil: Option<String>,
     /// Comprimento com subidas e descidas (m).
     pub comprimento: f64,
     /// Meio do eletroduto e o ângulo dele ali.
@@ -289,7 +291,7 @@ fn dimensionar_eletroduto(t: &mut Trecho, travado: Option<f64>, setup: &Setup, a
     t.eletroduto = None;
     t.ocupacao = None;
     t.diametro_travado = false;
-    let tamanho = travado.and_then(|n| setup.tamanhos_de(t.tipo).into_iter().find(|e| (e.nominal - n).abs() < 1e-6));
+    let tamanho = travado.and_then(|n| setup.tamanhos_do_trecho(t.perfil.as_deref(), t.tipo).into_iter().find(|e| (e.nominal - n).abs() < 1e-6));
     if let (Some(n), None) = (travado, &tamanho) {
         avisos.push(format!("diâmetro travado Ø{} não existe no tipo {}", br(n), t.tipo.abreviado()));
     }
@@ -308,7 +310,7 @@ fn dimensionar_eletroduto(t: &mut Trecho, travado: Option<f64>, setup: &Setup, a
         }
         return;
     }
-    match setup.eletroduto_do_tipo(&d, t.tipo) {
+    match setup.eletroduto_do_trecho(&d, t.perfil.as_deref(), t.tipo) {
         Some((e, oc)) => {
             t.eletroduto = Some(e);
             t.ocupacao = Some(oc);
@@ -358,6 +360,7 @@ fn trecho_de(rede: &Rede, e: usize, circuitos: Vec<Condutores>) -> Option<Trecho
         para: rede.nos.get(a.para)?.handle,
         instalacao: a.instalacao,
         tipo: a.tipo,
+        perfil: a.perfil.clone(),
         comprimento: a.comprimento,
         meio: a.meio,
         angulo: a.angulo,

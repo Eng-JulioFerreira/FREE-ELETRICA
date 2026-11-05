@@ -30,7 +30,7 @@ use free_eletrica::inspecao::{Item, Nivel};
 use free_eletrica::nbr5410::{DISJUNTORES, Esquema, SECOES, TipoCabo};
 use free_eletrica::ponto::br;
 use free_eletrica::rota::{Instalacao, TipoEletroduto};
-use free_eletrica::setup::{DiametroCondutor, TamanhoEletroduto, diametros_padrao, eletrodutos_padrao};
+use free_eletrica::setup::{DiametroCondutor, TamanhoEletroduto, diametros_padrao};
 use free_eletrica::{self as ele, CaboTelecom, CategoriaTelecom, CorCabo, PontoEletrico, Setup, TipoPonto, Unidade};
 use serde_json::{Value, json};
 
@@ -127,6 +127,12 @@ struct Rascunho {
     aba: Aba,
     novo_cabo: CaboTelecom,
     erro: Option<String>,
+    /// O cabo de telecom em edição, pelo nome: o formulário é o de cadastrar.
+    editando_telecom: Option<String>,
+    novo_eletrico: ele::setup::CaboEletrico,
+    /// O cabo elétrico em edição, pelo nome.
+    editando_eletrico: Option<String>,
+    erro_eletrico: Option<String>,
     /// A tabela de demanda aberta no editor.
     tabela_editada: Option<ele::demanda::TabelaDemanda>,
     erro_tabela: Option<String>,
@@ -205,8 +211,6 @@ enum Acao {
     Rodar(&'static str, Value),
     /// `app.start(comando)`: começa um comando interativo.
     Iniciar(&'static str),
-    /// Manda uma palavra-chave para o comando em andamento.
-    Palavra(&'static str),
     /// Roda um comando e mostra o resultado na barra de status.
     RodarComStatus(&'static str, Value, fn(&Value) -> String),
     /// Abre a ficha de um circuito.
@@ -295,6 +299,10 @@ fn abrir_setup() -> Result<Value, String> {
         aba: Aba::Criterios,
         novo_cabo: CaboTelecom { categoria: CategoriaTelecom::Utp, quantidade: 4, ..CaboTelecom::default() },
         erro: None,
+        editando_telecom: None,
+        novo_eletrico: ele::setup::CaboEletrico::default(),
+        editando_eletrico: None,
+        erro_eletrico: None,
         tabela_editada: None,
         erro_tabela: None,
     };
@@ -1122,11 +1130,6 @@ fn executar(app: &mut CadApp, acoes: Vec<Acao>) {
             }
             Acao::Fechar(q) => fechar(&mut trava(&JANELAS), q),
             Acao::Iniciar(id) => app.start(id),
-            Acao::Palavra(k) => {
-                if let Err(e) = app.session.input(cadcraft_engine::Input::Keyword(k.into())) {
-                    app.session.echo(e.to_string());
-                }
-            }
             Acao::Selecionar(h) => app.session.set_selection(h),
             Acao::Localizar(pontos) => localizar(app, &pontos),
         }
@@ -1443,7 +1446,7 @@ fn barra_de_contexto(app: &CadApp, ctx: &egui::Context, xf: &crate::canvas::Xf, 
                     barra_ponto(ui, uid, st, s, &mut filtro, acoes);
                     trava(&JANELAS).filtro_barra = filtro;
                 }
-                "eleeletroduto" => barra_eletroduto(ui, uid, acoes),
+                "eleeletroduto" => barra_eletroduto(ui, uid, s, acoes),
                 _ => barra_circuito(ui, uid, st, acoes),
             });
         });
@@ -1537,48 +1540,24 @@ fn barra_ponto(ui: &mut egui::Ui, uid: u64, st: &Estado, s: &Setup, filtro: &mut
     }
 }
 
-fn barra_eletroduto(ui: &mut egui::Ui, uid: u64, acoes: &mut Vec<Acao>) {
+/// A mini-barra de ELEELETRODUTO: só o perfil, que traz o tipo de linha e os diâmetros, e os três traçados.
+fn barra_eletroduto(ui: &mut egui::Ui, uid: u64, s: &Setup, acoes: &mut Vec<Acao>) {
     let m = ele::eletroduto::modelo(uid);
-    ui.label("Traçado");
+    ui.label("Perfil");
+    let atual = m.perfil.clone().unwrap_or_else(|| format!("{}, {}", m.tipo.abreviado(), m.instalacao.nome()));
+    egui::ComboBox::from_id_salt("ele-barra-perfil").selected_text(atual).width(260.0).show_ui(ui, |ui| {
+        for p in &s.perfis_eletroduto {
+            if ui.selectable_label(m.perfil.as_deref() == Some(p.nome.as_str()), p.nome.as_str()).clicked() {
+                acoes.push(Acao::Rodar("eletrica.eletroduto.modelo", json!({ "perfil": p.nome })));
+            }
+        }
+    });
+    ui.separator();
     for tr in ele::eletroduto::Tracado::TODOS {
         if ui.selectable_label(m.tracado == tr, tr.nome()).clicked() {
             acoes.push(Acao::Rodar("eletrica.eletroduto.modelo", json!({ "tracado": tr.codigo() })));
         }
     }
-    ui.separator();
-    ui.label("Cota");
-    for i in Instalacao::TODAS {
-        if ui.selectable_label(m.instalacao == i, i.nome()).clicked() {
-            acoes.push(Acao::Rodar("eletrica.eletroduto.modelo", json!({ "instalacao": i.codigo() })));
-        }
-    }
-    ui.separator();
-    ui.label("Tipo");
-    egui::ComboBox::from_id_salt("ele-barra-duto").selected_text(m.tipo.nome()).width(290.0).show_ui(ui, |ui| {
-        for t in TipoEletroduto::TODOS {
-            if ui.selectable_label(m.tipo == t, t.nome()).clicked() {
-                acoes.push(Acao::Rodar("eletrica.eletroduto.modelo", json!({ "tipo": t.codigo() })));
-            }
-        }
-    });
-    if m.tracado == ele::eletroduto::Tracado::Arco {
-        ui.separator();
-        ui.label("Flecha");
-        let mut f = m.flecha;
-        if ui
-            .add(campo(&mut f, 0.0..=ele::eletroduto::FLECHA_MAXIMA, 0.01, 2, ""))
-            .on_hover_text("Curvatura como fração do comprimento; 0 é reto")
-            .changed()
-        {
-            acoes.push(Acao::Rodar("eletrica.eletroduto.modelo", json!({ "flecha": f })));
-        }
-    }
-    if m.tracado != ele::eletroduto::Tracado::Reto && ui.button("Inverter").on_hover_text("Curva ou canto para o outro lado").clicked() {
-        acoes.push(Acao::Palavra("Inverter"));
-    }
-    ui.separator();
-    ui.label(RichText::new("Clique no vazio: desvio").weak())
-        .on_hover_text("Um clique fora de blocos e eletrodutos vira um ponto de passagem do trajeto");
 }
 
 fn barra_circuito(ui: &mut egui::Ui, uid: u64, st: &Estado, acoes: &mut Vec<Acao>) {
@@ -1852,10 +1831,10 @@ fn campos_do_quadro(ui: &mut egui::Ui, q: &PontoEletrico, analise: &ele::Analise
         });
     ui.label("Tipo de Cabo Padrão do Quadro");
     let cabo = ele::quadro::cabo_do_quadro(q, s);
-    egui::ComboBox::from_id_salt(("ele-quadro-cabo", q.handle)).selected_text(cabo.nome()).width(240.0).show_ui(ui, |ui| {
-        for v in TipoCabo::TODOS {
-            if ui.selectable_label(cabo == v, v.nome()).clicked() {
-                enviar(acoes, "cabo", json!(v.codigo()));
+    egui::ComboBox::from_id_salt(("ele-quadro-cabo", q.handle)).selected_text(s.nome_do_cabo(cabo)).width(240.0).show_ui(ui, |ui| {
+        for v in &s.cabos_eletricos {
+            if ui.selectable_label(cabo == v.classe, v.nome.as_str()).clicked() {
+                enviar(acoes, "cabo", json!(v.classe.codigo()));
             }
         }
     });
@@ -2018,16 +1997,20 @@ fn na_celula(ui: &mut egui::Ui, largura: f32, conteudo: impl FnOnce(&mut egui::U
 }
 
 /// A escolha do tipo de cabo de um circuito.
-fn escolher_cabo(ui: &mut egui::Ui, q: Handle, id: &str, l: &ele::quadro::Linha, largura: f32, completo: bool, acoes: &mut Vec<Acao>) {
-    let nome = if completo { l.tipo_cabo.nome() } else { l.tipo_cabo.abreviado() };
+#[allow(clippy::too_many_arguments)]
+fn escolher_cabo(ui: &mut egui::Ui, s: &Setup, q: Handle, id: &str, l: &ele::quadro::Linha, largura: f32, completo: bool, acoes: &mut Vec<Acao>) {
+    let nome = if completo { l.nome_cabo.as_str() } else { l.tipo_cabo.abreviado() };
     let texto = if l.isolacao_propria { RichText::new(nome).strong() } else { RichText::new(nome) };
     egui::ComboBox::from_id_salt(("ele-cabo", id, completo)).selected_text(texto).width(largura).show_ui(ui, |ui| {
         if ui.selectable_label(!l.isolacao_propria, "Padrão do quadro").clicked() && l.isolacao_propria {
             acoes.push(Acao::Rodar("eletrica.circuito.definir", json!({ "quadro": q.hex(), "circuito": id, "cabo": null })));
         }
-        for c in TipoCabo::TODOS {
-            if ui.selectable_label(l.isolacao_propria && l.tipo_cabo == c, c.nome()).clicked() {
-                acoes.push(Acao::Rodar("eletrica.circuito.definir", json!({ "quadro": q.hex(), "circuito": id, "cabo": c.codigo() })));
+        for c in &s.cabos_eletricos {
+            if ui.selectable_label(l.isolacao_propria && l.nome_cabo == c.nome, c.nome.as_str()).clicked() {
+                acoes.push(Acao::Rodar(
+                    "eletrica.circuito.definir",
+                    json!({ "quadro": q.hex(), "circuito": id, "cabo": c.classe.codigo(), "caboNome": c.nome }),
+                ));
             }
         }
     });
@@ -2348,7 +2331,7 @@ fn detalhes_do_circuito(ui: &mut egui::Ui, s: &Setup, q: Handle, l: &ele::quadro
     }
     egui::Grid::new("ele-detalhe-escolhas").num_columns(2).spacing(vec2(12.0, 4.0)).show(ui, |ui| {
         ui.label("Tipo de cabo");
-        escolher_cabo(ui, q, &id_texto, l, 300.0, true, acoes);
+        escolher_cabo(ui, s, q, &id_texto, l, 300.0, true, acoes);
         ui.end_row();
         ui.label("Esquema");
         egui::ComboBox::from_id_salt(("ele-esquema", id_texto.as_str())).selected_text(l.esquema.codigo()).width(120.0).show_ui(ui, |ui| {
@@ -2415,7 +2398,7 @@ fn lista_de_materiais(ui: &mut egui::Ui, t: &Tokens, m: &ele::materiais::Materia
     egui::Grid::new("ele-mat-cabos").num_columns(3).striped(true).spacing(vec2(16.0, 2.0)).show(ui, |ui| {
         for c in &m.cabos {
             celula(ui, 70.0, numero(format!("{} mm²", br(c.secao))), true);
-            celula(ui, 300.0, c.tipo.nome(), false);
+            celula(ui, 300.0, c.nome.as_str(), false);
             celula(ui, 70.0, numero(format!("{} m", fixo(c.metros.ceil(), 0))), true);
             ui.end_row();
         }
@@ -2644,7 +2627,7 @@ fn aba_lista_eletrodutos(ui: &mut egui::Ui, app: &CadApp, t: &Tokens, st: &mut E
                 let texto = atual.map_or("-".to_string(), |d| format!("Ø{}", br(d)));
                 let texto = if excedida { RichText::new(texto).color(COR_VIOLACAO) } else { RichText::new(texto) };
                 egui::ComboBox::from_id_salt(("ele-trecho-diam", h)).selected_text(texto).width(colunas[6].1 - 22.0).show_ui(ui, |ui| {
-                    for d in &s.eletrodutos {
+                    for d in &s.tamanhos_do_trecho(tr.perfil.as_deref(), tr.tipo) {
                         if ui.selectable_label(atual == Some(d.nominal), format!("Ø{}", br(d.nominal))).clicked() {
                             acoes.push(Acao::Rodar("eletrica.eletroduto.definir", json!({ "eletroduto": h.hex(), "diametro": d.nominal })));
                         }
@@ -2977,7 +2960,7 @@ fn janela_setup(ctx: &egui::Context, t: &Tokens, tem_desenho: bool, acoes: &mut 
                 Aba::Eletrodutos => aba_eletrodutos(ui, t, &mut r.setup),
                 Aba::Agrupamento => aba_agrupamento(ui, t),
                 Aba::Demanda => aba_demanda(ui, t, &mut r),
-                Aba::Telecom => aba_telecom(ui, t, &mut r),
+                Aba::Telecom => aba_cabos(ui, t, &mut r),
             }
             ui.separator();
             ui.horizontal(|ui| {
@@ -3137,16 +3120,14 @@ fn aba_condutores(ui: &mut egui::Ui, t: &Tokens, s: &mut Setup) {
 }
 
 fn aba_eletrodutos(ui: &mut egui::Ui, t: &Tokens, s: &mut Setup) {
+    use ele::setup::{CORES_DE_LINHA, PerfilEletroduto, TipoLinha, perfis_padrao};
     egui::Grid::new("ele-setup-eletrodutos").num_columns(2).spacing(vec2(12.0, 6.0)).show(ui, |ui| {
-        ui.label("Tipo de eletroduto");
-        ui.add(egui::TextEdit::singleline(&mut s.tipo_eletroduto).desired_width(260.0));
-        ui.end_row();
         ui.label("Diâmetro mínimo");
         let minimo = s.eletroduto_minimo;
         egui::ComboBox::from_id_salt("ele-minimo").selected_text(format!("{} mm", br(minimo))).width(120.0).show_ui(ui, |ui| {
-            for e in &s.eletrodutos {
-                if ui.selectable_label((e.nominal - minimo).abs() < 1e-6, format!("{} mm ({})", br(e.nominal), e.polegadas)).clicked() {
-                    s.eletroduto_minimo = e.nominal;
+            for nominal in [16.0, 20.0, 25.0, 32.0, 40.0] {
+                if ui.selectable_label((nominal - minimo).abs() < 1e-6, format!("{} mm", br(nominal))).clicked() {
+                    s.eletroduto_minimo = nominal;
                 }
             }
         });
@@ -3154,25 +3135,120 @@ fn aba_eletrodutos(ui: &mut egui::Ui, t: &Tokens, s: &mut Setup) {
     });
     ui.add_space(4.0);
     ui.horizontal(|ui| {
-        ui.label(RichText::new("Tamanhos").strong());
-        if ui.small_button("Valores típicos").on_hover_text("Volta à tabela de fábrica").clicked() {
-            s.eletrodutos = eletrodutos_padrao();
+        ui.label(RichText::new("Perfis de eletroduto").strong());
+        if ui.small_button("+ Novo perfil").clicked() {
+            let nome = format!("Perfil {}", s.perfis_eletroduto.len() + 1);
+            let base = s.perfis_eletroduto.first().cloned().unwrap_or_default();
+            s.perfis_eletroduto.push(PerfilEletroduto { nome, ..base });
+        }
+        if ui.small_button("Perfis de fábrica").on_hover_text("Troca a lista pelos quatro perfis de fábrica").clicked() {
+            s.perfis_eletroduto = perfis_padrao();
         }
     });
-    egui::Grid::new("ele-setup-tamanhos").num_columns(3).striped(true).spacing(vec2(16.0, 2.0)).show(ui, |ui| {
-        cabecalho(ui, t, &[("Nominal (mm)", 90.0, true), ("Polegadas", 80.0, false), ("Diâmetro interno (mm)", 140.0, false)]);
-        for e in &mut s.eletrodutos {
-            let TamanhoEletroduto { nominal, polegadas, interno } = e;
-            celula(ui, 90.0, numero(br(*nominal)), true);
-            celula(ui, 80.0, polegadas.as_str(), false);
-            ui.add(campo(interno, 0.0..=500.0, 0.1, 1, ""));
-            ui.end_row();
+    let mut excluir = None;
+    egui::ScrollArea::vertical().id_salt("ele-setup-perfis").max_height(380.0).show(ui, |ui| {
+        ui.set_min_width(580.0);
+        for (i, p) in s.perfis_eletroduto.iter_mut().enumerate() {
+            let titulo = if p.nome.is_empty() { "Perfil sem nome".to_string() } else { p.nome.clone() };
+            egui::CollapsingHeader::new(titulo).id_salt(("ele-perfil", i)).default_open(i == 0).show(ui, |ui| {
+                egui::Grid::new(("ele-perfil-dados", i)).num_columns(2).spacing(vec2(12.0, 4.0)).show(ui, |ui| {
+                    ui.label("Nome");
+                    ui.add(egui::TextEdit::singleline(&mut p.nome).desired_width(320.0));
+                    ui.end_row();
+                    ui.label("Material");
+                    egui::ComboBox::from_id_salt(("ele-perfil-tipo", i)).selected_text(p.tipo.nome()).width(320.0).show_ui(ui, |ui| {
+                        for tipo in TipoEletroduto::TODOS {
+                            if ui.selectable_label(p.tipo == tipo, tipo.nome()).clicked() {
+                                p.tipo = tipo;
+                            }
+                        }
+                    });
+                    ui.end_row();
+                    ui.label("Tipo de Linha");
+                    egui::ComboBox::from_id_salt(("ele-perfil-linha", i)).selected_text(p.tipo_linha.nome()).width(200.0).show_ui(ui, |ui| {
+                        for l in TipoLinha::TODOS {
+                            ui.selectable_value(&mut p.tipo_linha, l, l.nome());
+                        }
+                    });
+                    ui.end_row();
+                    ui.label("Cor da linha");
+                    ui.horizontal(|ui| {
+                        let (_, nome, rgb) =
+                            CORES_DE_LINHA.iter().find(|(c, _, _)| *c == p.cor).copied().unwrap_or((p.cor, "Outra", [160, 160, 160]));
+                        let (r, _) = ui.allocate_exact_size(vec2(14.0, 14.0), egui::Sense::hover());
+                        ui.painter().rect_filled(r, 2.0, Color32::from_rgb(rgb[0], rgb[1], rgb[2]));
+                        egui::ComboBox::from_id_salt(("ele-perfil-cor", i)).selected_text(nome).width(110.0).show_ui(ui, |ui| {
+                            for (c, n, _) in CORES_DE_LINHA {
+                                ui.selectable_value(&mut p.cor, c, n);
+                            }
+                        });
+                    });
+                    ui.end_row();
+                    ui.label("Caminhamento 3D");
+                    let nome_caminho = |c: Instalacao| match c {
+                        Instalacao::Teto => "Teto/Laje",
+                        Instalacao::Parede => "Parede",
+                        Instalacao::Piso => "Piso",
+                    };
+                    egui::ComboBox::from_id_salt(("ele-perfil-caminho", i)).selected_text(nome_caminho(p.caminhamento)).width(120.0).show_ui(
+                        ui,
+                        |ui| {
+                            for c in Instalacao::TODAS {
+                                ui.selectable_value(&mut p.caminhamento, c, nome_caminho(c));
+                            }
+                        },
+                    );
+                    ui.end_row();
+                });
+                ui.label(RichText::new("Tabela de Diâmetros Comerciais").strong());
+                let mut sair = None;
+                egui::Grid::new(("ele-perfil-diametros", i)).num_columns(4).striped(true).spacing(vec2(12.0, 2.0)).show(ui, |ui| {
+                    cabecalho(
+                        ui,
+                        t,
+                        &[("Nominal (mm)", 90.0, false), ("Polegadas", 70.0, false), ("Interno real (mm)", 110.0, false), ("", 60.0, false)],
+                    );
+                    for (k, d) in p.diametros.iter_mut().enumerate() {
+                        ui.add(campo(&mut d.nominal, 1.0..=500.0, 1.0, 0, ""));
+                        ui.add(egui::TextEdit::singleline(&mut d.polegadas).desired_width(60.0));
+                        ui.add(campo(&mut d.interno, 0.1..=500.0, 0.1, 1, ""));
+                        if ui.small_button("Excluir").clicked() {
+                            sair = Some(k);
+                        }
+                        ui.end_row();
+                    }
+                });
+                if let Some(k) = sair {
+                    p.diametros.remove(k);
+                }
+                ui.horizontal(|ui| {
+                    if ui.small_button("+ Diâmetro").clicked() {
+                        let ultimo =
+                            p.diametros.last().cloned().unwrap_or(TamanhoEletroduto { nominal: 20.0, polegadas: String::new(), interno: 16.0 });
+                        p.diametros.push(TamanhoEletroduto {
+                            nominal: ultimo.nominal + 5.0,
+                            polegadas: String::new(),
+                            interno: ultimo.interno + 5.0,
+                        });
+                    }
+                    if ui.small_button("Excluir perfil").clicked() {
+                        excluir = Some(i);
+                    }
+                });
+            });
         }
     });
-    ui.label(pequeno(
-        "As tags de fiação escolhem, em cada trecho, o menor eletroduto a partir do mínimo que comporta os condutores: ocupação máxima de 53 % com um condutor, 31 % com dois e 40 % com três ou mais (NBR 5410, 6.2.11.1.6). Diâmetros internos típicos de catálogo; confira com o fabricante.",
-        t.text_dim,
-    ));
+    if let Some(i) = excluir {
+        s.perfis_eletroduto.remove(i);
+    }
+    ui.set_max_width(600.0);
+    ui.add(
+        egui::Label::new(pequeno(
+            "Cada trecho desenhado guarda o perfil. As tags de fiação escolhem, em cada trecho, o menor diâmetro da tabela do perfil, a partir do mínimo, que comporta os condutores: ocupação máxima de 53 % com um condutor, 31 % com dois e 40 % com três ou mais (NBR 5410, 6.2.11.1.6). Diâmetros internos típicos de catálogo; confira com o fabricante. Mudar a linha ou a cor de um perfil vale para os próximos trechos.",
+            t.text_dim,
+        ))
+        .wrap(),
+    );
 }
 
 fn aba_agrupamento(ui: &mut egui::Ui, t: &Tokens) {
@@ -3522,9 +3598,82 @@ fn editor_de_tabela(ui: &mut egui::Ui, t: &Tokens, r: &mut Rascunho) {
     }
 }
 
-fn aba_telecom(ui: &mut egui::Ui, t: &Tokens, r: &mut Rascunho) {
-    let mut remover: Option<String> = None;
-    egui::ScrollArea::vertical().id_salt("ele-telecom-lista").max_height(220.0).show(ui, |ui| {
+/// Os catálogos de cabos, elétricos e de telecom: cadastrar, editar e excluir.
+fn aba_cabos(ui: &mut egui::Ui, t: &Tokens, r: &mut Rascunho) {
+    ui.label(RichText::new("Cabos elétricos").strong());
+    let mut excluir = None;
+    let mut editar = None;
+    egui::ScrollArea::vertical().id_salt("ele-cabos-eletricos").max_height(150.0).show(ui, |ui| {
+        egui::Grid::new("ele-cabos-eletricos-grade").num_columns(4).striped(true).spacing(vec2(12.0, 2.0)).show(ui, |ui| {
+            cabecalho(ui, t, &[("Cabo", 280.0, false), ("Classe", 90.0, false), ("Observação", 100.0, false), ("", 110.0, false)]);
+            for c in &r.setup.cabos_eletricos {
+                celula(ui, 280.0, c.nome.as_str(), false);
+                celula(ui, 90.0, c.classe.abreviado(), false).on_hover_text(c.classe.nome());
+                celula(ui, 100.0, c.observacao.as_str(), false);
+                ui.horizontal(|ui| {
+                    if ui.small_button("Editar").clicked() {
+                        editar = Some(c.clone());
+                    }
+                    if ui.add_enabled(r.setup.cabos_eletricos.len() > 1, egui::Button::new("Excluir").small()).clicked() {
+                        excluir = Some(c.nome.clone());
+                    }
+                });
+                ui.end_row();
+            }
+        });
+    });
+    if let Some(n) = excluir {
+        r.setup.remover_cabo_eletrico(&n);
+    }
+    if let Some(c) = editar {
+        r.editando_eletrico = Some(c.nome.clone());
+        r.novo_eletrico = c;
+        r.erro_eletrico = None;
+    }
+    let titulo = if r.editando_eletrico.is_some() { "Editar cabo elétrico" } else { "Cadastrar novo cabo elétrico" };
+    ui.label(RichText::new(titulo).strong());
+    ui.horizontal(|ui| {
+        ui.label("Nome");
+        ui.add(egui::TextEdit::singleline(&mut r.novo_eletrico.nome).desired_width(190.0));
+        ui.label("Classe");
+        egui::ComboBox::from_id_salt("ele-cabo-classe").selected_text(r.novo_eletrico.classe.abreviado()).width(90.0).show_ui(ui, |ui| {
+            for c in TipoCabo::TODOS {
+                ui.selectable_value(&mut r.novo_eletrico.classe, c, c.nome());
+            }
+        });
+        ui.label("Observação");
+        ui.add(egui::TextEdit::singleline(&mut r.novo_eletrico.observacao).desired_width(90.0));
+    });
+    ui.horizontal(|ui| {
+        let editando = r.editando_eletrico.clone();
+        if ui.button(if editando.is_some() { "Salvar cabo elétrico" } else { "Cadastrar cabo elétrico" }).clicked() {
+            let feito = match &editando {
+                Some(nome) => r.setup.atualizar_cabo_eletrico(nome, r.novo_eletrico.clone()),
+                None => r.setup.cadastrar_cabo_eletrico(r.novo_eletrico.clone()),
+            };
+            match feito {
+                Ok(()) => {
+                    r.novo_eletrico = ele::setup::CaboEletrico::default();
+                    r.editando_eletrico = None;
+                    r.erro_eletrico = None;
+                }
+                Err(e) => r.erro_eletrico = Some(e),
+            }
+        }
+        if editando.is_some() && ui.button("Cancelar edição").clicked() {
+            r.novo_eletrico = ele::setup::CaboEletrico::default();
+            r.editando_eletrico = None;
+            r.erro_eletrico = None;
+        }
+        if let Some(e) = &r.erro_eletrico {
+            ui.label(pequeno(e.as_str(), COR_AVISO));
+        }
+    });
+    ui.separator();
+    ui.label(RichText::new("Cabos de telecom").strong());
+    let mut excluir = None;
+    let mut editar = None;
+    egui::ScrollArea::vertical().id_salt("ele-telecom-lista").max_height(170.0).show(ui, |ui| {
         egui::Grid::new("ele-telecom").num_columns(6).striped(true).spacing(vec2(12.0, 2.0)).show(ui, |ui| {
             cabecalho(
                 ui,
@@ -3533,31 +3682,38 @@ fn aba_telecom(ui: &mut egui::Ui, t: &Tokens, r: &mut Rascunho) {
                     ("Cabo", 130.0, false),
                     ("Tipo", 80.0, false),
                     ("Qtd.", 70.0, false),
-                    ("Diâmetro (mm)", 90.0, false),
-                    ("Observação", 100.0, false),
-                    ("", 60.0, false),
+                    ("Diâmetro (mm)", 90.0, true),
+                    ("Observação", 90.0, false),
+                    ("", 110.0, false),
                 ],
             );
-            for c in &mut r.setup.cabos_telecom {
+            for c in &r.setup.cabos_telecom {
                 celula(ui, 130.0, c.nome.as_str(), false);
                 celula(ui, 80.0, c.categoria.nome(), false);
                 celula(ui, 70.0, format!("{} {}", c.quantidade, c.categoria.unidade()), false);
-                ui.add(campo(&mut c.diametro, 0.0..=100.0, 0.05, 1, ""));
-                celula(ui, 100.0, c.observacao.as_str(), false);
-                if c.padrao {
-                    celula(ui, 60.0, pequeno("padrão", t.text_dim), false);
-                } else if ui.small_button("Remover").clicked() {
-                    remover = Some(c.nome.clone());
-                }
+                celula(ui, 90.0, numero(fixo(c.diametro, 1)), true);
+                celula(ui, 90.0, c.observacao.as_str(), false);
+                ui.horizontal(|ui| {
+                    if ui.small_button("Editar").clicked() {
+                        editar = Some(c.clone());
+                    }
+                    if ui.small_button("Excluir").clicked() {
+                        excluir = Some(c.nome.clone());
+                    }
+                });
                 ui.end_row();
             }
         });
     });
-    if let Some(n) = remover {
+    if let Some(n) = excluir {
         r.setup.remover_cabo(&n);
     }
-    ui.separator();
-    ui.label(RichText::new("Cadastrar novo cabo").strong());
+    if let Some(c) = editar {
+        r.editando_telecom = Some(c.nome.clone());
+        r.novo_cabo = c;
+        r.erro = None;
+    }
+    ui.label(RichText::new(if r.editando_telecom.is_some() { "Editar cabo" } else { "Cadastrar novo cabo" }).strong());
     egui::Grid::new("ele-telecom-novo").num_columns(2).spacing(vec2(12.0, 4.0)).show(ui, |ui| {
         ui.label("Nome");
         ui.add(egui::TextEdit::singleline(&mut r.novo_cabo.nome).hint_text("Ex.: UTP Cat 6A").desired_width(200.0));
@@ -3581,23 +3737,33 @@ fn aba_telecom(ui: &mut egui::Ui, t: &Tokens, r: &mut Rascunho) {
         ui.end_row();
     });
     ui.horizontal(|ui| {
-        if ui.button("Cadastrar").clicked() {
-            match r.setup.cadastrar_cabo(r.novo_cabo.clone()) {
+        let editando = r.editando_telecom.clone();
+        let vazio = CaboTelecom { categoria: CategoriaTelecom::Utp, quantidade: 4, ..CaboTelecom::default() };
+        if ui.button(if editando.is_some() { "Salvar cabo" } else { "Cadastrar" }).clicked() {
+            let feito = match &editando {
+                Some(nome) => r.setup.atualizar_cabo(nome, r.novo_cabo.clone()),
+                None => r.setup.cadastrar_cabo(r.novo_cabo.clone()),
+            };
+            match feito {
                 Ok(()) => {
                     r.erro = None;
-                    r.novo_cabo.nome.clear();
-                    r.novo_cabo.observacao.clear();
-                    r.novo_cabo.diametro = 0.0;
+                    r.novo_cabo = vazio.clone();
+                    r.editando_telecom = None;
                 }
                 Err(e) => r.erro = Some(e),
             }
+        }
+        if editando.is_some() && ui.button("Cancelar edição").clicked() {
+            r.erro = None;
+            r.novo_cabo = vazio;
+            r.editando_telecom = None;
         }
         if let Some(e) = &r.erro {
             ui.label(pequeno(e.as_str(), COR_AVISO));
         }
     });
     ui.label(pequeno(
-        "Diâmetros típicos de catálogo; confira com o fabricante. O catálogo é gravado com as configurações ao clicar em OK.",
+        "A classe do cabo elétrico vale no dimensionamento. Diâmetros típicos de catálogo; confira com o fabricante. Os catálogos são gravados com as configurações ao clicar em OK.",
         t.text_dim,
     ));
 }
