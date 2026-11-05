@@ -8,6 +8,7 @@ use std::sync::Arc;
 use cadcraft_engine::doc::geom::{Vec2, Vec3};
 use cadcraft_engine::doc::{Attrib, Block, Common, Drawing, EntityKind, HAlign, Handle, Insert, Line, Space, Text, VAlign};
 use cadcraft_engine::{Input, Session};
+use free_eletrica::TipoPonto;
 use serde_json::{Value, json};
 
 fn atributo(tag: &str, valor: &str) -> Attrib {
@@ -389,6 +390,102 @@ fn barra_muda_o_modelo_enquanto_o_comando_corre_e_tab_gira() {
     assert!((rotacao(&s, 4) - 90.0).abs() < 1e-9);
     assert!(s.execute("eleponto", &json!({ "bloco": "TOM-TUE", "pontos": [[f64::INFINITY, 5.0]]})).is_err());
     assert!(s.execute("eleponto", &json!({ "bloco": "TOM-TUE", "pontos": 3 })).is_err());
+}
+
+#[test]
+fn familia_e_altura_por_comandos_e_no_dxf() {
+    let mut s = Session::new();
+    let mut d = Drawing::new_metric();
+    d.header.set_i64("INSUNITS", 6);
+    s.open_drawing(d, "Planta", None);
+    s.execute("eletrica.bootstrap", &json!({})).unwrap();
+
+    // Fora do editor, os utilitários recusam e a família pede o bloco.
+    assert!(s.execute("eletrica.familia.geometria", &json!({ "forma": "tomada" })).is_err());
+    assert!(s.execute("eletrica.familia.atributos", &json!({ "categoria": "DATA_DEVICE" })).is_err());
+    assert!(s.execute("elefamilia_conector", &json!({ "ponto": [0, 0] })).is_err());
+    assert!(s.execute("eletrica.familia.ler", &json!({})).is_err());
+    assert!(s.execute("eletrica.familia.definir", &json!({ "categoria": "DATA_DEVICE" })).is_err());
+    assert!(s.execute("eletrica.familia.definir", &json!({ "bloco": "NADA", "categoria": "DATA_DEVICE" })).is_err());
+
+    // Um bloco novo pelo editor: família, geometria, atributos e conector, sem digitar atributo.
+    s.execute("bedit", &json!({ "name": "VOZ-DADOS", "create": true })).unwrap();
+    assert!(s.execute("eletrica.familia.definir", &json!({})).is_err(), "sem família ainda, pede a categoria");
+    let f = s.execute("eletrica.familia.definir", &json!({ "categoria": "DATA_DEVICE" })).unwrap();
+    assert_eq!((f["dominio"].as_str(), f["refAltura"].as_str(), f["caixa"].as_str()), (Some("dataTelecom"), Some("baixa"), Some("c4x2")));
+    for ruim in [
+        json!({ "categoria": "PORTA" }),
+        json!({ "dominio": 3 }),
+        json!({ "refAltura": "LUA" }),
+        json!({ "caixa": "9X9" }),
+        json!({ "fp": 7 }),
+        json!({ "potencia": -2 }),
+        json!({ "teclas": 9 }),
+        json!({ "teclas": 999 }),
+        json!({ "cotaFixa": "alta" }),
+    ] {
+        assert!(s.execute("eletrica.familia.definir", &ruim).is_err(), "{ruim}");
+    }
+    let f = s.execute("eletrica.familia.definir", &json!({ "refAltura": "MEDIUM", "caixa": "4X4", "potencia": 50, "fp": 0.9, "teclas": 2 })).unwrap();
+    assert_eq!((f["refAltura"].as_str(), f["potencia"].as_f64(), f["teclas"].as_u64()), (Some("media"), Some(50.0), Some(2)));
+    assert_eq!(s.execute("eletrica.familia.ler", &json!({})).unwrap()["caixa"], "c4x4");
+    assert!(s.execute("eletrica.familia.geometria", &json!({ "forma": "porta" })).is_err());
+    assert!(s.execute("eletrica.familia.geometria", &json!({})).is_err());
+    assert_eq!(s.execute("eletrica.familia.geometria", &json!({ "forma": "contorno4x2" })).unwrap()["entidades"], 4);
+    assert!(s.execute("eletrica.familia.atributos", &json!({ "categoria": "NONE" })).is_err());
+    assert!(s.execute("eletrica.familia.atributos", &json!({})).unwrap()["criados"].as_u64().unwrap() >= 3);
+    assert!(s.execute("elefamilia_conector", &json!({})).is_err());
+    s.execute("elefamilia_conector", &json!({ "ponto": [0.0, -0.05] })).unwrap();
+    s.start("elefamilia_conector").unwrap();
+    s.input(Input::Point(Vec2::new(0.0, 0.0))).unwrap();
+    assert!(s.running.is_none());
+    s.execute("bclose", &json!({ "save": true })).unwrap();
+
+    // O bloco é um ponto de dados; ele respeita a legenda e fica na camada de dados.
+    let blocos = s.execute("eletrica.blocos", &json!({})).unwrap();
+    let b = blocos.as_array().unwrap().iter().find(|b| b["nome"] == "VOZ-DADOS").expect("o bloco novo é uma família").clone();
+    assert_eq!(b["tipo"], "dados");
+    let r = s.execute("eleponto", &json!({ "bloco": "VOZ-DADOS", "pontos": [[1.0, 1.0]] })).unwrap();
+    let na_legenda = Handle::parse_hex(r["pontos"][0].as_str().unwrap()).unwrap();
+    let r = s.execute("eleponto", &json!({ "bloco": "VOZ-DADOS", "pontos": [[2.0, 1.0]], "altura": 1.45 })).unwrap();
+    let fora = Handle::parse_hex(r["pontos"][0].as_str().unwrap()).unwrap();
+    assert!(s.execute("eleponto", &json!({ "bloco": "VOZ-DADOS", "pontos": [[3.0, 1.0]], "altura": -2 })).is_err());
+    assert!(s.execute("eleponto", &json!({ "bloco": "VOZ-DADOS", "pontos": [[3.0, 1.0]], "altura": "alto" })).is_err());
+    let attr = |s: &Session, h: Handle| {
+        free_eletrica::ponto::ler_ponto(s.doc().unwrap(), h).unwrap().atributos.iter().find(|(t, _)| t == "ALTURA").map(|(_, v)| v.clone()).unwrap()
+    };
+    assert_eq!((attr(&s, na_legenda), attr(&s, fora)), (String::new(), "h=1,45m".to_string()));
+    assert_eq!(s.doc().unwrap().model.get(fora).unwrap().common.layer, "ELE-DADOS");
+
+    // Editar a altura de uma inserção.
+    s.execute("eletrica.ponto.altura", &json!({ "pontos": [na_legenda.hex()], "altura": 0.5 })).unwrap();
+    assert_eq!(attr(&s, na_legenda), "h=0,50m");
+    s.execute("eletrica.ponto.altura", &json!({ "pontos": [na_legenda.hex()], "altura": null })).unwrap();
+    assert_eq!(attr(&s, na_legenda), "");
+    assert!(s.execute("eletrica.ponto.altura", &json!({ "pontos": [na_legenda.hex()] })).is_err());
+    assert!(s.execute("eletrica.ponto.altura", &json!({ "pontos": [na_legenda.hex()], "altura": 99 })).is_err());
+    assert!(s.execute("eletrica.ponto.altura", &json!({ "pontos": ["FFFF"], "altura": 1 })).is_err());
+
+    // Tudo sobrevive a gravar e abrir o DXF: família no BLOCK_RECORD, altura no XDATA.
+    let dxf = cadcraft_io::write_dxf(s.doc().unwrap());
+    let volta = cadcraft_io::read_dxf(dxf.as_bytes()).unwrap();
+    let f = free_eletrica::familia::ler(&volta, "VOZ-DADOS").expect("a família volta do DXF");
+    assert_eq!(
+        (f.categoria, f.caixa, f.potencia, f.teclas),
+        (free_eletrica::familia::FamilyCategory::Dados, free_eletrica::familia::CaixaFisica::C4x4, Some(50.0), 2)
+    );
+    assert!(free_eletrica::familia::ler(&volta, "RJ45").is_some(), "os blocos base também");
+    let a = free_eletrica::analisar(&volta);
+    assert_eq!(a.pontos.iter().find(|p| p.altura == Some(1.45)).map(|p| p.tipo), Some(TipoPonto::Dados));
+
+    // Remover a família.
+    s.execute("eletrica.familia.definir", &json!({ "bloco": "VOZ-DADOS", "remover": true })).unwrap();
+    assert!(s.execute("eletrica.familia.ler", &json!({ "bloco": "VOZ-DADOS" })).unwrap().is_null());
+
+    // A legenda pelo Setup, mudando e voltando: o processo é compartilhado entre os testes.
+    let st = s.execute("eletrica.setup", &json!({})).unwrap();
+    assert_eq!((st["alturaBaixa"].as_f64(), st["alturaMedia"].as_f64(), st["alturaAlta"].as_f64()), (Some(0.3), Some(1.2), Some(2.1)));
+    assert_eq!((st["quedaIluminacao"].as_f64(), st["quedaAlimentador"].as_f64()), (Some(4.0), Some(1.0)));
 }
 
 #[test]

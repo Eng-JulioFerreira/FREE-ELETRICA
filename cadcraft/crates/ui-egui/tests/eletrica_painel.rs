@@ -122,7 +122,7 @@ fn paleta_ferramentas_e_fluxo_completo() {
     // Digitado, abre a paleta acima das Tool Sets, com altura fixa.
     assert!(app.cmdline("ELETRICA").is_none());
     let local = app.ui.docking.layout.location(&Panel::Eletrica).unwrap();
-    assert_eq!(local.size, Some(craft_ui::layout::SplitSize::FixedFirst(500.0)));
+    assert_eq!(local.size, Some(craft_ui::layout::SplitSize::FixedFirst(540.0)));
     assert_eq!(local.anchor, Some(Panel::ToolSets));
 
     let (qd, luz, int) = handles(app);
@@ -179,6 +179,7 @@ fn paleta_ferramentas_e_fluxo_completo() {
     // A paleta tem as ferramentas na ordem do fluxo.
     for f in [
         "1. Pontos",
+        "Famílias de blocos",
         "Inserir pontos",
         "2. Circuitos e comandos",
         "Criar circuito",
@@ -206,9 +207,18 @@ fn paleta_ferramentas_e_fluxo_completo() {
     h.get_by_label("Configurações...").click();
     h.run_steps(3);
     h.get_by_label("Sistema de distribuição");
+    h.get_by_label("Isolação padrão");
+    h.get_by_label("Queda de tensão: iluminação");
+    h.get_by_label("Folga de cabos");
+    h.get_by_label("Alturas").click();
+    h.run_steps(3);
+    h.get_by_label("Pé-direito (teto)");
+    h.get_by_label("Altura média padrão");
+    h.get_by_label("Geral").click();
+    h.run_steps(3);
+    h.get_by_label("Inicializar projeto no DXF atual");
     h.get_by_label("Condutores").click();
     h.run_steps(3);
-    h.get_by_label("Isolação padrão");
     h.get_by_label("Diâmetro externo dos condutores");
     h.get_by_label("Cor da fase R");
     h.get_by_label("Eletrodutos").click();
@@ -304,17 +314,25 @@ fn paleta_ferramentas_e_fluxo_completo() {
     h.get_by_label("Ocupação");
 
     // Aba Pontos: filtrar por tipo, escolher o bloco, inserir com os valores e excluir.
-    assert!(h.state_mut().run("ui.eletrica.lista", Value::Null).is_ok());
+    // ELEPONTOS prepara o desenho e abre a lista; escolher o bloco já começa a inserir.
+    assert!(h.state_mut().cmdline("ELEPONTOS").is_none());
     h.run_steps(3);
     h.get_by_label("Blocos");
-    h.get_by_label("TUG (1)").click();
+    for filtro in ["Todos (", "Iluminação (", "Interruptores (", "Dados/Telecom (", "Quadros/Racks (", "Caixas ("] {
+        assert!(h.query_all(egui_kittest::kittest::by().label_contains(filtro)).count() >= 1, "filtro {filtro}");
+    }
+    h.get_by_label("Tomadas (1)").click();
     h.run_steps(3);
     h.get_by_label("Pontos no desenho (1)");
+    assert!(h.query_by_label("ILU-OCT  ·  Iluminação  ·  0 no desenho").is_none(), "o filtro esconde as luminárias");
     h.get_by_label("TOM-X  ·  TUG  ·  0 no desenho").click();
     h.run_steps(3);
     h.get_by_label("POTENCIA");
-    h.get_by_label("Inserir no desenho").click();
-    h.run_steps(3);
+    h.get_by_label("Altura (m)");
+    // Imagem da aba Pontos, quando pedida.
+    if let Ok(saida) = std::env::var("FREE_ELETRICA_PNG_PONTOS") {
+        h.render().unwrap().save(saida).unwrap();
+    }
     let app = h.state_mut();
     assert!(app.session.running.is_some(), "ELEPONTO começou");
     app.session.input(Input::Point(Vec2::new(9.0, 9.0))).unwrap();
@@ -332,11 +350,47 @@ fn paleta_ferramentas_e_fluxo_completo() {
     h.run_steps(3);
     h.get_by_label("Pontos no desenho (1)");
 
+    // Editor de blocos: a paleta vira as propriedades da família.
+    assert!(h.query_by_label("Propriedades da Família").is_none());
+    h.state_mut().run("bedit", json!({ "name": "MINHA-TOMADA", "create": true })).unwrap();
+    h.run_steps(3);
+    h.get_by_label("Propriedades da Família");
+    h.get_by_label("Bloco: MINHA-TOMADA");
+    assert!(h.query_by_label("Inserir eletroduto").is_none());
+    h.state_mut().run("eletrica.familia.definir", json!({ "categoria": "ELECTRICAL_FIXTURE" })).unwrap();
+    h.run_steps(3);
+    h.get_by_label("Referência de altura padrão");
+    h.get_by_label("Caixa física associada");
+    // Imagem do painel da família, quando pedida.
+    if let Ok(saida) = std::env::var("FREE_ELETRICA_PNG_FAMILIA") {
+        h.render().unwrap().save(saida).unwrap();
+    }
+    h.get_by_label("Inserir geometria base").click();
+    h.run_steps(3);
+    h.get_by_label("Triângulo de tomada").click();
+    h.run_steps(3);
+    assert_eq!(h.state().session.doc().unwrap().model.len(), 3);
+    h.get_by_label("Gerar atributos padrão").click();
+    h.run_steps(3);
+    assert!(h.state().session.doc().unwrap().model.iter().any(|e| matches!(&e.kind, EntityKind::AttDef(a) if a.tag == "ALTURA")));
+    h.get_by_label("Definir ponto de conexão").click();
+    h.run_steps(3);
+    let app = h.state_mut();
+    assert_eq!(app.session.running.as_ref().map(|r| r.id.as_str()), Some("elefamilia_conector"));
+    app.session.input(Input::Point(Vec2::new(0.0, 0.1))).unwrap();
+    app.run("bclose", json!({})).unwrap();
+    h.run_steps(3);
+    assert!(h.query_by_label("Propriedades da Família").is_none());
+    h.get_by_label("Inserir eletroduto");
+    let blocos = h.state_mut().run("eletrica.blocos", json!({})).unwrap();
+    let nova = blocos.as_array().unwrap().iter().find(|b| b["nome"] == "MINHA-TOMADA").expect("a família aparece na lista").clone();
+    assert_eq!(nova["familia"]["categoria"], "pontoForca");
+
     // Barra de contexto: só enquanto o comando espera cliques, e muda o modelo sem interrompê-lo.
     assert!(h.query_by_label("Alinhar à parede").is_none());
     h.state_mut().run("eletrica.bootstrap", json!({})).unwrap();
     h.state_mut().run("eletrica.ponto.modelo", json!({ "bloco": "TOM-SIM-BAIXA" })).unwrap();
-    h.get_by_label("Inserir pontos").click();
+    h.state_mut().start("eleponto");
     h.run_steps(3);
     assert_eq!(h.state().session.running.as_ref().map(|r| r.id.as_str()), Some("eleponto"));
     h.get_by_label("Alinhar à parede").click();
@@ -344,7 +398,8 @@ fn paleta_ferramentas_e_fluxo_completo() {
     assert_eq!(h.state().session.running.as_ref().map(|r| r.id.as_str()), Some("eleponto"));
     let uid = h.state().session.state().unwrap().uid;
     assert!(!free_eletrica::biblioteca::modelo(uid).unwrap().rotacao_auto);
-    h.get_by_label("Altura");
+    // Na barra e no cabeçalho da lista de pontos.
+    assert!(h.query_all_by_label("Altura").count() >= 2);
     h.get_by_label("Potência");
     h.get_by_label("Girar").click();
     h.run_steps(3);
@@ -395,7 +450,7 @@ fn paleta_ferramentas_e_fluxo_completo() {
 
     // Tab durante ELEPONTO gira; fora dele, segue o caminho do CADCraft.
     assert!(!cadcraft_ui_egui::eletrica::tab(h.state_mut()));
-    assert!(h.state_mut().cmdline("ELEPONTOS").is_none());
+    h.state_mut().start("eleponto");
     h.run_steps(2);
     assert!(cadcraft_ui_egui::eletrica::tab(h.state_mut()));
     // Imagem da barra com a inspeção ligada, quando pedida.

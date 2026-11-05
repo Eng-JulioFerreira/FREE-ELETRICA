@@ -223,7 +223,7 @@ pub fn dividir(doc: &mut Drawing, setup: &Setup, h: Handle, q: P, metros: f64) -
     };
     biblioteca::garantir_base(doc, setup, metros);
     let valores = vec![("ALTURA".to_string(), crate::ponto::br(z))];
-    let caixa = biblioteca::inserir(doc, biblioteca::BLOCO_CAIXA, p, 0.0, &valores)?;
+    let caixa = biblioteca::inserir_ponto(doc, biblioteca::BLOCO_CAIXA, p, 0.0, &valores, setup)?;
 
     let mut primeira: Vec<P> = t.iter().take(i + 1).copied().collect();
     primeira.push(p);

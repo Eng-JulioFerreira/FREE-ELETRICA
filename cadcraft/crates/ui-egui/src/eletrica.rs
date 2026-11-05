@@ -47,7 +47,7 @@ const LINHA: f32 = 20.0;
 const PAINEL_ABERTO: f32 = 340.0;
 const PAINEL_RECOLHIDO: f32 = 96.0;
 /// Altura da paleta, com todas as ferramentas à vista.
-const ALTURA_PALETA: f32 = 500.0;
+const ALTURA_PALETA: f32 = 540.0;
 
 /// Chave das configurações do Free Elétrica no armazenamento de preferências do CADCraft.
 pub const PREFS_KEY: &str = "freeeletrica.setup";
@@ -101,13 +101,14 @@ impl AbaPainel {
 /// A aba Pontos: o filtro por tipo, o bloco escolhido e os valores dos atributos.
 #[derive(Clone, Default)]
 struct Pontos {
-    /// `None`: todos os tipos.
-    filtro: Option<TipoPonto>,
+    filtro: FiltroPontos,
     busca: String,
     bloco: Option<String>,
     /// Valores para a inserção: (tag, valor), os padrões do bloco ao escolhê-lo.
     valores: Vec<(String, String)>,
     rotacao: f64,
+    /// Altura da inserção (m): vem da legenda ao escolher o bloco.
+    altura: f64,
     /// Ponto com a exclusão pedida, ou `Some(None)` para todos os filtrados (espera a confirmação).
     excluir: Option<Option<Handle>>,
 }
@@ -132,6 +133,8 @@ struct Cargas {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Aba {
+    Criterios,
+    Alturas,
     Geral,
     Condutores,
     Eletrodutos,
@@ -141,9 +144,12 @@ enum Aba {
 }
 
 impl Aba {
-    const TODAS: [Aba; 6] = [Aba::Geral, Aba::Condutores, Aba::Eletrodutos, Aba::Agrupamento, Aba::Demanda, Aba::Telecom];
+    const TODAS: [Aba; 8] =
+        [Aba::Criterios, Aba::Alturas, Aba::Geral, Aba::Condutores, Aba::Eletrodutos, Aba::Agrupamento, Aba::Demanda, Aba::Telecom];
     fn nome(self) -> &'static str {
         match self {
+            Aba::Criterios => "Critérios elétricos",
+            Aba::Alturas => "Alturas",
             Aba::Geral => "Geral",
             Aba::Condutores => "Condutores",
             Aba::Eletrodutos => "Eletrodutos",
@@ -257,7 +263,7 @@ fn abrir_painel(app: &mut CadApp, aba: AbaPainel) -> Result<Value, String> {
 fn abrir_setup() -> Result<Value, String> {
     let rascunho = Rascunho {
         setup: setup(),
-        aba: Aba::Geral,
+        aba: Aba::Criterios,
         novo_cabo: CaboTelecom { categoria: CategoriaTelecom::Utp, quantidade: 4, ..CaboTelecom::default() },
         erro: None,
     };
@@ -265,15 +271,10 @@ fn abrir_setup() -> Result<Value, String> {
     Ok(Value::Null)
 }
 
-/// ELEPONTOS: prepara o desenho, garante um modelo e começa a inserir, com a barra de contexto.
-fn comecar_a_inserir(app: &mut CadApp) -> Result<Value, String> {
+/// ELEPONTOS: prepara o desenho e abre a lista de blocos por categoria.
+fn abrir_pontos(app: &mut CadApp) -> Result<Value, String> {
     app.run("eletrica.bootstrap", json!({}))?;
-    let uid = app.session.state().map_err(|e| e.to_string())?.uid;
-    if ele::biblioteca::modelo(uid).is_none() {
-        app.run("eletrica.ponto.modelo", json!({ "bloco": ele::biblioteca::BLOCOS_BASE[0] }))?;
-    }
-    app.start("eleponto");
-    Ok(Value::Null)
+    abrir_painel(app, AbaPainel::Pontos)
 }
 
 /// Comandos do Free Elétrica que só existem na interface: a paleta, o painel e a inspeção. `None`
@@ -295,8 +296,7 @@ pub fn route(app: &mut CadApp, id: &str, _params: &Value) -> Option<Result<Value
             j.inspecao = !j.inspecao;
             Some(Ok(json!({ "inspecao": j.inspecao })))
         }
-        "ui.eletrica.pontos" | "elepontos" => Some(comecar_a_inserir(app)),
-        "ui.eletrica.lista" => Some(abrir_painel(app, AbaPainel::Pontos)),
+        "ui.eletrica.pontos" | "elepontos" | "ui.eletrica.lista" => Some(abrir_pontos(app)),
         // Rotear fiação vive dentro do Quadro de cargas; ELEROTEAR abre o quadro de cargas.
         "ui.eletrica.cargas" | "elecargas" | "ui.eletrica.rotear" | "elerotear" => Some(abrir_painel(app, AbaPainel::Cargas)),
         "ui.eletrica.eletrodutos" => Some(abrir_painel(app, AbaPainel::Eletrodutos)),
@@ -442,6 +442,19 @@ fn seletor_quadro(ui: &mut egui::Ui, id: &str, analise: &ele::Analise, s: &Setup
 pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     let tem_desenho = app.session.state().is_ok();
+    // No editor de blocos, a paleta vira o painel da família do bloco.
+    let editando = app.session.state().ok().and_then(|st| st.block_edit.as_ref().filter(|b| !b.current).map(|b| b.name.clone()));
+    if let Some(nome) = editando {
+        let familia = app.session.doc().ok().and_then(|d| ele::familia::ler(d, &nome));
+        let mut acoes = Vec::new();
+        egui::ScrollArea::vertical().id_salt("dock-eletrica-familia").auto_shrink([false, false]).show(ui, |ui| {
+            egui::Frame::NONE
+                .inner_margin(egui::Margin::symmetric(8, 6))
+                .show(ui, |ui| propriedades_da_familia(ui, &t, &nome, familia.as_ref(), &mut acoes));
+        });
+        executar(app, acoes);
+        return;
+    }
     let mut comando: Option<&str> = None;
     let inspecao = trava(&JANELAS).inspecao;
     egui::ScrollArea::vertical().id_salt("dock-eletrica").auto_shrink([false, false]).show(ui, |ui| {
@@ -453,7 +466,8 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
                 }
             };
             grupo(ui, &t, "1. Pontos");
-            botao(ui, "Inserir pontos", "ui.eletrica.pontos", "Clique onde vai cada ponto; a barra sobre o desenho escolhe tipo, altura e potência. Tab gira (ELEPONTOS)");
+            botao(ui, "Famílias de blocos", "bedit", "Abre o editor de blocos: classifique o bloco, com categoria, altura padrão e caixa, e crie os atributos (BEDIT)");
+            botao(ui, "Inserir pontos", "ui.eletrica.pontos", "Escolha o bloco por categoria e a altura; depois clique onde vai cada ponto. Tab gira (ELEPONTOS)");
             grupo(ui, &t, "2. Circuitos e comandos");
             botao(ui, "Criar circuito", "elecircuito", "Selecione o quadro, o número e os pontos do circuito; a barra sobre o desenho edita descrição, esquema e tensão (ELECIRCUITO)");
             botao(ui, "Comandos e luminárias", "elecomando", "Selecione o interruptor e as luminárias que ele comanda (ELECOMANDO)");
@@ -687,7 +701,9 @@ pub fn janelas(app: &mut CadApp, ctx: &egui::Context) {
     }
     let setup_aberta = trava(&JANELAS).setup.is_some();
     if setup_aberta {
-        janela_setup(ctx, &Tokens::get());
+        let mut acoes = Vec::new();
+        janela_setup(ctx, &Tokens::get(), app.session.state().is_ok(), &mut acoes);
+        executar(app, acoes);
     }
 }
 
@@ -805,7 +821,7 @@ fn legenda_inspecao(ctx: &egui::Context, xf: &crate::canvas::Xf, itens: &[Item])
 }
 
 /// O bloco de cada tipo da barra de inserção: (rótulo, bloco).
-const TIPOS_BARRA: [(&str, &str); 11] = [
+const TIPOS_BARRA: [(&str, &str); 13] = [
     ("TUG", "TOM-SIM-BAIXA"),
     ("TUE", "TOM-TUE"),
     ("Iluminação", "ILU-OCT"),
@@ -816,6 +832,8 @@ const TIPOS_BARRA: [(&str, &str); 11] = [
     ("Intermediário", "INT-INT"),
     ("Quadro QDG", "QDG"),
     ("Quadro QDC", "QDC"),
+    ("Ponto de dados", "RJ45"),
+    ("Rack", "RACK"),
     ("Caixa de passagem", "CX-PASSAGEM"),
 ];
 
@@ -849,6 +867,7 @@ fn barra_ponto(ui: &mut egui::Ui, uid: u64, st: &Estado, s: &Setup, acoes: &mut 
     let tem = |tag: &str| bloco.atributos.iter().any(|a| !a.constante && a.tag.eq_ignore_ascii_case(tag));
     let padrao = |tag: &str| bloco.atributos.iter().find(|a| a.tag.eq_ignore_ascii_case(tag)).map_or(String::new(), |a| a.padrao.clone());
     let valor = |tag: &str| m.valores.iter().find(|(t, _)| t.eq_ignore_ascii_case(tag)).map_or_else(|| padrao(tag), |(_, v)| v.clone());
+    let altura_atual = Some(valor("ALTURA")).filter(|v| !v.trim().is_empty()).unwrap_or_else(|| fixo(bloco.altura_padrao(s), 2));
     let enviar = |acoes: &mut Vec<Acao>, nome: &str, rotacao_auto: bool, valores: &[(String, String)]| {
         let mapa: serde_json::Map<String, Value> = valores.iter().map(|(k, v)| (k.clone(), Value::String(v.clone()))).collect();
         acoes
@@ -878,7 +897,7 @@ fn barra_ponto(ui: &mut egui::Ui, uid: u64, st: &Estado, s: &Setup, acoes: &mut 
     if tem("ALTURA") {
         ui.separator();
         ui.label("Altura");
-        let v = valor("ALTURA");
+        let v = altura_atual;
         let numero_atual = ele::ponto::numero(&v);
         let lista = alturas(s);
         let nome_atual = lista
@@ -1036,7 +1055,7 @@ pub fn painel(app: &mut CadApp, ui: &mut egui::Ui) {
         egui::ScrollArea::both().id_salt("ele-painel").auto_shrink([false, false]).show(ui, |ui| match aba {
             AbaPainel::Cargas => aba_cargas(ui, app, &t, &mut st, &s, &mut cargas, &mut destaque, &mut acoes),
             AbaPainel::Eletrodutos => aba_lista_eletrodutos(ui, app, &t, &mut st, &s, &mut acoes),
-            AbaPainel::Pontos => inserir_pontos(ui, &t, &st.analise, &st.blocos, &mut pontos, &mut acoes),
+            AbaPainel::Pontos => inserir_pontos(ui, &t, &st.analise, &st.blocos, &s, &mut pontos, &mut acoes),
             AbaPainel::Conferencia => {
                 let itens = st.inspecao(app, &s);
                 aba_conferencia(ui, &t, &st.analise, &itens, &mut acoes);
@@ -1718,38 +1737,70 @@ fn aba_conferencia(ui: &mut egui::Ui, t: &Tokens, analise: &ele::Analise, itens:
     secao_circuitos(ui, t, analise, acoes);
 }
 
-/// Os tipos do filtro da aba Pontos, na ordem dos botões.
-const TIPOS_FILTRO: [TipoPonto; 7] = [
-    TipoPonto::Iluminacao,
-    TipoPonto::Tomada,
-    TipoPonto::TomadaEspecifica,
-    TipoPonto::Interruptor,
-    TipoPonto::Quadro,
-    TipoPonto::Caixa,
-    TipoPonto::Outro,
-];
+/// Os filtros da aba Pontos: o que aparece em cada um.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum FiltroPontos {
+    #[default]
+    Todos,
+    Tomadas,
+    Iluminacao,
+    Interruptores,
+    Dados,
+    Quadros,
+    Caixas,
+}
 
-/// A aba Pontos: filtro por tipo, os blocos de ponto do desenho, os valores para a inserção e os
-/// pontos já inseridos (selecionar, excluir).
+impl FiltroPontos {
+    const TODOS: [FiltroPontos; 7] = [Self::Todos, Self::Tomadas, Self::Iluminacao, Self::Interruptores, Self::Dados, Self::Quadros, Self::Caixas];
+    fn nome(self) -> &'static str {
+        match self {
+            Self::Todos => "Todos",
+            Self::Tomadas => "Tomadas",
+            Self::Iluminacao => "Iluminação",
+            Self::Interruptores => "Interruptores",
+            Self::Dados => "Dados/Telecom",
+            Self::Quadros => "Quadros/Racks",
+            Self::Caixas => "Caixas",
+        }
+    }
+    fn aceita(self, tipo: TipoPonto) -> bool {
+        match self {
+            Self::Todos => true,
+            Self::Tomadas => matches!(tipo, TipoPonto::Tomada | TipoPonto::TomadaEspecifica),
+            Self::Iluminacao => tipo == TipoPonto::Iluminacao,
+            Self::Interruptores => tipo == TipoPonto::Interruptor,
+            Self::Dados => tipo == TipoPonto::Dados,
+            Self::Quadros => matches!(tipo, TipoPonto::Quadro | TipoPonto::Rack),
+            Self::Caixas => tipo == TipoPonto::Caixa,
+        }
+    }
+}
+
+/// O comando que escolhe o que o ELEPONTO insere, com os valores e a altura da aba Pontos.
+fn modelo_de_pontos(p: &Pontos, nome: &str) -> Acao {
+    let valores: serde_json::Map<String, Value> = p.valores.iter().map(|(k, v)| (k.clone(), Value::String(v.clone()))).collect();
+    Acao::Rodar(
+        "eletrica.ponto.modelo",
+        json!({ "bloco": nome, "rotacao": p.rotacao, "rotacaoAuto": p.rotacao == 0.0, "altura": p.altura, "valores": valores }),
+    )
+}
+
+/// A aba Pontos: filtro por categoria, os blocos, a altura e os valores da inserção, e os pontos já
+/// inseridos (altura, selecionar, excluir). Escolher um bloco já começa a inserir.
 fn inserir_pontos(
     ui: &mut egui::Ui,
     t: &Tokens,
     analise: &ele::Analise,
     blocos: &[ele::biblioteca::BlocoPonto],
+    s: &Setup,
     p: &mut Pontos,
     acoes: &mut Vec<Acao>,
 ) {
-    // Filtro por tipo e busca pelo nome.
     ui.horizontal_wrapped(|ui| {
-        if ui.selectable_label(p.filtro.is_none(), format!("Todos ({})", analise.pontos.len())).clicked() {
-            p.filtro = None;
-            p.excluir = None;
-        }
-        for tipo in TIPOS_FILTRO {
-            let n = analise.contar(tipo);
-            let tem_bloco = blocos.iter().any(|b| b.tipo == tipo);
-            if (n > 0 || tem_bloco) && ui.selectable_label(p.filtro == Some(tipo), format!("{} ({n})", tipo.nome())).clicked() {
-                p.filtro = Some(tipo);
+        for f in FiltroPontos::TODOS {
+            let n = analise.pontos.iter().filter(|q| f.aceita(q.tipo)).count();
+            if ui.selectable_label(p.filtro == f, format!("{} ({n})", f.nome())).clicked() {
+                p.filtro = f;
                 p.excluir = None;
             }
         }
@@ -1760,7 +1811,6 @@ fn inserir_pontos(
     let busca = p.busca.trim().to_uppercase();
     let combina = |texto: &str| busca.is_empty() || texto.to_uppercase().contains(&busca);
     let filtro = p.filtro;
-    let do_tipo = |tipo: TipoPonto| filtro.is_none_or(|f| f == tipo);
 
     if blocos.is_empty() {
         ui.horizontal(|ui| {
@@ -1787,31 +1837,45 @@ fn inserir_pontos(
             ui.set_width(300.0);
             ui.label(RichText::new("Blocos").strong());
             egui::ScrollArea::vertical().id_salt("ele-pontos-blocos").max_height(220.0).show(ui, |ui| {
-                for b in blocos.iter().filter(|b| do_tipo(b.tipo) && combina(&b.nome)) {
+                for b in blocos.iter().filter(|b| filtro.aceita(b.tipo) && combina(&b.nome)) {
                     let texto = format!("{}  ·  {}  ·  {} no desenho", b.nome, b.tipo.nome(), b.inseridos);
                     if ui.selectable_label(p.bloco.as_deref() == Some(b.nome.as_str()), texto).clicked() {
+                        let e_altura = |tag: &str| ele::ponto::TAGS_ALTURA.iter().any(|t| tag.eq_ignore_ascii_case(t));
                         p.bloco = Some(b.nome.clone());
-                        p.valores = b.atributos.iter().filter(|a| !a.constante).map(|a| (a.tag.clone(), a.padrao.clone())).collect();
+                        p.valores =
+                            b.atributos.iter().filter(|a| !a.constante && !e_altura(&a.tag)).map(|a| (a.tag.clone(), a.padrao.clone())).collect();
+                        p.altura = b.altura_padrao(s);
                         p.excluir = None;
+                        acoes.push(modelo_de_pontos(p, &b.nome));
+                        acoes.push(Acao::Iniciar("eleponto"));
                     }
                 }
             });
         });
         ui.separator();
-        // Valores da inserção.
+        // Valores da inserção: valem para os próximos cliques.
         ui.vertical(|ui| {
+            ui.set_width(280.0);
             let Some(nome) = p.bloco.clone() else {
                 ui.label(pequeno("Escolha um bloco para inserir.", t.text_dim));
                 return;
             };
-            let prompts: Vec<(String, String)> = blocos
-                .iter()
-                .find(|b| b.nome == nome)
-                .map(|b| b.atributos.iter().map(|a| (a.tag.clone(), a.prompt.clone())).collect())
-                .unwrap_or_default();
+            let info = blocos.iter().find(|b| b.nome == nome);
+            let prompts: Vec<(String, String)> =
+                info.map(|b| b.atributos.iter().map(|a| (a.tag.clone(), a.prompt.clone())).collect()).unwrap_or_default();
+            let legenda = info.map_or(p.altura, |b| b.altura_padrao(s));
             ui.label(RichText::new(format!("Inserir {nome}")).strong());
-            egui::ScrollArea::vertical().id_salt("ele-pontos-valores-rolagem").max_height(180.0).show(ui, |ui| {
+            let mut mudou = false;
+            egui::ScrollArea::vertical().id_salt("ele-pontos-valores-rolagem").max_height(170.0).show(ui, |ui| {
                 egui::Grid::new("ele-pontos-valores").num_columns(2).spacing(vec2(10.0, 4.0)).show(ui, |ui| {
+                    ui.label("Altura (m)");
+                    let dica = format!(
+                        "Legenda do projeto: {} m. Outro valor aparece na planta como {}",
+                        fixo(legenda, 2),
+                        ele::editar::texto_de_altura(1.45)
+                    );
+                    mudou |= ui.add(campo(&mut p.altura, 0.0..=50.0, 0.01, 2, " m")).on_hover_text(dica).changed();
+                    ui.end_row();
                     for (tag, valor) in &mut p.valores {
                         let dica = prompts
                             .iter()
@@ -1820,29 +1884,30 @@ fn inserir_pontos(
                             .filter(|pr| !pr.is_empty())
                             .unwrap_or_else(|| tag.clone());
                         ui.label(tag.as_str()).on_hover_text(dica);
-                        ui.add(egui::TextEdit::singleline(valor).desired_width(170.0));
+                        mudou |= ui.add(egui::TextEdit::singleline(valor).desired_width(150.0)).lost_focus();
                         ui.end_row();
                     }
                     ui.label("Rotação");
-                    ui.add(campo(&mut p.rotacao, -360.0..=360.0, 1.0, 0, "°"));
+                    mudou |= ui.add(campo(&mut p.rotacao, -360.0..=360.0, 1.0, 0, "°")).changed();
                     ui.end_row();
                 });
             });
-            ui.add_space(4.0);
+            if (p.altura - legenda).abs() >= 0.005 {
+                ui.label(pequeno(format!("Na planta: {}", ele::editar::texto_de_altura(p.altura)), t.text_dim));
+            }
+            if mudou {
+                acoes.push(modelo_de_pontos(p, &nome));
+            }
             if ui.button("Inserir no desenho").on_hover_text("Clique no desenho onde vai cada ponto; Enter termina (ELEPONTO)").clicked() {
-                let valores: serde_json::Map<String, Value> = p.valores.iter().map(|(k, v)| (k.clone(), Value::String(v.clone()))).collect();
-                acoes.push(Acao::Rodar(
-                    "eletrica.ponto.modelo",
-                    json!({ "bloco": nome, "rotacao": p.rotacao, "rotacaoAuto": p.rotacao == 0.0, "valores": valores }),
-                ));
+                acoes.push(modelo_de_pontos(p, &nome));
                 acoes.push(Acao::Iniciar("eleponto"));
             }
         });
         ui.separator();
-        // Pontos já inseridos, do tipo filtrado.
+        // Pontos já inseridos, do filtro escolhido.
         ui.vertical(|ui| {
             let lista: Vec<&PontoEletrico> =
-                analise.pontos.iter().filter(|q| do_tipo(q.tipo) && (combina(&q.bloco) || q.tag.as_deref().is_some_and(combina))).collect();
+                analise.pontos.iter().filter(|q| filtro.aceita(q.tipo) && (combina(&q.bloco) || q.tag.as_deref().is_some_and(combina))).collect();
             ui.horizontal(|ui| {
                 ui.label(RichText::new(format!("Pontos no desenho ({})", lista.len())).strong());
                 if !lista.is_empty() {
@@ -1867,12 +1932,13 @@ fn inserir_pontos(
                     }
                 }
             });
-            let colunas: [(&str, f32, bool); 6] = [
+            let colunas: [(&str, f32, bool); 7] = [
                 ("Ponto", 150.0, false),
-                ("Bloco", 150.0, false),
-                ("Tipo", 100.0, false),
-                ("Circuito", 60.0, false),
-                ("Potência (VA)", 90.0, true),
+                ("Bloco", 130.0, false),
+                ("Tipo", 90.0, false),
+                ("Circuito", 56.0, false),
+                ("Potência (VA)", 84.0, true),
+                ("Altura", 64.0, false),
                 ("", 90.0, false),
             ];
             egui::ScrollArea::vertical().id_salt("ele-pontos-lista").max_height(190.0).show(ui, |ui| {
@@ -1889,6 +1955,11 @@ fn inserir_pontos(
                         celula(ui, colunas[2].1, q.tipo.nome(), false);
                         celula(ui, colunas[3].1, q.circuito.as_deref().unwrap_or("-"), false);
                         celula(ui, colunas[4].1, numero(q.potencia.map_or("-".to_string(), |v| fixo(v, 0))), true);
+                        let mut altura = q.altura.unwrap_or_else(|| q.altura_legenda(s));
+                        let r = ui.add_sized(vec2(colunas[5].1, LINHA), campo(&mut altura, 0.0..=50.0, 0.01, 2, ""));
+                        if r.on_hover_text(format!("Legenda do projeto: {} m", fixo(q.altura_legenda(s), 2))).changed() {
+                            acoes.push(Acao::Rodar("eletrica.ponto.altura", json!({ "pontos": [q.handle.hex()], "altura": altura })));
+                        }
                         ui.horizontal(|ui| {
                             if p.excluir == Some(Some(q.handle)) {
                                 if ui.small_button(RichText::new("Excluir?").color(COR_AVISO)).clicked() {
@@ -1910,7 +1981,105 @@ fn inserir_pontos(
     });
 }
 
-fn janela_setup(ctx: &egui::Context, t: &Tokens) {
+/// O painel "Propriedades da Família", na paleta, enquanto o editor de blocos está aberto.
+fn propriedades_da_familia(ui: &mut egui::Ui, t: &Tokens, nome: &str, familia: Option<&ele::familia::Familia>, acoes: &mut Vec<Acao>) {
+    use ele::familia::{CaixaFisica, Familia, FamilyCategory, RefAltura, SystemDomain};
+    ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
+    ui.label(RichText::new("Propriedades da Família").strong());
+    ui.label(pequeno(format!("Bloco: {nome}"), t.text_dim));
+    ui.add_space(2.0);
+    let enviar = |acoes: &mut Vec<Acao>, campo: &str, valor: Value| {
+        let mut p = serde_json::Map::new();
+        p.insert("bloco".into(), json!(nome));
+        p.insert(campo.into(), valor);
+        acoes.push(Acao::Rodar("eletrica.familia.definir", Value::Object(p)));
+    };
+    let f = familia.cloned().unwrap_or_else(|| Familia::da_categoria(FamilyCategory::Nenhum));
+    let largura = ui.available_width().min(240.0);
+    let linha = |ui: &mut egui::Ui, nome: &str| {
+        ui.label(pequeno(nome, t.text_dim));
+    };
+    linha(ui, "Categoria");
+    egui::ComboBox::from_id_salt("ele-familia-categoria")
+        .selected_text(if familia.is_some() { f.categoria.nome() } else { "Sem classificação" })
+        .width(largura)
+        .show_ui(ui, |ui| {
+            for c in FamilyCategory::TODAS {
+                if ui.selectable_label(familia.is_some() && f.categoria == c, c.nome()).clicked() {
+                    enviar(acoes, "categoria", json!(c.codigo()));
+                }
+            }
+        });
+    if familia.is_none() {
+        ui.label(pequeno("Escolha a categoria para o bloco virar uma família.", t.text_dim));
+        return;
+    }
+    linha(ui, "Domínio");
+    egui::ComboBox::from_id_salt("ele-familia-dominio").selected_text(f.dominio.nome()).width(largura).show_ui(ui, |ui| {
+        for d in SystemDomain::TODOS {
+            if ui.selectable_label(f.dominio == d, d.nome()).clicked() {
+                enviar(acoes, "dominio", json!(d.codigo()));
+            }
+        }
+    });
+    linha(ui, "Referência de altura padrão");
+    egui::ComboBox::from_id_salt("ele-familia-altura").selected_text(f.ref_altura.nome()).width(largura).show_ui(ui, |ui| {
+        for r in RefAltura::TODAS {
+            if ui.selectable_label(f.ref_altura == r, r.nome()).clicked() {
+                enviar(acoes, "refAltura", json!(r.codigo()));
+            }
+        }
+    });
+    if f.ref_altura == RefAltura::Fixa {
+        linha(ui, "Cota fixa");
+        let mut cota = f.cota_fixa;
+        if ui.add(campo(&mut cota, 0.0..=50.0, 0.01, 2, " m")).changed() {
+            enviar(acoes, "cotaFixa", json!(cota));
+        }
+    }
+    linha(ui, "Caixa física associada");
+    egui::ComboBox::from_id_salt("ele-familia-caixa").selected_text(f.caixa.nome()).width(largura).show_ui(ui, |ui| {
+        for c in CaixaFisica::TODAS {
+            if ui.selectable_label(f.caixa == c, c.nome()).clicked() {
+                enviar(acoes, "caixa", json!(c.codigo()));
+            }
+        }
+    });
+    linha(ui, "Potência padrão (0: a do atributo)");
+    let mut potencia = f.potencia.unwrap_or(0.0);
+    if ui.add(campo(&mut potencia, 0.0..=100_000.0, 10.0, 0, " VA")).changed() {
+        enviar(acoes, "potencia", if potencia > 0.0 { json!(potencia) } else { Value::Null });
+    }
+    linha(ui, "Fator de potência (0: o do atributo)");
+    let mut fp = f.fp.unwrap_or(0.0);
+    if ui.add(campo(&mut fp, 0.0..=1.0, 0.01, 2, "")).changed() {
+        enviar(acoes, "fp", if fp > 0.0 { json!(fp) } else { Value::Null });
+    }
+    linha(ui, "Nº de teclas/pontos");
+    let mut teclas = f.teclas;
+    if ui.add(egui::DragValue::new(&mut teclas).range(1..=3)).changed() {
+        enviar(acoes, "teclas", json!(teclas));
+    }
+    ui.separator();
+    ui.menu_button("Inserir geometria base", |ui| {
+        for (forma, rotulo) in ele::biblioteca::GEOMETRIAS {
+            if ui.button(rotulo).clicked() {
+                acoes.push(Acao::Rodar("eletrica.familia.geometria", json!({ "forma": forma })));
+                ui.close();
+            }
+        }
+    });
+    if ferramenta(ui, "Definir ponto de conexão", true, "Clique no ponto que vira a origem do bloco: inserção e chegada dos eletrodutos").clicked()
+    {
+        acoes.push(Acao::Iniciar("elefamilia_conector"));
+    }
+    if ferramenta(ui, "Gerar atributos padrão", true, "Cria os atributos da categoria que ainda faltam, como CIRCUITO, COMANDO e ALTURA").clicked() {
+        acoes.push(Acao::Rodar("eletrica.familia.atributos", json!({ "bloco": nome })));
+    }
+    ui.label(pequeno("A família vale na hora; a geometria e os atributos entram no bloco ao salvar (BSAVE).", t.text_dim));
+}
+
+fn janela_setup(ctx: &egui::Context, t: &Tokens, tem_desenho: bool, acoes: &mut Vec<Acao>) {
     let Some(mut r) = trava(&JANELAS).setup.clone() else { return };
     let mut aberta = true;
     let mut fechar = false;
@@ -1931,7 +2100,9 @@ fn janela_setup(ctx: &egui::Context, t: &Tokens) {
             });
             ui.separator();
             match r.aba {
-                Aba::Geral => aba_geral(ui, t, &mut r.setup),
+                Aba::Criterios => aba_criterios(ui, t, &mut r.setup),
+                Aba::Alturas => aba_alturas(ui, t, &mut r.setup),
+                Aba::Geral => aba_geral(ui, t, &mut r.setup, tem_desenho, acoes),
                 Aba::Condutores => aba_condutores(ui, t, &mut r.setup),
                 Aba::Eletrodutos => aba_eletrodutos(ui, t, &mut r.setup),
                 Aba::Agrupamento => aba_agrupamento(ui, t),
@@ -1952,8 +2123,9 @@ fn janela_setup(ctx: &egui::Context, t: &Tokens) {
     trava(&JANELAS).setup = (aberta && !fechar).then_some(r);
 }
 
-fn aba_geral(ui: &mut egui::Ui, t: &Tokens, s: &mut Setup) {
-    egui::Grid::new("ele-setup-geral").num_columns(2).spacing(vec2(12.0, 6.0)).show(ui, |ui| {
+/// Critérios elétricos do projeto.
+fn aba_criterios(ui: &mut egui::Ui, t: &Tokens, s: &mut Setup) {
+    egui::Grid::new("ele-setup-criterios").num_columns(2).spacing(vec2(12.0, 6.0)).show(ui, |ui| {
         ui.label("Sistema de distribuição");
         egui::ComboBox::from_id_salt("ele-sistema").selected_text(s.sistema.nome()).width(230.0).show_ui(ui, |ui| {
             for sistema in Sistema::TODOS {
@@ -1965,9 +2137,80 @@ fn aba_geral(ui: &mut egui::Ui, t: &Tokens, s: &mut Setup) {
         let ff = s.sistema.tensao_ff().map_or_else(|| "-".to_string(), |v| format!("{} V", br(v)));
         ui.label(format!("F-N {} V · F-F {ff} · {} fase(s)", br(s.sistema.tensao_fn()), s.sistema.fases()));
         ui.end_row();
-        ui.label("Pé-direito padrão");
+        ui.label("Temperatura ambiente");
+        ui.add(campo(&mut s.temperatura_ambiente, 10.0..=60.0, 1.0, 0, " °C"));
+        ui.end_row();
+        ui.label("FCT (tabela 40)");
+        ui.label(fixo(s.fct(), 2));
+        ui.end_row();
+        ui.label("Isolação padrão");
+        egui::ComboBox::from_id_salt("ele-isolacao").selected_text(s.isolacao.nome()).width(160.0).show_ui(ui, |ui| {
+            for i in Isolacao::TODAS {
+                ui.selectable_value(&mut s.isolacao, i, i.nome());
+            }
+        });
+        ui.end_row();
+        ui.label("Queda de tensão: iluminação");
+        ui.add(campo(&mut s.queda_iluminacao, 0.5..=10.0, 0.1, 1, " %"));
+        ui.end_row();
+        ui.label("Queda de tensão: força");
+        ui.add(campo(&mut s.queda_admissivel, 0.5..=10.0, 0.1, 1, " %"));
+        ui.end_row();
+        ui.label("Queda de tensão: alimentador");
+        ui.add(campo(&mut s.queda_alimentador, 0.1..=10.0, 0.1, 1, " %"));
+        ui.end_row();
+        ui.label("Folga de cabos");
+        let mut folga = (s.fator_materiais - 1.0) * 100.0;
+        if ui
+            .add(campo(&mut folga, 0.0..=100.0, 1.0, 0, " %"))
+            .on_hover_text("Soma aos comprimentos de cabo no levantamento (perdas, emendas, sobras)")
+            .changed()
+        {
+            s.fator_materiais = 1.0 + folga / 100.0;
+        }
+        ui.end_row();
+    });
+    ui.label(pequeno(
+        "Tensões e fases valem quando o bloco não informa TENSAO ou o quadro não informa NUMERO_FASES. A queda do alimentador ainda não entra no cálculo: chega na etapa de dimensionamento.",
+        t.text_dim,
+    ));
+}
+
+/// As alturas padrão do projeto: a legenda que as famílias de bloco seguem.
+fn aba_alturas(ui: &mut egui::Ui, t: &Tokens, s: &mut Setup) {
+    egui::Grid::new("ele-setup-alturas").num_columns(2).spacing(vec2(12.0, 6.0)).show(ui, |ui| {
+        ui.label("Pé-direito (teto)");
         ui.add(campo(&mut s.pe_direito, 2.0..=10.0, 0.01, 2, " m"));
         ui.end_row();
+        ui.label("Altura alta padrão");
+        ui.add(campo(&mut s.altura_alta, 0.0..=10.0, 0.01, 2, " m"));
+        ui.end_row();
+        ui.label("Altura média padrão");
+        ui.add(campo(&mut s.altura_media, 0.0..=10.0, 0.01, 2, " m"));
+        ui.end_row();
+        ui.label("Altura baixa padrão");
+        ui.add(campo(&mut s.altura_baixa, 0.0..=10.0, 0.01, 2, " m"));
+        ui.end_row();
+        ui.label("Piso");
+        ui.label("0,00 m");
+        ui.end_row();
+    });
+    ui.label(pequeno(
+        "Um ponto que segue a legenda não escreve a altura na planta, e muda junto com ela. Um ponto com outra altura mostra h=1,45m e não muda.",
+        t.text_dim,
+    ));
+}
+
+fn aba_geral(ui: &mut egui::Ui, t: &Tokens, s: &mut Setup, tem_desenho: bool, acoes: &mut Vec<Acao>) {
+    if ui
+        .add_enabled(tem_desenho, egui::Button::new("Inicializar projeto no DXF atual"))
+        .on_hover_text("Cria as camadas e os blocos que faltam; as ferramentas fazem isso sozinhas na primeira vez")
+        .clicked()
+    {
+        acoes.push(Acao::Rodar("eletrica.bootstrap", json!({})));
+    }
+    ui.add_space(4.0);
+    egui::Grid::new("ele-setup-geral").num_columns(2).spacing(vec2(12.0, 6.0)).show(ui, |ui| {
         ui.label("Unidade do desenho");
         egui::ComboBox::from_id_salt("ele-unidade").selected_text(s.unidade.nome()).width(230.0).show_ui(ui, |ui| {
             for u in Unidade::TODAS {
@@ -1988,36 +2231,13 @@ fn aba_geral(ui: &mut egui::Ui, t: &Tokens, s: &mut Setup) {
             .on_hover_text("Distância máxima entre um bloco e a ponta do eletroduto que chega nele, e dos cliques nos blocos e eletrodutos");
         ui.end_row();
     });
-    ui.label(pequeno(
-        "Tensões e fases valem quando o bloco não informa TENSAO ou o quadro não informa NUMERO_FASES. Os eletrodutos correm no teto (pé-direito), no piso ou na parede; cada ponta desce ou sobe até a ALTURA do bloco.",
-        t.text_dim,
-    ));
+    ui.label(pequeno("Os eletrodutos correm no teto, no piso ou na parede; cada ponta desce ou sobe até a altura do bloco.", t.text_dim));
 }
 
 fn aba_condutores(ui: &mut egui::Ui, t: &Tokens, s: &mut Setup) {
     egui::Grid::new("ele-setup-condutores").num_columns(2).spacing(vec2(12.0, 6.0)).show(ui, |ui| {
-        ui.label("Isolação padrão");
-        egui::ComboBox::from_id_salt("ele-isolacao").selected_text(s.isolacao.nome()).width(160.0).show_ui(ui, |ui| {
-            for i in Isolacao::TODAS {
-                ui.selectable_value(&mut s.isolacao, i, i.nome());
-            }
-        });
-        ui.end_row();
         ui.label("Material / método");
         ui.label("Cobre · B1: condutores isolados em eletroduto");
-        ui.end_row();
-        ui.label("Temperatura do projeto");
-        ui.add(campo(&mut s.temperatura_ambiente, 10.0..=60.0, 1.0, 0, " °C"));
-        ui.end_row();
-        ui.label("FCT (tabela 40)");
-        ui.label(fixo(s.fct(), 2));
-        ui.end_row();
-        ui.label("Queda de tensão admissível");
-        ui.add(campo(&mut s.queda_admissivel, 0.5..=10.0, 0.1, 1, " %"));
-        ui.end_row();
-        ui.label("Fator para materiais");
-        ui.add(campo(&mut s.fator_materiais, 1.0..=2.0, 0.01, 2, ""))
-            .on_hover_text("Multiplica os comprimentos de cabo no levantamento (perdas, emendas, sobras)");
         ui.end_row();
         for (f, nome) in ["Cor da fase R", "Cor da fase S", "Cor da fase T"].into_iter().enumerate() {
             ui.label(nome);

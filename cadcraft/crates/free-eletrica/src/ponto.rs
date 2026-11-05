@@ -7,6 +7,7 @@ use cadcraft_doc::{Drawing, EntityKind, Handle, Insert, RawTag};
 use serde::Serialize;
 
 use crate::demanda::TipoCarga;
+use crate::familia::{self, FamilyCategory, RefAltura};
 
 /// Atributos que marcam um bloco como ponto elétrico. Um bloco sem nenhum deles (porta, móvel,
 /// carimbo) não entra na análise, mesmo que o nome lembre um ponto elétrico. A primeira tag de
@@ -17,13 +18,15 @@ pub const TAGS_TENSAO: &[&str] = &["TENSAO", "VOLTS", "VOLTAGEM"];
 pub const TAGS_FASES: &[&str] = &["NUMERO_FASES", "FASES", "NUM_FASES", "FASE"];
 pub const TAGS_CIRCUITO: &[&str] = &["CIRCUITO", "CIRC", "CIRCUIT"];
 pub const TAGS_COMANDO: &[&str] = &["COMANDO", "CMD"];
-pub const TAGS_ID: &[&str] = &["TAG", "ID", "NOME"];
+pub const TAGS_ID: &[&str] = &["TAG", "ID_PONTO", "ID", "NOME"];
 pub const TAGS_ALTURA: &[&str] = &["ALTURA", "ALTURA_INSTALACAO", "H_INSTALACAO", "ALT"];
 pub const TAGS_QUADRO: &[&str] = &["QUADRO"];
 /// Fator de potência do ponto: "0,92", "0.92" ou "92%".
 pub const TAGS_FP: &[&str] = &["FP", "FATOR_POTENCIA", "FATOR_DE_POTENCIA", "COS_FI"];
 /// Tipo de carga na demanda: ILUM_TUG, AQUECIMENTO, ELETRODOMESTICOS, AR, BOMBA, OUTROS, RESERVA.
 pub const TAGS_CARGA: &[&str] = &["TIPO_CARGA", "CARGA"];
+/// A altura exata (m) de uma inserção que foge da legenda, no XDATA: é a que vale para o cálculo.
+pub const CHAVE_ALTURA: &str = "elevation_m";
 /// Tipo de interruptor: 1S, 2S, 3S, PARALELO, INTERMEDIARIO.
 pub const TAGS_INTERRUPTOR: &[&str] = &["TIPO_INTERRUPTOR", "TECLAS"];
 
@@ -87,6 +90,12 @@ pub enum TipoPonto {
     Interruptor,
     /// Caixa de passagem: não é carga.
     Caixa,
+    /// Ponto de dados ou telecom: fora dos circuitos elétricos.
+    Dados,
+    /// Quadro de dados ou rack: não alimenta circuitos elétricos.
+    Rack,
+    /// Dispositivo especial ou de incêndio: fora dos circuitos elétricos.
+    Especial,
     /// Ponto com atributos elétricos mas tipo não reconhecido.
     Outro,
 }
@@ -100,6 +109,9 @@ impl TipoPonto {
             Self::TomadaEspecifica => "TUE",
             Self::Interruptor => "Interruptor",
             Self::Caixa => "Caixa de passagem",
+            Self::Dados => "Dados/Telecom",
+            Self::Rack => "Rack",
+            Self::Especial => "Especial",
             Self::Outro => "Outro",
         }
     }
@@ -107,6 +119,11 @@ impl TipoPonto {
     /// Consome potência do circuito.
     pub fn e_carga(self) -> bool {
         matches!(self, Self::Iluminacao | Self::Tomada | Self::TomadaEspecifica | Self::Outro)
+    }
+
+    /// É do sistema de força: participa de circuitos e do quadro de cargas.
+    pub fn e_de_forca(self) -> bool {
+        !matches!(self, Self::Dados | Self::Rack | Self::Especial)
     }
 
     /// O tipo descrito por um texto: o valor de TIPO_PONTO ou o nome do bloco.
@@ -117,6 +134,15 @@ impl TipoPonto {
         let comeca = |p: &str| palavras.iter().any(|w| w.starts_with(p));
         let contem = |p: &str| n.contains(p);
 
+        if contem("RACK") {
+            return Some(Self::Rack);
+        }
+        if contem("DADOS") || contem("TELECOM") || contem("RJ45") || palavra("CFTV") || palavra("FIBRA") {
+            return Some(Self::Dados);
+        }
+        if contem("INCENDIO") || contem("ESPECIAL") {
+            return Some(Self::Especial);
+        }
         if contem("QUADRO") || palavra("QGBT") || comeca("QD") {
             return Some(Self::Quadro);
         }
@@ -173,8 +199,14 @@ pub struct PontoEletrico {
     pub circuito: Option<String>,
     pub comando: Option<String>,
     pub tag: Option<String>,
-    /// Altura de instalação (m), do atributo ALTURA. `None`: usa a altura padrão do tipo.
+    /// Altura de instalação (m) própria desta inserção: a do XDATA ou a do atributo ALTURA.
+    /// `None`: segue a legenda (ver [`Self::altura_legenda`]).
     pub altura: Option<f64>,
+    /// A referência de altura da família do bloco e a cota fixa dela.
+    pub ref_altura: Option<RefAltura>,
+    pub cota_fixa: f64,
+    /// A categoria da família do bloco.
+    pub categoria: Option<FamilyCategory>,
     /// O quadro que alimenta o ponto (XDATA gravado pela ferramenta de circuitos, atributo
     /// QUADRO com a TAG do quadro, ou o único quadro do desenho).
     #[serde(serialize_with = "handle_hex_opcional")]
@@ -245,13 +277,25 @@ impl PontoEletrico {
                 }
             }
         }
+        let familia = familia::ler(doc, &ins.block);
+        // Bloco classificado como comum nunca é ponto.
+        if familia.as_ref().is_some_and(|f| f.categoria == FamilyCategory::Nenhum) {
+            return None;
+        }
         let todas = [TAGS_TIPO, TAGS_POTENCIA, TAGS_TENSAO, TAGS_FASES, TAGS_CIRCUITO, TAGS_COMANDO, TAGS_ALTURA, TAGS_QUADRO];
-        if !todas.iter().any(|tags| buscar(&atributos, &extras, tags).is_some()) {
+        if familia.is_none() && !todas.iter().any(|tags| buscar(&atributos, &extras, tags).is_some()) {
             return None;
         }
         let valor = |tags| buscar(&atributos, &extras, tags);
         let tipo_attr = valor(TAGS_TIPO).and_then(TipoPonto::classificar);
-        let tipo = tipo_attr.or_else(|| TipoPonto::classificar(&ins.block)).unwrap_or(TipoPonto::Outro);
+        let tipo_texto = tipo_attr.or_else(|| TipoPonto::classificar(&ins.block));
+        let tipo = familia.as_ref().and_then(|f| f.categoria.tipo(tipo_texto)).or(tipo_texto).unwrap_or(TipoPonto::Outro);
+        // A altura exata do XDATA vale sobre o texto do atributo.
+        let altura_exata = extras
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(CHAVE_ALTURA))
+            .and_then(|(_, v)| v.trim().parse::<f64>().ok())
+            .filter(|v| v.is_finite());
         let texto = |tags| valor(tags).map(str::to_string);
         Some(PontoEletrico {
             handle,
@@ -259,22 +303,40 @@ impl PontoEletrico {
             camada: camada.to_string(),
             posicao: [ins.insert.x, ins.insert.y],
             tipo,
-            tipo_informado: tipo_attr.is_some(),
-            potencia: valor(TAGS_POTENCIA).and_then(potencia_va),
+            tipo_informado: tipo_attr.is_some() || familia.is_some(),
+            potencia: valor(TAGS_POTENCIA).and_then(potencia_va).or_else(|| familia.as_ref().and_then(|f| f.potencia)),
             tensao: valor(TAGS_TENSAO).and_then(numero),
             fases: valor(TAGS_FASES).and_then(fases),
             circuito: texto(TAGS_CIRCUITO),
             comando: texto(TAGS_COMANDO),
             tag: texto(TAGS_ID),
-            altura: valor(TAGS_ALTURA).and_then(altura_m),
+            altura: altura_exata.or_else(|| valor(TAGS_ALTURA).and_then(altura_m)),
+            ref_altura: familia.as_ref().map(|f| f.ref_altura),
+            cota_fixa: familia.as_ref().map_or(0.0, |f| f.cota_fixa),
+            categoria: familia.as_ref().map(|f| f.categoria),
             quadro: None,
             quadro_ref: texto(TAGS_QUADRO),
-            fp: valor(TAGS_FP).and_then(fator_potencia),
+            fp: valor(TAGS_FP).and_then(fator_potencia).or_else(|| familia.as_ref().and_then(|f| f.fp)),
             tipo_carga: valor(TAGS_CARGA).and_then(TipoCarga::de_texto),
-            tipo_interruptor: valor(TAGS_INTERRUPTOR).and_then(TipoInterruptor::de_texto),
+            tipo_interruptor: valor(TAGS_INTERRUPTOR).and_then(TipoInterruptor::de_texto).or_else(|| {
+                familia.as_ref().filter(|f| f.categoria == FamilyCategory::Interruptor).and_then(|f| match f.teclas {
+                    2 => Some(TipoInterruptor::Simples2),
+                    3 => Some(TipoInterruptor::Simples3),
+                    _ => None,
+                })
+            }),
             atributos,
             extras,
         })
+    }
+
+    /// A altura (m) que o ponto tem pela legenda do projeto: a referência da família ou, sem
+    /// família, a padrão do tipo.
+    pub fn altura_legenda(&self, setup: &crate::setup::Setup) -> f64 {
+        match self.ref_altura {
+            Some(r) => setup.altura_de(r, self.cota_fixa),
+            None => altura_padrao(self.tipo, Some(setup.pe_direito)),
+        }
     }
 
     /// O tipo de carga na demanda: o do atributo TIPO_CARGA ou, sem ele, TUE em aquecimento e o
@@ -303,7 +365,7 @@ impl PontoEletrico {
                     v.push("interruptor sem CIRCUITO".into());
                 }
             }
-            TipoPonto::Quadro | TipoPonto::Caixa => {}
+            TipoPonto::Quadro | TipoPonto::Caixa | TipoPonto::Dados | TipoPonto::Rack | TipoPonto::Especial => {}
             TipoPonto::Iluminacao | TipoPonto::Tomada | TipoPonto::TomadaEspecifica | TipoPonto::Outro => {
                 if self.tipo == TipoPonto::Outro {
                     v.push("tipo não reconhecido: preencha TIPO_PONTO (TUG, TUE, ILUM, INTERRUPTOR, QUADRO)".into());
@@ -332,10 +394,10 @@ impl PontoEletrico {
                 }
             }
         }
-        if self.altura.is_none() {
+        if self.altura.is_none() && self.ref_altura.is_none() {
             match self.tipo {
                 // Iluminação sem ALTURA fica no teto, que é o normal.
-                TipoPonto::Caixa | TipoPonto::Iluminacao => {}
+                TipoPonto::Caixa | TipoPonto::Iluminacao | TipoPonto::Dados | TipoPonto::Rack | TipoPonto::Especial => {}
                 t => v.push(format!("sem ALTURA de instalação: usando {} m", br(altura_padrao(t, None)))),
             }
         }
@@ -394,8 +456,9 @@ pub fn altura_padrao(tipo: TipoPonto, pe_direito: Option<f64>) -> f64 {
     match tipo {
         TipoPonto::Iluminacao | TipoPonto::Caixa => teto,
         TipoPonto::Interruptor => 1.1,
-        TipoPonto::Quadro => 1.5,
-        TipoPonto::Tomada | TipoPonto::TomadaEspecifica | TipoPonto::Outro => 0.3,
+        TipoPonto::Quadro | TipoPonto::Rack => 1.5,
+        TipoPonto::Especial => 2.1,
+        TipoPonto::Tomada | TipoPonto::TomadaEspecifica | TipoPonto::Dados | TipoPonto::Outro => 0.3,
     }
 }
 

@@ -1262,6 +1262,12 @@
 	Circuit Properties	Propriedades do circuito
 	Demand Tables	Tabelas de demanda
 	Insert Conduit	Inserir eletroduto
+	Point Elevation	Altura do ponto
+	Block Family	Família do bloco
+	Family Properties	Propriedades da família
+	Family Base Geometry	Geometria base da família
+	Family Attributes	Atributos da família
+	Family Connector	Ponto de conexão da família
 	Remove Points from Circuit	Remover pontos do circuito
 	Wiring Tags	Tags de fiação
 	Regenerate Electrical Drawing	Regenerar desenho elétrico

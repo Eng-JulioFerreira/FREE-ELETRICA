@@ -1548,6 +1548,202 @@ fn novos_nomes_do_xdata_e_vinculo_do_comando() {
 }
 
 #[test]
+fn familia_grava_no_bloco_classifica_e_recusa_lixo() {
+    let mut d = metros();
+    let setup = Setup::default();
+    d.blocks.insert("SIMBOLO".into(), Arc::new(Block::new("SIMBOLO")));
+    assert_eq!(familia::ler(&d, "SIMBOLO"), None);
+    assert!(biblioteca::blocos(&d).iter().all(|b| b.nome != "SIMBOLO"), "sem família e sem atributos, não é ponto");
+    let mut f = familia::Familia::da_categoria(familia::FamilyCategory::Dados);
+    assert_eq!(f.dominio, familia::SystemDomain::DataTelecom);
+    f.caixa = familia::CaixaFisica::C4x4;
+    f.potencia = Some(50.0);
+    familia::gravar(&mut d, "simbolo", Some(&f)).unwrap();
+    assert_eq!(familia::ler(&d, "SIMBOLO").as_ref(), Some(&f), "o nome do bloco não diferencia maiúsculas");
+    let b = biblioteca::blocos(&d).into_iter().find(|b| b.nome == "SIMBOLO").unwrap();
+    assert_eq!(b.tipo, TipoPonto::Dados);
+    // Dados não vai para os circuitos nem para a inspeção de força.
+    let h = biblioteca::inserir_ponto(&mut d, "SIMBOLO", [1.0, 1.0], 0.0, &[], &setup).unwrap();
+    let a = analisar(&d);
+    assert_eq!(a.ponto(h).unwrap().tipo, TipoPonto::Dados);
+    assert_eq!(d.model.get(h).unwrap().common.layer, biblioteca::CAMADA_DADOS);
+    assert!(inspecao::inspecionar(&d, &a, &setup).is_empty());
+    // Nenhum: mesmo com atributos elétricos, é um bloco comum.
+    let t = tug(&mut d, 2.0, 2.0, "1");
+    familia::gravar(&mut d, "TOMADA", Some(&familia::Familia::da_categoria(familia::FamilyCategory::Nenhum))).unwrap();
+    assert!(analisar(&d).ponto(t).is_none());
+    assert!(biblioteca::blocos(&d).iter().all(|b| b.nome != "TOMADA"));
+    // Tirar a família devolve o que era.
+    familia::gravar(&mut d, "TOMADA", None).unwrap();
+    assert!(analisar(&d).ponto(t).is_some());
+    // Valores hostis não chegam ao desenho.
+    for ruim in [
+        familia::Familia { fp: Some(1.5), ..f.clone() },
+        familia::Familia { fp: Some(f64::NAN), ..f.clone() },
+        familia::Familia { potencia: Some(-1.0), ..f.clone() },
+        familia::Familia { teclas: 9, ..f.clone() },
+        familia::Familia { cota_fixa: f64::INFINITY, ..f.clone() },
+    ] {
+        assert!(familia::gravar(&mut d, "SIMBOLO", Some(&ruim)).is_err(), "{ruim:?}");
+    }
+    assert_eq!(familia::ler(&d, "SIMBOLO").as_ref(), Some(&f));
+    assert!(familia::gravar(&mut d, "  ", Some(&f)).is_err());
+    // Os códigos dos enums voltam.
+    for c in familia::FamilyCategory::TODAS {
+        assert_eq!(familia::FamilyCategory::de_codigo(c.codigo()), Some(c));
+    }
+    for c in familia::SystemDomain::TODOS {
+        assert_eq!(familia::SystemDomain::de_codigo(c.codigo()), Some(c));
+    }
+    for c in familia::RefAltura::TODAS {
+        assert_eq!(familia::RefAltura::de_codigo(c.codigo()), Some(c));
+    }
+    for c in familia::CaixaFisica::TODAS {
+        assert_eq!(familia::CaixaFisica::de_codigo(c.codigo()), Some(c));
+    }
+    // XDATA editado à mão: volta ao natural da categoria em vez de quebrar.
+    let mut bruto = Vec::new();
+    xdata::gravar(&mut bruto, "category", Some("JUNCTION_BOX"));
+    xdata::gravar(&mut bruto, "keys", Some("99"));
+    Arc::make_mut(&mut d.foreign)
+        .records
+        .insert(("BLOCK_RECORD".into(), "CX".into()), cadcraft_doc::foreign::ForeignExtra { xdata: bruto, ..Default::default() });
+    assert_eq!(familia::ler(&d, "CX"), Some(familia::Familia::da_categoria(familia::FamilyCategory::Caixa)));
+}
+
+#[test]
+fn altura_na_legenda_fica_vazia_e_fora_dela_mostra_h() {
+    let setup = Setup::default();
+    let mut d = metros();
+    biblioteca::garantir_base(&mut d, &setup, 1.0);
+    let attr =
+        |d: &Drawing, h: Handle| ponto::ler_ponto(d, h).unwrap().atributos.iter().find(|(t, _)| t == "ALTURA").map(|(_, v)| v.clone()).unwrap();
+    let xd = |d: &Drawing, h: Handle| xdata::ler(&d.model.get(h).unwrap().common.xdata);
+    let altura_rota = |d: &Drawing, h: Handle, s: &Setup| rota::altura(&ponto::ler_ponto(d, h).unwrap(), s);
+
+    // Sem altura pedida, ou igual à legenda: o atributo fica vazio e vale a legenda.
+    let a = biblioteca::inserir_ponto(&mut d, "TOM-SIM-BAIXA", [0.0, 0.0], 0.0, &[], &setup).unwrap();
+    assert_eq!((attr(&d, a).as_str(), altura_rota(&d, a, &setup)), ("", 0.30));
+    assert!(xd(&d, a).is_empty());
+    let valores = [("ALTURA".to_string(), "0,30".to_string())];
+    let b = biblioteca::inserir_ponto(&mut d, "TOM-SIM-BAIXA", [1.0, 0.0], 0.0, &valores, &setup).unwrap();
+    assert_eq!(attr(&d, b), "");
+
+    // Fora da legenda: XDATA para o cálculo, h= visível na planta.
+    let valores = [("ALTURA".to_string(), "1,45".to_string())];
+    let c = biblioteca::inserir_ponto(&mut d, "TOM-SIM-BAIXA", [2.0, 0.0], 0.0, &valores, &setup).unwrap();
+    assert_eq!(attr(&d, c), "h=1,45m");
+    assert!(xd(&d, c).iter().any(|(k, v)| k == ponto::CHAVE_ALTURA && v == "1.45"));
+    assert_eq!(altura_rota(&d, c, &setup), 1.45);
+
+    // Mudar a legenda move quem a segue e não mexe em quem tem altura própria.
+    let alto = Setup { altura_baixa: 0.40, ..Setup::default() };
+    assert_eq!((altura_rota(&d, a, &alto), altura_rota(&d, c, &alto)), (0.40, 1.45));
+
+    // Editar uma inserção: voltar à legenda limpa os dois lugares.
+    editar::definir_altura(&mut d, c, Some(0.30), &setup).unwrap();
+    assert_eq!(attr(&d, c), "");
+    assert!(xd(&d, c).is_empty());
+    editar::definir_altura(&mut d, c, Some(0.5), &setup).unwrap();
+    assert_eq!(attr(&d, c), "h=0,50m");
+    editar::definir_altura(&mut d, c, None, &setup).unwrap();
+    assert_eq!(attr(&d, c), "");
+    // Um número com três casas não vira milhar.
+    editar::definir_altura(&mut d, c, Some(1.125), &setup).unwrap();
+    assert_eq!(altura_rota(&d, c, &setup), 1.125);
+
+    // Entrada hostil.
+    for ruim in [-1.0, 99.0, f64::NAN, f64::INFINITY] {
+        assert!(editar::definir_altura(&mut d, a, Some(ruim), &setup).is_err(), "{ruim}");
+    }
+    assert!(editar::definir_altura(&mut d, Handle(0xFFFF), Some(1.0), &setup).is_err());
+    let valores = [("ALTURA".to_string(), "alto".to_string())];
+    assert!(biblioteca::inserir_ponto(&mut d, "TOM-SIM-BAIXA", [3.0, 0.0], 0.0, &valores, &setup).is_err());
+
+    // As referências e os padrões da família.
+    assert_eq!(setup.altura_de(familia::RefAltura::Teto, 0.0), 2.8);
+    assert_eq!(setup.altura_de(familia::RefAltura::Piso, 9.0), 0.0);
+    assert_eq!(setup.altura_de(familia::RefAltura::Fixa, 1.7), 1.7);
+    let blocos = biblioteca::blocos(&d);
+    let padrao = |n: &str| blocos.iter().find(|b| b.nome == n).unwrap().altura_padrao(&setup);
+    assert_eq!((padrao("TOM-SIM-BAIXA"), padrao("INT-SIM"), padrao("ILU-OCT"), padrao("QDG"), padrao("RJ45")), (0.30, 1.20, 2.8, 1.5, 0.30));
+    let mut f = familia::ler(&d, "TOM-SIM-BAIXA").unwrap();
+    f.potencia = Some(300.0);
+    f.fp = Some(0.8);
+    familia::gravar(&mut d, "TOM-SIM-BAIXA", Some(&f)).unwrap();
+    let e = biblioteca::inserir_ponto(&mut d, "TOM-SIM-BAIXA", [4.0, 0.0], 0.0, &[], &setup).unwrap();
+    let p = ponto::ler_ponto(&d, e).unwrap();
+    assert_eq!((p.potencia, p.fp), (Some(300.0), Some(0.8)));
+    // Bloco sem família, com altura própria na definição: o padrão dele fica.
+    let mut velho = Block::new("TOMADA-VELHA");
+    let mut alt = atributo("ALTURA", "0,45", false);
+    alt.invisible = true;
+    velho.entities.push(Entity::new(Handle(0xABC), EntityKind::AttDef(alt)));
+    d.blocks.insert("TOMADA-VELHA".into(), Arc::new(velho));
+    let g = biblioteca::inserir_ponto(&mut d, "TOMADA-VELHA", [5.0, 0.0], 0.0, &[], &setup).unwrap();
+    assert_eq!(ponto::ler_ponto(&d, g).unwrap().altura, Some(0.45));
+}
+
+#[test]
+fn utilitarios_do_editor_de_blocos() {
+    let mut d = metros();
+    assert_eq!(biblioteca::inserir_geometria(&mut d, "tomada", 1.0).unwrap(), 3);
+    assert_eq!(biblioteca::inserir_geometria(&mut d, "tomadaAlta", 1.0).unwrap(), 4);
+    assert!(biblioteca::inserir_geometria(&mut d, "porta", 1.0).is_err());
+    for (forma, _) in biblioteca::GEOMETRIAS {
+        assert!(biblioteca::inserir_geometria(&mut d, forma, 1.0).unwrap() > 0, "{forma}");
+    }
+    // Em milímetros a geometria sai mil vezes maior.
+    let mut mm = Drawing::new_metric();
+    biblioteca::inserir_geometria(&mut mm, "comando", 0.001).unwrap();
+    assert!(mm.model.iter().any(|e| matches!(&e.kind, EntityKind::Circle(c) if perto(c.radius, 75.0, 1e-9))));
+
+    // O conector vira a origem: tudo anda junto; definir de novo só troca o marcador.
+    let mut d = metros();
+    d.add(&Space::Model, Common::default(), EntityKind::Line(Line { a: Vec3::new(1.0, 1.0, 0.0), b: Vec3::new(2.0, 1.0, 0.0) })).unwrap();
+    let c1 = biblioteca::definir_conector(&mut d, [1.0, 1.0], 1.0).unwrap();
+    let linha = |d: &Drawing| d.model.iter().find_map(|e| if let EntityKind::Line(l) = &e.kind { Some(l.clone()) } else { None }).unwrap();
+    assert!(perto(linha(&d).a.x, 0.0, 1e-9) && perto(linha(&d).b.x, 1.0, 1e-9));
+    assert_eq!(d.model.get(c1).unwrap().common.layer, "Defpoints");
+    let c2 = biblioteca::definir_conector(&mut d, [0.5, 0.0], 1.0).unwrap();
+    assert_eq!(d.model.iter().filter(|e| matches!(e.kind, EntityKind::Circle(_))).count(), 1);
+    assert!(d.model.get(c1).is_none());
+    let EntityKind::Circle(circulo) = &d.model.get(c2).unwrap().kind else { panic!() };
+    assert_eq!((circulo.center.x, circulo.center.y), (0.0, 0.0));
+    assert!(perto(linha(&d).a.x, -0.5, 1e-9));
+    assert!(biblioteca::definir_conector(&mut d, [f64::NAN, 0.0], 1.0).is_err());
+
+    // Atributos: os da categoria, sem duplicar; ALTURA fica visível e vazio.
+    use familia::FamilyCategory as C;
+    let mut d = metros();
+    let n = biblioteca::gerar_atributos(&mut d, C::Interruptor, 1.0).unwrap();
+    assert!(n >= 5);
+    assert_eq!(biblioteca::gerar_atributos(&mut d, C::Interruptor, 1.0).unwrap(), 0);
+    let tags: Vec<String> = d.model.iter().filter_map(|e| if let EntityKind::AttDef(a) = &e.kind { Some(a.tag.clone()) } else { None }).collect();
+    for t in ["CIRCUITO", "COMANDO", "ALTURA"] {
+        assert!(tags.iter().any(|x| x == t), "{t}");
+    }
+    assert!(d.model.iter().any(|e| matches!(&e.kind, EntityKind::AttDef(a) if a.tag == "ALTURA" && !a.invisible && a.text.value.is_empty())));
+    assert!(biblioteca::gerar_atributos(&mut d, C::Nenhum, 1.0).is_err());
+    for c in C::TODAS.into_iter().filter(|c| *c != C::Nenhum) {
+        let mut d = metros();
+        assert!(biblioteca::gerar_atributos(&mut d, c, 1.0).unwrap() >= 2, "{c:?}");
+        assert!(d.model.iter().any(|e| matches!(&e.kind, EntityKind::AttDef(a) if a.tag == "ALTURA")), "{c:?}");
+    }
+}
+
+#[test]
+fn limite_de_queda_por_natureza_do_circuito() {
+    let d = planta();
+    let setup = Setup { queda_iluminacao: 3.0, queda_admissivel: 5.0, ..Setup::default() };
+    let r = rotear_quadro(&d, &analisar(&d), &setup, quadro(&d)).unwrap();
+    let l = r.linhas.iter().find(|l| l.circuito.natureza == circuito::Natureza::Iluminacao).unwrap();
+    assert_eq!(l.queda_admissivel, 3.0);
+    let l = r.linhas.iter().find(|l| l.circuito.natureza != circuito::Natureza::Iluminacao).unwrap();
+    assert_eq!(l.queda_admissivel, 5.0);
+}
+
+#[test]
 fn letra_nova_entra_nas_teclas_livres() {
     use circuito::comando_com_letra as c;
     assert_eq!(c("", "a", 1), "a");

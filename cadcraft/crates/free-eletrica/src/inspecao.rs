@@ -71,7 +71,7 @@ pub fn inspecionar(doc: &Drawing, analise: &Analise, setup: &Setup) -> Vec<Item>
         }
     }
     let mut itens = Vec::new();
-    for p in analise.pontos.iter().filter(|p| p.tipo != TipoPonto::Caixa) {
+    for p in analise.pontos.iter().filter(|p| p.tipo != TipoPonto::Caixa && p.tipo.e_de_forca()) {
         let item = |nivel, motivo: String| Item { handle: p.handle, pos: p.posicao, nivel, motivo, eletroduto: false };
         if p.tipo == TipoPonto::Quadro {
             itens.push(if rede.conectado(p.handle) {

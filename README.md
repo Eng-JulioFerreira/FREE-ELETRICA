@@ -34,7 +34,8 @@ cliques, uma barra sobre o desenho muda o que ele usa, e os dados ficam num pain
 
 | Ferramenta | Comando | O quê |
 | :--- | :--- | :--- |
-| 1. Inserir pontos | `ELEPONTOS` | Clique onde vai cada ponto. A barra escolhe o tipo (TUG, TUE, iluminação, interruptores, quadros, caixa), a altura, a potência e o FP. O ponto alinha à parede mais próxima, e Tab gira. |
+| 1. Famílias de blocos | `BEDIT` | No editor de blocos, a paleta vira as Propriedades da Família: domínio, categoria, altura padrão, caixa física, potência, FP e teclas, mais geometria base, ponto de conexão e atributos prontos. |
+| 1. Inserir pontos | `ELEPONTOS` | Filtre por categoria e escolha o bloco; a altura já vem da legenda. Clique onde vai cada ponto. O ponto alinha à parede mais próxima, e Tab gira. Altura diferente da legenda aparece na planta como `h=1,45m`. |
 | 2. Criar circuito | `ELECIRCUITO` | Quadro, número e pontos; a barra edita descrição, esquema (F+N, F+N+T, 2F+T, 3F+N+T) e tensão. O atributo CIRCUITO muda na hora. |
 | 2. Comandos e luminárias | `ELECOMANDO` | Interruptor e luminárias. A letra é a próxima livre, respeitando as teclas do interruptor, ou a que você digitar. |
 | 3. Quadro de cargas | `ELECARGAS` (ou `ELEROTEAR`) | Planilha no painel de baixo: Ib, I'b, queda, seção, disjuntor, isolação e fases R, S, T, com cadeado para travar o que foi escolhido à mão (vermelho se viola a NBR 5410). Clicar no circuito o destaca no desenho. Embaixo, demanda, alimentador, DR, DPS e cabos. |
@@ -43,7 +44,7 @@ cliques, uma barra sobre o desenho muda o que ele usa, e os dados ficam num pain
 | 5. Tabela do quadro | `ELEQUADRO_TABELA` | Desenha o quadro de cargas num ponto da planta e o refaz no mesmo lugar. |
 | 5. Atualizar | `ELEREGEN` | Refaz tags e tabelas sem mudar as posições. |
 | Inspecionar projeto | `ELEINSPECAO`, `ELECONFERIR` | Halos no desenho: vermelho falta circuito ou comando, laranja sem caminho até o quadro, amarelo acima do limite, verde válido. |
-| Configurações | `ELECONFIG` | Sistema, pé-direito, temperatura (FCT), isolação, queda admissível, cores, diâmetros, eletrodutos, telecom e demanda da concessionária. |
+| Configurações | `ELECONFIG` | Critérios elétricos (sistema, temperatura, isolação, quedas de iluminação, força e alimentador, folga de cabos), alturas padrão do projeto, cores, diâmetros, eletrodutos, telecom e demanda da concessionária. |
 
 Os eletrodutos formam um **grafo estrito**: cada um liga exatamente dois blocos elétricos. Cruzamentos
 e derivações sem caixa não conectam. Veja `docs/free-eletrica-2.0.md`.
@@ -51,7 +52,8 @@ e derivações sem caixa não conectam. Veja `docs/free-eletrica-2.0.md`.
 Tudo também responde em JSON pelo canal de controle e pelo `cadcraft-cli`: `eletrica.analisar`,
 `eletrica.rotear`, `eletrica.sobrescrever`, `eletrica.circuito.*`, `eletrica.quadro`,
 `eletrica.eletroduto.*`, `eletrica.eletrodutos`, `eletrica.inspecionar`, `eletrica.bootstrap`,
-`eletrica.demanda.tabelas`, `eletrica.blocos`, `eletrica.ponto.modelo`, `eletrica.ponto.excluir`,
+`eletrica.demanda.tabelas`, `eletrica.blocos`, `eletrica.ponto.modelo`, `eletrica.ponto.altura`,
+`eletrica.ponto.excluir`, `eletrica.familia.*`, `elefamilia_conector`,
 `eletrica.setup`, `eleponto`, `elecircuito`, `eleremoverponto`, `elecomando`, `eleeletroduto`,
 `elefiacao`, `eleregen`, `elequadro_tabela`.
 

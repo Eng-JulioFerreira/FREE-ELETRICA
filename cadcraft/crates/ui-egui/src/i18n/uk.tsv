@@ -1348,6 +1348,12 @@
 	Circuit Properties	Властивості кола
 	Demand Tables	Таблиці попиту
 	Insert Conduit	Вставити кабелепровід
+	Point Elevation	Висота точки
+	Block Family	Сімейство блока
+	Family Properties	Властивості сімейства
+	Family Base Geometry	Базова геометрія сімейства
+	Family Attributes	Атрибути сімейства
+	Family Connector	З'єднувач сімейства
 	Remove Points from Circuit	Вилучити точки з кола
 	Wiring Tags	Позначки проводки
 	Regenerate Electrical Drawing	Перегенерувати електричне креслення

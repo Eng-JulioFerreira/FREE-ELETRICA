@@ -19,7 +19,7 @@ use cadcraft_doc::geom::{Arc as GArc, Polyline, Vec2};
 use cadcraft_doc::{Drawing, EntityKind, Handle};
 use serde::Serialize;
 
-use crate::ponto::{PontoEletrico, TipoPonto, altura_padrao};
+use crate::ponto::{PontoEletrico, TipoPonto};
 use crate::setup::Setup;
 use crate::xdata;
 
@@ -189,7 +189,7 @@ pub fn perto_do_tracado(p: &[P], q: P) -> Option<(P, f64, usize)> {
 
 /// Altura de instalação do ponto (m).
 pub fn altura(p: &PontoEletrico, setup: &Setup) -> f64 {
-    p.altura.unwrap_or_else(|| altura_padrao(p.tipo, Some(setup.pe_direito)))
+    p.altura.unwrap_or_else(|| p.altura_legenda(setup))
 }
 
 /// A instalação de um eletroduto: a gravada nele ou, sem ela, a da camada.

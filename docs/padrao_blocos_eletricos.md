@@ -44,6 +44,31 @@ Na primeira ferramenta usada num desenho, entram sem perguntar as camadas e os b
 símbolo. Interruptores têm `TIPO_INTERRUPTOR` constante (`1S`, `2S`, `3S`, `PARALELO`,
 `INTERMEDIARIO`), que diz quantas teclas têm e como a fiação os liga.
 
+### Famílias
+
+Cada definição de bloco pode ter uma família, gravada no XDATA do `BLOCK_RECORD` (aplicativo
+`FREE_ELETRICA`), editada na paleta enquanto o editor de blocos (`BEDIT`) está aberto ou pelo comando
+`eletrica.familia.definir`:
+
+| Chave | Valores |
+| :--- | :--- |
+| `domain` | `POWER`, `DATA_TELECOM`, `FIRE_SECURITY`, `INFRA` |
+| `category` | `NONE`, `ELECTRICAL_FIXTURE`, `LIGHTING_FIXTURE`, `LIGHTING_DEVICE`, `DATA_DEVICE`, `FIRE_SECURITY_DEVICE`, `ELECTRICAL_EQUIPMENT`, `TELECOM_ENCLOSURE`, `JUNCTION_BOX` |
+| `height_ref` | `LOW`, `MEDIUM`, `HIGH`, `CEILING`, `FLOOR`, `FIXED` (com `fixed_elevation_m`) |
+| `physical_box` | `NONE`, `4X2`, `4X4`, `OCTAGONAL`, `PULL_15X15`, `PULL_20X20`, `PULL_30X30` |
+| `power_va`, `power_factor`, `keys` | Potência, FP e teclas padrão |
+
+A família manda sobre o nome do bloco e sobre `TIPO_PONTO`. `NONE` marca um bloco comum de CAD, que
+nunca é ponto, mesmo com atributos elétricos. Dados, racks e dispositivos especiais ficam fora dos
+circuitos e da inspeção de força.
+
+### Altura na planta
+
+As alturas padrão ficam nas Configurações. Uma inserção na altura da legenda deixa o atributo
+`ALTURA` vazio e acompanha a legenda se ela mudar. Em outra altura, o valor exato vai para o XDATA
+(`elevation_m`), que é o que o cálculo usa, e o atributo mostra `h=1,45m`. Blocos antigos com um número
+em `ALTURA` continuam valendo.
+
 ### Blocos do template (opcional: `templates/FREE_ELETRICA_BLOCOS.dxf`)
 
 | Bloco | Símbolo | Inserção | TIPO_PONTO (constante) | Padrões | Visíveis |

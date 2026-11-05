@@ -13,6 +13,7 @@ pub mod circuito;
 pub mod demanda;
 pub mod editar;
 pub mod eletroduto;
+pub mod familia;
 pub mod fiacao;
 pub mod inspecao;
 pub mod nbr5410;

@@ -12,11 +12,13 @@ use cadcraft_doc::{
 };
 use serde::Serialize;
 
+use crate::familia::{self, Familia, FamilyCategory};
 use crate::ponto::{TAGS_ALTURA, TAGS_CIRCUITO, TAGS_COMANDO, TAGS_FASES, TAGS_POTENCIA, TAGS_QUADRO, TAGS_TENSAO, TAGS_TIPO, TipoPonto};
 
 /// Camadas dos pontos inseridos (as do template).
 pub const CAMADA_PONTOS: &str = "ELE-PONTOS";
 pub const CAMADA_QUADROS: &str = "ELE-QUADROS";
+pub const CAMADA_DADOS: &str = "ELE-DADOS";
 
 /// Um atributo da definição do bloco.
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -38,6 +40,22 @@ pub struct BlocoPonto {
     /// Quantas vezes está inserido no espaço do modelo.
     pub inseridos: usize,
     pub atributos: Vec<AtributoBloco>,
+    /// A família do bloco. `None`: classificado só pelos atributos e pelo nome.
+    pub familia: Option<Familia>,
+}
+
+impl BlocoPonto {
+    /// A altura (m) que uma inserção deste bloco tem pela legenda do projeto.
+    pub fn altura_padrao(&self, setup: &crate::setup::Setup) -> f64 {
+        if let Some(f) = &self.familia {
+            return setup.altura_de(f.ref_altura, f.cota_fixa);
+        }
+        self.atributos
+            .iter()
+            .find(|a| TAGS_ALTURA.iter().any(|t| a.tag.eq_ignore_ascii_case(t)))
+            .and_then(|a| crate::ponto::altura_m(&a.padrao))
+            .unwrap_or_else(|| crate::ponto::altura_padrao(self.tipo, Some(setup.pe_direito)))
+    }
 }
 
 fn definicoes(b: &Block) -> Vec<&Attrib> {
@@ -45,7 +63,8 @@ fn definicoes(b: &Block) -> Vec<&Attrib> {
 }
 
 /// Os blocos de ponto elétrico do desenho: os que têm algum atributo elétrico na definição
-/// (o mesmo critério da análise). O tipo vem do TIPO_PONTO da definição ou do nome do bloco.
+/// (o mesmo critério da análise) ou uma família. O tipo vem da família, do TIPO_PONTO da definição
+/// ou do nome do bloco. Bloco classificado como comum fica de fora.
 /// Em ordem de tipo e nome.
 pub fn blocos(doc: &Drawing) -> Vec<BlocoPonto> {
     let eletricas = [TAGS_TIPO, TAGS_POTENCIA, TAGS_TENSAO, TAGS_FASES, TAGS_CIRCUITO, TAGS_COMANDO, TAGS_ALTURA, TAGS_QUADRO];
@@ -56,13 +75,15 @@ pub fn blocos(doc: &Drawing) -> Vec<BlocoPonto> {
         .filter_map(|(nome, b)| {
             let defs = definicoes(b);
             let tem = |tags: &[&str]| defs.iter().find(|a| tags.iter().any(|t| a.tag.trim().eq_ignore_ascii_case(t)));
-            if !eletricas.iter().any(|tags| tem(tags).is_some()) {
+            let familia = familia::ler(doc, nome);
+            if familia.as_ref().is_some_and(|f| f.categoria == FamilyCategory::Nenhum) {
                 return None;
             }
-            let tipo = tem(TAGS_TIPO)
-                .and_then(|a| TipoPonto::classificar(&a.text.value))
-                .or_else(|| TipoPonto::classificar(nome))
-                .unwrap_or(TipoPonto::Outro);
+            if familia.is_none() && !eletricas.iter().any(|tags| tem(tags).is_some()) {
+                return None;
+            }
+            let informado = tem(TAGS_TIPO).and_then(|a| TipoPonto::classificar(&a.text.value)).or_else(|| TipoPonto::classificar(nome));
+            let tipo = familia.as_ref().and_then(|f| f.categoria.tipo(informado)).or(informado).unwrap_or(TipoPonto::Outro);
             let inseridos = doc.model.iter().filter(|e| matches!(&e.kind, EntityKind::Insert(i) if i.block.eq_ignore_ascii_case(nome))).count();
             let atributos = defs
                 .iter()
@@ -73,7 +94,7 @@ pub fn blocos(doc: &Drawing) -> Vec<BlocoPonto> {
                     constante: a.constant,
                 })
                 .collect();
-            Some(BlocoPonto { nome: nome.clone(), tipo, inseridos, atributos })
+            Some(BlocoPonto { nome: nome.clone(), tipo, inseridos, atributos, familia })
         })
         .collect();
     v.sort_by(|a, b| a.tipo.cmp(&b.tipo).then_with(|| a.nome.to_uppercase().cmp(&b.nome.to_uppercase())));
@@ -131,8 +152,50 @@ pub fn inserir(doc: &mut Drawing, nome: &str, pos: [f64; 2], rotacao: f64, valor
             }
         })
         .collect();
-    let camada = if info.tipo == TipoPonto::Quadro { CAMADA_QUADROS } else { CAMADA_PONTOS };
+    let camada = match info.tipo {
+        TipoPonto::Quadro => CAMADA_QUADROS,
+        TipoPonto::Dados | TipoPonto::Rack => CAMADA_DADOS,
+        _ => CAMADA_PONTOS,
+    };
+    doc.ensure_layer(camada);
     doc.add(&Space::Model, Common { layer: camada.into(), ..Common::default() }, EntityKind::Insert(ins)).map_err(|e| e.to_string())
+}
+
+/// Insere um ponto seguindo a família: os padrões dela preenchem os atributos e a altura segue a
+/// regra da legenda (`editar::definir_altura`). `ALTURA` em `valores` pode ser número ou `h=1,45m`.
+pub fn inserir_ponto(
+    doc: &mut Drawing,
+    nome: &str,
+    pos: [f64; 2],
+    rotacao: f64,
+    valores: &[(String, String)],
+    setup: &crate::setup::Setup,
+) -> Result<Handle, String> {
+    let e_altura = |t: &str| TAGS_ALTURA.iter().any(|a| t.trim().eq_ignore_ascii_case(a));
+    let altura = match valores.iter().find(|(t, v)| e_altura(t) && !v.trim().is_empty()) {
+        Some((_, v)) => Some(crate::ponto::altura_m(v).ok_or_else(|| format!("altura \"{v}\" inválida"))?),
+        None => None,
+    };
+    let mut v: Vec<(String, String)> = valores.iter().filter(|(t, _)| !e_altura(t)).cloned().collect();
+    let bloco = blocos(doc).into_iter().find(|b| b.nome.eq_ignore_ascii_case(nome.trim()));
+    let familia = bloco.as_ref().and_then(|b| b.familia.clone());
+    if let (Some(b), Some(f)) = (&bloco, &familia) {
+        let livre = |tag: &str, v: &[(String, String)]| {
+            b.atributos.iter().any(|a| !a.constante && a.tag.eq_ignore_ascii_case(tag)) && !v.iter().any(|(t, _)| t.eq_ignore_ascii_case(tag))
+        };
+        if let Some(p) = f.potencia.filter(|_| livre("POTENCIA", &v)) {
+            v.push(("POTENCIA".into(), format!("{}VA", crate::ponto::br(p))));
+        }
+        if let Some(fp) = f.fp.filter(|_| livre("FP", &v)) {
+            v.push(("FP".into(), crate::ponto::br(fp)));
+        }
+    }
+    let h = inserir(doc, nome, pos, rotacao, &v)?;
+    // Sem família e sem altura pedida, o padrão que o próprio bloco traz fica como está.
+    if altura.is_some() || familia.is_some() {
+        crate::editar::definir_altura(doc, h, altura, setup)?;
+    }
+    Ok(h)
 }
 
 // ---------------------------------------------------------------- blocos e camadas base
@@ -140,8 +203,8 @@ pub fn inserir(doc: &mut Drawing, nome: &str, pos: [f64; 2], rotacao: f64, valor
 /// A caixa de passagem que ELEELETRODUTO insere ao dividir um trecho.
 pub const BLOCO_CAIXA: &str = "CX-PASSAGEM";
 /// Blocos base, na ordem da barra de inserção.
-pub const BLOCOS_BASE: [&str; 11] =
-    ["TOM-SIM-BAIXA", "TOM-TUE", "ILU-OCT", "INT-SIM", "INT-2S", "INT-3S", "INT-PAR", "INT-INT", "QDG", "QDC", BLOCO_CAIXA];
+pub const BLOCOS_BASE: [&str; 13] =
+    ["TOM-SIM-BAIXA", "TOM-TUE", "ILU-OCT", "INT-SIM", "INT-2S", "INT-3S", "INT-PAR", "INT-INT", "QDG", "QDC", "RJ45", "RACK", BLOCO_CAIXA];
 
 /// Um traço do símbolo, em metros.
 enum Peca {
@@ -216,7 +279,7 @@ fn definicao_base(nome: &str, tensao: &str) -> Option<(Vec<Peca>, Vec<Att>)> {
                 att("POTENCIA", "0W", "Potência (interruptor: 0W)"),
                 att("TENSAO", tensao, "Tensão"),
                 att("NUMERO_FASES", "1", "Número de fases"),
-                att("ALTURA", "1,10", "Altura de instalação (m)"),
+                visivel("ALTURA", "", "Altura fora da legenda", (0.10, 0.03)),
             ],
         )
     };
@@ -239,7 +302,7 @@ fn definicao_base(nome: &str, tensao: &str) -> Option<(Vec<Peca>, Vec<Att>)> {
                 visivel("TAG", tag, "Identificação do quadro", (0.12, -0.045)),
                 att("TENSAO", "", "Tensão (ex.: 380/220V)"),
                 att("NUMERO_FASES", "", "Número de fases"),
-                att("ALTURA", "1,50", "Altura de instalação (m)"),
+                visivel("ALTURA", "", "Altura fora da legenda", (0.12, -0.11)),
             ],
         )
     };
@@ -253,7 +316,7 @@ fn definicao_base(nome: &str, tensao: &str) -> Option<(Vec<Peca>, Vec<Att>)> {
                 att("POTENCIA", "100VA", "Potência"),
                 att("TENSAO", tensao, "Tensão"),
                 att("NUMERO_FASES", "1", "Número de fases"),
-                att("ALTURA", "0,30", "Altura de instalação (m)"),
+                visivel("ALTURA", "", "Altura fora da legenda", (0.10, 0.03)),
                 att("TIPO_CARGA", "ILUM_TUG", "Tipo de carga"),
                 att("FP", "0,92", "Fator de potência"),
             ],
@@ -270,7 +333,7 @@ fn definicao_base(nome: &str, tensao: &str) -> Option<(Vec<Peca>, Vec<Att>)> {
                     att("POTENCIA", "1000VA", "Potência"),
                     att("TENSAO", tensao, "Tensão"),
                     att("NUMERO_FASES", "1", "Número de fases"),
-                    att("ALTURA", "1,20", "Altura de instalação (m)"),
+                    visivel("ALTURA", "", "Altura fora da legenda", (0.10, 0.03)),
                     att("TIPO_CARGA", "AQUECIMENTO", "Tipo de carga"),
                     att("FP", "1", "Fator de potência"),
                 ],
@@ -286,7 +349,7 @@ fn definicao_base(nome: &str, tensao: &str) -> Option<(Vec<Peca>, Vec<Att>)> {
                 visivel("CIRCUITO", "", "Circuito", (0.118, -0.025)),
                 att("TENSAO", tensao, "Tensão"),
                 att("NUMERO_FASES", "1", "Número de fases"),
-                att("ALTURA", "", "Altura de instalação (m); vazio = teto"),
+                visivel("ALTURA", "", "Altura fora da legenda", (0.118, -0.09)),
                 att("TIPO_CARGA", "ILUM_TUG", "Tipo de carga"),
                 att("FP", "0,92", "Fator de potência"),
             ],
@@ -309,7 +372,39 @@ fn definicao_base(nome: &str, tensao: &str) -> Option<(Vec<Peca>, Vec<Att>)> {
             vec![
                 constante("TIPO_PONTO", "CAIXA DE PASSAGEM"),
                 att("TAG", "", "Identificação"),
-                att("ALTURA", "", "Altura de instalação (m); vazio = teto"),
+                visivel("ALTURA", "", "Altura fora da legenda", (0.07, -0.02)),
+            ],
+        ),
+        "RJ45" => (
+            vec![
+                Peca::Linha(-0.035, 0.0, 0.035, 0.0),
+                Peca::Linha(0.035, 0.0, 0.035, -0.0475),
+                Peca::Linha(0.035, -0.0475, -0.035, -0.0475),
+                Peca::Linha(-0.035, -0.0475, -0.035, 0.0),
+                Peca::Linha(0.0, 0.0, 0.0, 0.0595),
+                Peca::Linha(-0.075, 0.0595, 0.075, 0.0595),
+                Peca::Linha(0.075, 0.0595, 0.075, 0.2095),
+                Peca::Linha(0.075, 0.2095, -0.075, 0.2095),
+                Peca::Linha(-0.075, 0.2095, -0.075, 0.0595),
+            ],
+            vec![
+                constante("TIPO_PONTO", "DADOS"),
+                visivel("ID_PONTO", "", "Identificação do ponto", (0.10, 0.10)),
+                visivel("ALTURA", "", "Altura fora da legenda", (0.10, 0.03)),
+            ],
+        ),
+        "RACK" => (
+            vec![
+                Peca::Linha(-0.1, -0.1, 0.1, -0.1),
+                Peca::Linha(0.1, -0.1, 0.1, 0.0),
+                Peca::Linha(0.1, 0.0, -0.1, 0.0),
+                Peca::Linha(-0.1, 0.0, -0.1, -0.1),
+                Peca::Linha(-0.1, -0.05, 0.1, -0.05),
+            ],
+            vec![
+                constante("TIPO_PONTO", "RACK"),
+                visivel("TAG", "RACK", "Identificação do rack", (0.12, -0.045)),
+                visivel("ALTURA", "", "Altura fora da legenda", (0.12, -0.11)),
             ],
         ),
         _ => return None,
@@ -381,7 +476,7 @@ fn atributo_base(a: &Att, m: f64) -> Attrib {
 pub fn falta_base(doc: &Drawing) -> bool {
     BLOCOS_BASE.iter().any(|n| !doc.blocks.contains_key(*n))
         || crate::fiacao::TipoCondutor::TODOS.iter().any(|t| !doc.blocks.contains_key(t.bloco()))
-        || [CAMADA_PONTOS, CAMADA_QUADROS, crate::fiacao::CAMADA, crate::eletroduto::CAMADA_TETO, crate::eletroduto::CAMADA_PISO]
+        || [CAMADA_PONTOS, CAMADA_QUADROS, CAMADA_DADOS, crate::fiacao::CAMADA, crate::eletroduto::CAMADA_TETO, crate::eletroduto::CAMADA_PISO]
             .iter()
             .any(|c| doc.layer(c).is_none())
 }
@@ -394,7 +489,7 @@ pub fn garantir_base(doc: &mut Drawing, setup: &crate::setup::Setup, metros: f64
     }
     let m = if metros > 0.0 { metros } else { 1.0 };
     let tensao = format!("{}V", crate::ponto::br(setup.sistema.tensao_fn()));
-    for (nome, cor) in [(CAMADA_PONTOS, 7), (CAMADA_QUADROS, 2)] {
+    for (nome, cor) in [(CAMADA_PONTOS, 7), (CAMADA_QUADROS, 2), (CAMADA_DADOS, 5)] {
         if doc.ensure_layer(nome)
             && let Some(l) = doc.layer_mut(nome)
         {
@@ -421,8 +516,167 @@ pub fn garantir_base(doc: &mut Drawing, setup: &crate::setup::Setup, metros: f64
             b.entities.push(Entity::new(doc.new_handle(), k));
         }
         doc.blocks.insert(nome.to_string(), Arc::new(b));
+        if let Some(f) = familia::da_base(nome) {
+            let _ = familia::gravar(doc, nome, Some(&f));
+        }
     }
     true
+}
+
+// ---------------------------------------------------------------- utilitários do editor de blocos
+
+/// As geometrias de partida que o editor de blocos oferece: (código, nome).
+pub const GEOMETRIAS: [(&str, &str); 7] = [
+    ("tomada", "Triângulo de tomada"),
+    ("tomadaMedia", "Tomada média (meia hachura)"),
+    ("tomadaAlta", "Tomada alta (hachura cheia)"),
+    ("comando", "Círculo de comando"),
+    ("luminaria", "Luminária octogonal"),
+    ("contorno4x2", "Contorno 4x2"),
+    ("contorno4x4", "Contorno 4x4"),
+];
+
+const CHAVE_CONECTOR: &str = "connector";
+const CAMADA_CONECTOR: &str = "Defpoints";
+
+fn retangulo(x0: f64, y0: f64, x1: f64, y1: f64) -> Vec<Peca> {
+    vec![Peca::Linha(x0, y0, x1, y0), Peca::Linha(x1, y0, x1, y1), Peca::Linha(x1, y1, x0, y1), Peca::Linha(x0, y1, x0, y0)]
+}
+
+/// Insere a geometria padrão `forma` no espaço de trabalho (o bloco em edição). Medidas em metros,
+/// proporcionais aos símbolos base.
+pub fn inserir_geometria(doc: &mut Drawing, forma: &str, metros: f64) -> Result<usize, String> {
+    let m = if metros > 0.0 { metros } else { 1.0 };
+    let triangulo =
+        || vec![Peca::Linha(-0.084, 0.0595, 0.084, 0.0595), Peca::Linha(0.0, 0.205, 0.084, 0.0595), Peca::Linha(-0.084, 0.0595, 0.0, 0.205)];
+    let pecas = match forma {
+        "tomada" => triangulo(),
+        "tomadaMedia" => {
+            let mut p = triangulo();
+            p.push(Peca::Cheio([(-0.084, 0.0595), (0.0, 0.0595), (0.0, 0.205)]));
+            p
+        }
+        "tomadaAlta" => {
+            let mut p = triangulo();
+            p.push(Peca::Cheio([(-0.084, 0.0595), (0.084, 0.0595), (0.0, 0.205)]));
+            p
+        }
+        "comando" => vec![Peca::Circulo(0.0, 0.135, 0.075)],
+        "luminaria" => {
+            // Octógono com o raio do símbolo base.
+            let r: f64 = 0.093;
+            let v = |i: usize| {
+                let a = std::f64::consts::FRAC_PI_8 + std::f64::consts::FRAC_PI_4 * i as f64;
+                (r * a.cos(), r * a.sin())
+            };
+            (0..8)
+                .map(|i| {
+                    let (a, b) = (v(i), v(i + 1));
+                    Peca::Linha(a.0, a.1, b.0, b.1)
+                })
+                .collect()
+        }
+        "contorno4x2" => retangulo(-0.05, -0.05, 0.05, 0.0),
+        "contorno4x4" => retangulo(-0.05, -0.1, 0.05, 0.0),
+        _ => return Err(format!("geometria \"{forma}\" desconhecida")),
+    };
+    let u = |v: f64| v / m;
+    for p in &pecas {
+        doc.add(&Space::Model, Common::default(), entidade_da_peca(p, &u)).map_err(|e| e.to_string())?;
+    }
+    Ok(pecas.len())
+}
+
+/// Move o bloco em edição para o ponto `p` virar a origem (0,0), que é o ponto de inserção e de
+/// conexão dos eletrodutos, e marca o conector com um círculo na camada Defpoints, que não plota.
+pub fn definir_conector(doc: &mut Drawing, p: [f64; 2], metros: f64) -> Result<Handle, String> {
+    if !p.iter().all(|v| v.is_finite()) {
+        return Err("ponto inválido".into());
+    }
+    let m = if metros > 0.0 { metros } else { 1.0 };
+    let antigos: Vec<Handle> = doc
+        .model
+        .iter()
+        .filter(|e| crate::xdata::ler(&e.common.xdata).iter().any(|(k, _)| k.eq_ignore_ascii_case(CHAVE_CONECTOR)))
+        .map(|e| e.handle)
+        .collect();
+    for h in antigos {
+        doc.model.remove(h);
+    }
+    let mover = cadcraft_doc::geom::Mat3::translate(Vec2::new(-p[0], -p[1]));
+    let todos: Vec<Entity> = doc.model.iter().map(|e| (**e).clone()).collect();
+    for mut e in todos {
+        e.kind.transform(&mover);
+        doc.model.replace(e);
+    }
+    doc.ensure_layer(CAMADA_CONECTOR);
+    let mut x = Vec::new();
+    crate::xdata::gravar(&mut x, CHAVE_CONECTOR, Some("1"));
+    let c = Common { layer: CAMADA_CONECTOR.into(), xdata: x, ..Common::default() };
+    doc.add(&Space::Model, c, EntityKind::Circle(Circle { center: Vec3::new(0.0, 0.0, 0.0), radius: 0.02 / m })).map_err(|e| e.to_string())
+}
+
+/// Cria no bloco em edição os atributos padrão da categoria, os que ainda não existem. Devolve
+/// quantos entraram.
+pub fn gerar_atributos(doc: &mut Drawing, categoria: FamilyCategory, metros: f64) -> Result<usize, String> {
+    use FamilyCategory as C;
+    let m = if metros > 0.0 { metros } else { 1.0 };
+    let altura = |pos| visivel("ALTURA", "", "Altura fora da legenda", pos);
+    let lista: Vec<Att> = match categoria {
+        C::Nenhum => return Err("um bloco CAD comum não tem atributos elétricos: escolha uma categoria".into()),
+        C::PontoForca => vec![
+            constante("TIPO_PONTO", "TUG"),
+            att("TAG", "", "Identificação"),
+            visivel("CIRCUITO", "", "Circuito", (0.10, 0.10)),
+            altura((0.10, 0.03)),
+            att("POTENCIA", "100VA", "Potência"),
+            att("TIPO_CARGA", "ILUM_TUG", "Tipo de carga"),
+            att("FP", "0,92", "Fator de potência"),
+        ],
+        C::Luminaria => vec![
+            constante("TIPO_PONTO", "ILUM"),
+            att("TAG", "", "Identificação"),
+            visivel("POTENCIA", "100VA", "Potência", (-0.065, 0.118)),
+            visivel("COMANDO", "", "Letra do comando", (-0.118, -0.025)),
+            visivel("CIRCUITO", "", "Circuito", (0.118, -0.025)),
+            altura((0.118, -0.09)),
+            att("TIPO_CARGA", "ILUM_TUG", "Tipo de carga"),
+            att("FP", "0,92", "Fator de potência"),
+        ],
+        C::Interruptor => vec![
+            constante("TIPO_PONTO", "INTERRUPTOR"),
+            att("TAG", "", "Identificação"),
+            visivel("COMANDO", "", "Letra do comando (a, b, c...)", (0.10, 0.10)),
+            att("CIRCUITO", "", "Circuito"),
+            att("POTENCIA", "0W", "Potência (interruptor: 0W)"),
+            altura((0.10, 0.03)),
+        ],
+        C::Dados => vec![constante("TIPO_PONTO", "DADOS"), visivel("ID_PONTO", "", "Identificação do ponto", (0.10, 0.10)), altura((0.10, 0.03))],
+        C::Especial => {
+            vec![constante("TIPO_PONTO", "ESPECIAL"), visivel("ID_PONTO", "", "Identificação do ponto", (0.10, 0.10)), altura((0.10, 0.03))]
+        }
+        C::QuadroEletrico => vec![
+            constante("TIPO_PONTO", "QUADRO"),
+            visivel("TAG", "QD", "Identificação do quadro", (0.12, -0.045)),
+            att("TENSAO", "", "Tensão (ex.: 380/220V)"),
+            att("NUMERO_FASES", "", "Número de fases"),
+            altura((0.12, -0.11)),
+        ],
+        C::QuadroDados => {
+            vec![constante("TIPO_PONTO", "RACK"), visivel("TAG", "RACK", "Identificação do rack", (0.12, -0.045)), altura((0.12, -0.11))]
+        }
+        C::Caixa => vec![constante("TIPO_PONTO", "CAIXA DE PASSAGEM"), att("TAG", "", "Identificação"), altura((0.07, -0.02))],
+    };
+    let existe =
+        |doc: &Drawing, tag: &str| doc.model.iter().any(|e| matches!(&e.kind, EntityKind::AttDef(a) if a.tag.trim().eq_ignore_ascii_case(tag)));
+    let mut n = 0;
+    for a in &lista {
+        if !existe(doc, a.0) {
+            doc.add(&Space::Model, Common::default(), EntityKind::AttDef(atributo_base(a, m))).map_err(|e| e.to_string())?;
+            n += 1;
+        }
+    }
+    Ok(n)
 }
 
 /// A rotação (graus) que alinha um ponto à parede mais próxima: a linha mais perto de `q`, fora das

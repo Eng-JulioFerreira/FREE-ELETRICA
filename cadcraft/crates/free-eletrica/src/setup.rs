@@ -365,8 +365,18 @@ pub struct Setup {
     pub temperatura_ambiente: f64,
     /// Pé-direito padrão do pavimento (m): os eletrodutos correm no teto.
     pub pe_direito: f64,
-    /// Queda de tensão admissível nos circuitos terminais (%).
+    /// Altura baixa padrão do projeto (m).
+    pub altura_baixa: f64,
+    /// Altura média padrão do projeto (m).
+    pub altura_media: f64,
+    /// Altura alta padrão do projeto (m).
+    pub altura_alta: f64,
+    /// Queda de tensão admissível nos circuitos terminais de força (%).
     pub queda_admissivel: f64,
+    /// Queda de tensão admissível nos circuitos de iluminação (%).
+    pub queda_iluminacao: f64,
+    /// Queda de tensão admissível no alimentador (%).
+    pub queda_alimentador: f64,
     /// Multiplica os comprimentos de cabo no levantamento de materiais (perdas, emendas, sobras).
     pub fator_materiais: f64,
     /// Seções (mm²) que não são escritas nas indicações de fiação e no resumo.
@@ -403,7 +413,12 @@ impl Default for Setup {
             sistema: Sistema::default(),
             temperatura_ambiente: 30.0,
             pe_direito: 2.8,
+            altura_baixa: 0.30,
+            altura_media: 1.20,
+            altura_alta: 2.10,
             queda_admissivel: 4.0,
+            queda_iluminacao: 4.0,
+            queda_alimentador: 1.0,
             fator_materiais: 1.10,
             secoes_omitidas: Vec::new(),
             cores_fase: [CorCabo::Preto, CorCabo::Vermelho, CorCabo::Branco],
@@ -434,6 +449,19 @@ pub fn ocupacao_maxima(condutores: usize) -> f64 {
 }
 
 impl Setup {
+    /// A altura (m) de uma referência da legenda do projeto. `cota` é a cota fixa da família.
+    pub fn altura_de(&self, referencia: crate::familia::RefAltura, cota: f64) -> f64 {
+        use crate::familia::RefAltura::*;
+        match referencia {
+            Baixa => self.altura_baixa,
+            Media => self.altura_media,
+            Alta => self.altura_alta,
+            Teto => self.pe_direito,
+            Piso => 0.0,
+            Fixa => cota,
+        }
+    }
+
     /// Fator de correção de temperatura (tabela 40) da isolação padrão.
     pub fn fct(&self) -> f64 {
         self.isolacao.fct(self.temperatura_ambiente)
@@ -496,7 +524,12 @@ impl Setup {
     pub fn normalizar(&mut self) {
         self.temperatura_ambiente = self.temperatura_ambiente.clamp(10.0, 60.0);
         self.pe_direito = self.pe_direito.clamp(2.0, 10.0);
+        self.altura_baixa = self.altura_baixa.clamp(0.0, 10.0);
+        self.altura_media = self.altura_media.clamp(0.0, 10.0);
+        self.altura_alta = self.altura_alta.clamp(0.0, 10.0);
         self.queda_admissivel = self.queda_admissivel.clamp(0.5, 10.0);
+        self.queda_iluminacao = self.queda_iluminacao.clamp(0.5, 10.0);
+        self.queda_alimentador = self.queda_alimentador.clamp(0.1, 10.0);
         self.fator_materiais = self.fator_materiais.clamp(1.0, 2.0);
         self.raio_captura = self.raio_captura.clamp(0.01, 5.0);
         self.secoes_omitidas.sort_by(f64::total_cmp);

@@ -48,14 +48,31 @@ pub fn specs() -> Vec<CommandSpec> {
             .params("{de: hex | [x, y], para: hex | [x, y], instalacao?: \"CEILING\" | \"FLOOR\" | \"WALL\", flecha?: number (arc bulge as a fraction of the chord: + left, - right, 0 straight; default 0.15)} (a point on a conduit splits it with a pull box) → {eletroduto}")
             .interactive(|_| Ok(Box::new(EletrodutoM::default()))),
         CommandSpec::new("eleponto", "Insert Electrical Point", run_ponto)
-            .params("{bloco, pontos: [[x, y]], rotacao?: degrees, rotacaoAuto?: bool (align to the nearest wall), valores?: {TAG: value}} → {pontos: [hex]}")
+            .params("{bloco, pontos: [[x, y]], rotacao?: degrees, rotacaoAuto?: bool (align to the nearest wall), altura?: m, valores?: {TAG: value}} → {pontos: [hex]}")
             .interactive(|_| Ok(Box::new(PontoM::default()))),
+        CommandSpec::new("eletrica.ponto.altura", "Point Elevation", run_altura)
+            .params("{pontos: [hex], altura: m | null} (at the project's standard height or null: the visible ALTURA stays empty; otherwise the exact value goes to XDATA and the plan shows h=1,45m) → {pontos}"),
+        CommandSpec::new("eletrica.familia.ler", "Block Family", run_familia_ler)
+            .params("{bloco? (default: the block being edited)} → the family, or null")
+            .noundo(),
+        CommandSpec::new("eletrica.familia.definir", "Family Properties", run_familia_definir)
+            .params("{bloco? (default: the block being edited), categoria?: NONE | ELECTRICAL_FIXTURE | LIGHTING_FIXTURE | LIGHTING_DEVICE | DATA_DEVICE | FIRE_SECURITY_DEVICE | ELECTRICAL_EQUIPMENT | TELECOM_ENCLOSURE | JUNCTION_BOX, dominio?: POWER | DATA_TELECOM | FIRE_SECURITY | INFRA, refAltura?: LOW | MEDIUM | HIGH | CEILING | FLOOR | FIXED, cotaFixa?: m, caixa?: NONE | 4X2 | 4X4 | OCTAGONAL | PULL_15X15 | PULL_20X20 | PULL_30X30, potencia?: VA | null, fp?: 0-1 | null, teclas?: 1-3, remover?: bool} → the family"),
+        CommandSpec::new("eletrica.familia.geometria", "Family Base Geometry", run_familia_geometria)
+            .params("{forma: tomada | tomadaMedia | tomadaAlta | comando | luminaria | contorno4x2 | contorno4x4} → inserts it into the block being edited: {entidades}")
+            .enabled(no_editor_de_blocos),
+        CommandSpec::new("eletrica.familia.atributos", "Family Attributes", run_familia_atributos)
+            .params("{categoria? (default: the family's)} → creates the standard ATTDEFs missing from the block being edited: {criados}")
+            .enabled(no_editor_de_blocos),
+        CommandSpec::new("elefamilia_conector", "Family Connector", run_familia_conector)
+            .params("{ponto: [x, y]} → moves the block being edited so the point is its origin, the insertion and conduit connection point: {conector}")
+            .enabled(no_editor_de_blocos)
+            .interactive(|_| Ok(Box::new(ConectorM))),
         CommandSpec::new("eletrica.bootstrap", "Prepare Electrical Drawing", run_bootstrap).params("{} → creates the missing base layers and blocks: {mudou}"),
         CommandSpec::new("eletrica.blocos", "Electrical Point Blocks", run_blocos)
             .params("{} → [{nome, tipo, inseridos, atributos: [{tag, padrao, prompt, constante}]}]")
             .noundo(),
         CommandSpec::new("eletrica.ponto.modelo", "Point Template", run_modelo)
-            .params("{bloco, rotacao?: degrees, rotacaoAuto?: bool (default true), valores?: {TAG: value}} → what ELEPONTO inserts, also while it runs")
+            .params("{bloco, rotacao?: degrees, rotacaoAuto?: bool (default true), altura?: m, valores?: {TAG: value}} → what ELEPONTO inserts, also while it runs")
             .noundo(),
         CommandSpec::new("eletrica.ponto.excluir", "Delete Electrical Points", run_excluir_pontos).params("{pontos: [hex]} → {excluidos}"),
         CommandSpec::new("eletrica.eletroduto.modelo", "Conduit Template", run_modelo_eletroduto)
@@ -1250,6 +1267,180 @@ fn valores_de(cmd: &str, p: &Value) -> Result<Vec<(String, String)>> {
     }
 }
 
+/// Os valores, com `altura` (m) no lugar do atributo ALTURA quando vier.
+fn valores_com_altura(cmd: &str, p: &Value) -> Result<Vec<(String, String)>> {
+    let mut v = valores_de(cmd, p)?;
+    if let Some(a) = p.get("altura").filter(|a| !a.is_null()) {
+        let a = a.as_f64().filter(|a| a.is_finite() && (0.0..=50.0).contains(a)).ok_or_else(|| bad(cmd, "`altura` must be a number from 0 to 50"))?;
+        v.retain(|(t, _)| !t.eq_ignore_ascii_case("ALTURA"));
+        v.push(("ALTURA".to_string(), format!("{a} m")));
+    }
+    Ok(v)
+}
+
+fn run_altura(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "eletrica.ponto.altura";
+    let hs = handles(CMD, p, "pontos")?;
+    let altura = match p.get("altura") {
+        None => return Err(bad(CMD, "`altura` (m or null) is required")),
+        Some(Value::Null) => None,
+        Some(v) => Some(numero_finito(CMD, v, "altura")?),
+    };
+    let setup = ele::setup::atual();
+    for h in &hs {
+        ele::editar::definir_altura(s.doc_mut()?, *h, altura, &setup).map_err(erro)?;
+    }
+    atualizar_gerados(s)?;
+    Ok(json!({ "pontos": hs.len() }))
+}
+
+// ---------------------------------------------------------------- famílias
+
+fn no_editor_de_blocos(s: &Session) -> std::result::Result<(), String> {
+    match s.state() {
+        Ok(st) if st.block_edit.as_ref().is_some_and(|b| !b.current) => Ok(()),
+        Ok(_) => Err("Abra o editor de blocos em um bloco (BEDIT).".into()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// O bloco de um comando de família: o pedido ou o que está em edição.
+fn bloco_da_familia(s: &Session, cmd: &str, p: &Value) -> Result<String> {
+    if p.get("bloco").is_some_and(|b| !b.is_null()) {
+        return texto(cmd, p, "bloco");
+    }
+    let st = s.state()?;
+    match st.block_edit.as_ref().filter(|b| !b.current) {
+        Some(b) => Ok(b.name.clone()),
+        None => Err(bad(cmd, "`bloco` is required outside the Block Editor")),
+    }
+}
+
+fn run_familia_ler(s: &mut Session, p: &Value) -> Result<Value> {
+    let bloco = bloco_da_familia(s, "eletrica.familia.ler", p)?;
+    json_de(&ele::familia::ler(s.doc()?, &bloco))
+}
+
+/// Um campo de texto com código: `None` quando não veio.
+fn codigo_de<T>(cmd: &str, p: &Value, k: &str, de_codigo: fn(&str) -> Option<T>) -> Result<Option<T>> {
+    match p.get(k) {
+        None | Some(Value::Null) => Ok(None),
+        Some(v) => v.as_str().and_then(de_codigo).map(Some).ok_or_else(|| bad(cmd, format!("`{k}` has an unknown value: {v}"))),
+    }
+}
+
+fn run_familia_definir(s: &mut Session, p: &Value) -> Result<Value> {
+    use ele::familia::{CaixaFisica, Familia, FamilyCategory, RefAltura, SystemDomain};
+    const CMD: &str = "eletrica.familia.definir";
+    let bloco = bloco_da_familia(s, CMD, p)?;
+    let em_edicao = s.state()?.block_edit.as_ref().is_some_and(|b| b.name.eq_ignore_ascii_case(&bloco));
+    if !em_edicao && s.doc()?.block(&bloco).is_none() {
+        return Err(bad(CMD, format!("the drawing has no block `{bloco}`")));
+    }
+    let familia = if p.get("remover").and_then(Value::as_bool).unwrap_or(false) {
+        None
+    } else {
+        let categoria = codigo_de(CMD, p, "categoria", FamilyCategory::de_codigo)?;
+        let atual = ele::familia::ler(s.doc()?, &bloco);
+        // Trocar a categoria traz o que é natural dela; os valores padrão do projetista ficam.
+        let mut f = match (atual, categoria) {
+            (Some(a), Some(c)) if a.categoria != c => Familia { potencia: a.potencia, fp: a.fp, teclas: a.teclas, ..Familia::da_categoria(c) },
+            (Some(a), _) => a,
+            (None, Some(c)) => Familia::da_categoria(c),
+            (None, None) => return Err(bad(CMD, "the block has no family yet: give `categoria`")),
+        };
+        if let Some(d) = codigo_de(CMD, p, "dominio", SystemDomain::de_codigo)? {
+            f.dominio = d;
+        }
+        if let Some(r) = codigo_de(CMD, p, "refAltura", RefAltura::de_codigo)? {
+            f.ref_altura = r;
+        }
+        if let Some(c) = codigo_de(CMD, p, "caixa", CaixaFisica::de_codigo)? {
+            f.caixa = c;
+        }
+        if let Some(v) = p.get("cotaFixa").filter(|v| !v.is_null()) {
+            f.cota_fixa = numero_finito(CMD, v, "cotaFixa")?;
+        }
+        if let Some(v) = p.get("potencia") {
+            f.potencia = if v.is_null() { None } else { Some(numero_finito(CMD, v, "potencia")?) };
+        }
+        if let Some(v) = p.get("fp") {
+            f.fp = if v.is_null() { None } else { Some(numero_finito(CMD, v, "fp")?) };
+        }
+        if let Some(v) = p.get("teclas").filter(|v| !v.is_null()) {
+            f.teclas = v.as_u64().and_then(|n| u8::try_from(n).ok()).ok_or_else(|| bad(CMD, "`teclas` must be from 1 to 3"))?;
+        }
+        Some(f)
+    };
+    ele::familia::gravar(s.doc_mut()?, &bloco, familia.as_ref()).map_err(|e| bad(CMD, e))?;
+    // No editor, o desenho de trás recebe junto: a família não depende de salvar a geometria.
+    if let Some(b) = s.state_mut()?.block_edit.as_mut() {
+        ele::familia::gravar(std::sync::Arc::make_mut(&mut b.host.doc), &bloco, familia.as_ref()).map_err(erro)?;
+    } else {
+        atualizar_gerados(s)?;
+    }
+    json_de(&familia)
+}
+
+fn run_familia_geometria(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "eletrica.familia.geometria";
+    let forma = texto(CMD, p, "forma")?;
+    let m = metros(s)?;
+    let n = ele::biblioteca::inserir_geometria(s.doc_mut()?, &forma, m).map_err(|e| bad(CMD, e))?;
+    Ok(json!({ "entidades": n }))
+}
+
+fn run_familia_atributos(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "eletrica.familia.atributos";
+    let bloco = bloco_da_familia(s, CMD, p)?;
+    let categoria = match codigo_de(CMD, p, "categoria", ele::familia::FamilyCategory::de_codigo)? {
+        Some(c) => c,
+        None => ele::familia::ler(s.doc()?, &bloco).map(|f| f.categoria).ok_or_else(|| bad(CMD, "the block has no family yet: give `categoria`"))?,
+    };
+    let m = metros(s)?;
+    let n = ele::biblioteca::gerar_atributos(s.doc_mut()?, categoria, m).map_err(|e| bad(CMD, e))?;
+    Ok(json!({ "criados": n }))
+}
+
+fn run_familia_conector(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "elefamilia_conector";
+    let q = p.get("ponto").and_then(ponto_de).ok_or_else(|| bad(CMD, "`ponto` ([x, y]) is required"))?;
+    let m = metros(s)?;
+    let h = ele::biblioteca::definir_conector(s.doc_mut()?, q, m).map_err(erro)?;
+    Ok(json!({ "conector": h.hex() }))
+}
+
+/// ELEFAMILIA_CONECTOR digitado: o ponto que vira a origem do bloco em edição.
+struct ConectorM;
+
+impl Interactive for ConectorM {
+    fn name(&self) -> &'static str {
+        "ELEFAMILIA_CONECTOR"
+    }
+    fn begin(&mut self, _s: &mut Session) -> Result<Step> {
+        Ok(Step::Continue)
+    }
+    fn prompt(&self, _s: &Session) -> Prompt {
+        Prompt::new("Ponto de inserção e conexão do bloco", Accept::POINT)
+    }
+    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        match i {
+            Input::Point(p) => {
+                let m = metros(s)?;
+                match ele::biblioteca::definir_conector(s.doc_mut()?, [p.x, p.y], m) {
+                    Ok(_) => Ok(Step::Done),
+                    Err(e) => {
+                        s.echo(e);
+                        Ok(Step::Continue)
+                    }
+                }
+            }
+            Input::Cancel | Input::Enter => Ok(Step::Done),
+            _ => Ok(Step::Continue),
+        }
+    }
+}
+
 fn rotacao_de(cmd: &str, p: &Value) -> Result<f64> {
     match p.get("rotacao") {
         None | Some(Value::Null) => Ok(0.0),
@@ -1260,7 +1451,8 @@ fn rotacao_de(cmd: &str, p: &Value) -> Result<f64> {
 fn run_ponto(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "eleponto";
     let bloco = texto(CMD, p, "bloco")?;
-    let (rotacao, valores) = (rotacao_de(CMD, p)?, valores_de(CMD, p)?);
+    let rotacao = rotacao_de(CMD, p)?;
+    let valores = valores_com_altura(CMD, p)?;
     let auto = p.get("rotacaoAuto").and_then(Value::as_bool).unwrap_or(false);
     let lista = p.get("pontos").and_then(Value::as_array).ok_or_else(|| bad(CMD, "`pontos` ([[x, y]]) is required"))?;
     let mut posicoes = Vec::new();
@@ -1276,7 +1468,7 @@ fn run_ponto(s: &mut Session, p: &Value) -> Result<Value> {
     let mut feitos = Vec::new();
     for pos in posicoes {
         let r = if auto { ele::biblioteca::alinhar_a_parede(s.doc()?, &setup, pos, m).unwrap_or(rotacao) } else { rotacao };
-        feitos.push(ele::biblioteca::inserir(s.doc_mut()?, &bloco, pos, r, &valores).map_err(erro)?.hex());
+        feitos.push(ele::biblioteca::inserir_ponto(s.doc_mut()?, &bloco, pos, r, &valores, &setup).map_err(erro)?.hex());
     }
     atualizar_gerados(s)?;
     Ok(json!({ "pontos": feitos }))
@@ -1296,7 +1488,7 @@ fn run_modelo(s: &mut Session, p: &Value) -> Result<Value> {
         bloco: b.nome.clone(),
         rotacao: rotacao_de(CMD, p)?,
         rotacao_auto: p.get("rotacaoAuto").and_then(Value::as_bool).unwrap_or(true),
-        valores: valores_de(CMD, p)?,
+        valores: valores_com_altura(CMD, p)?,
     };
     ele::biblioteca::definir_modelo(s.state()?.uid, Some(modelo.clone()));
     json_de(&modelo)
@@ -1404,7 +1596,7 @@ impl Interactive for PontoM {
         match i {
             Input::Point(p) => {
                 let r = self.rotacao(s, &m, [p.x, p.y]);
-                match ele::biblioteca::inserir(s.doc_mut()?, &m.bloco, [p.x, p.y], r, &m.valores) {
+                match ele::biblioteca::inserir_ponto(s.doc_mut()?, &m.bloco, [p.x, p.y], r, &m.valores, &ele::setup::atual()) {
                     Ok(_) => self.feitos += 1,
                     Err(e) => s.echo(e),
                 }

@@ -6,7 +6,7 @@
 use cadcraft_doc::{Drawing, EntityKind, Handle};
 
 use crate::nbr5410::{Esquema, Isolacao};
-use crate::ponto::{TAGS_CIRCUITO, TAGS_COMANDO, TAGS_QUADRO, ler_ponto};
+use crate::ponto::{CHAVE_ALTURA, TAGS_ALTURA, TAGS_CIRCUITO, TAGS_COMANDO, TAGS_QUADRO, ler_ponto};
 use crate::quadro::{
     CHAVE_DESCRICAO, CHAVE_DISJUNTOR, CHAVE_ESQUEMA, CHAVE_FASE, CHAVE_ISOLACAO, CHAVE_ISOLACAO_CIRCUITO, CHAVE_SECAO, CHAVE_TENSAO, NOMES_FASES,
     fases_de_texto,
@@ -169,6 +169,28 @@ pub fn definir(doc: &mut Drawing, h: Handle, tags: &[&str], valor: Option<&str>)
     }
     doc.model.replace(e);
     Ok(())
+}
+
+/// O texto que vai no atributo ALTURA de um ponto fora da legenda: `h=1,45m`.
+pub fn texto_de_altura(altura: f64) -> String {
+    format!("h={altura:.2}m").replace('.', ",")
+}
+
+/// A altura de uma inserção. Na legenda do projeto (ou com `None`), o atributo visível fica vazio
+/// e a planta não polui; fora dela, a altura exata vai para o XDATA, que o cálculo usa, e o atributo
+/// mostra `h=1,45m`.
+pub fn definir_altura(doc: &mut Drawing, ponto: Handle, altura: Option<f64>, setup: &crate::setup::Setup) -> Result<(), String> {
+    if let Some(a) = altura
+        && !(a.is_finite() && (0.0..=50.0).contains(&a))
+    {
+        return Err(format!("altura {a} inválida: use de 0 a 50 m"));
+    }
+    let p = ler_ponto(doc, ponto).ok_or("o objeto não é um ponto elétrico")?;
+    let legenda = p.altura_legenda(setup);
+    let fora = altura.filter(|a| (a - legenda).abs() >= 0.005);
+    let texto = fora.map(texto_de_altura);
+    definir(doc, ponto, TAGS_ALTURA, if p.tem_atributo(TAGS_ALTURA) { Some(texto.as_deref().unwrap_or("")) } else { None })?;
+    gravar_xdata(doc, ponto, CHAVE_ALTURA, fora.map(|a| a.to_string()).as_deref())
 }
 
 /// Liga o ponto ao quadro. No XDATA vai o handle do quadro; num atributo QUADRO, a TAG dele.

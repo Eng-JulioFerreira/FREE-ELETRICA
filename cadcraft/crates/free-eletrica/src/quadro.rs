@@ -416,6 +416,7 @@ pub fn rotear(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle) -
                 fca: nbr5410::fca_agrupamento(agrupados),
                 fct: isolacao_circuito.fct(setup.temperatura_ambiente),
                 isolacao: isolacao_circuito,
+                queda_admissivel: if c.natureza == crate::circuito::Natureza::Iluminacao { setup.queda_iluminacao } else { setup.queda_admissivel },
                 ..cfg_base.clone()
             };
             let automatico = nbr5410::dimensionar_com(c, &cfg, r.momento);

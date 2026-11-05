@@ -127,3 +127,52 @@ Os testes abaixo fixavam comportamento que a especificação pediu para mudar:
   e tabelas (`ELEREGEN`). Só as edições feitas pelas ferramentas elétricas regeneram sozinhas.
 - O template `templates/FREE_ELETRICA_BLOCOS.dxf` é opcional e não foi refeito. Os blocos dele têm
   prioridade sobre os base, e as camadas antigas continuam valendo como eletroduto.
+
+## Reestruturação em 4 etapas
+
+Segunda especificação, com famílias de bloco, separação entre lançar e dimensionar e vários sistemas.
+O que já existe da 2.0 fica; cada etapa acrescenta ou ajusta.
+
+### Etapa 1: Setup, famílias e pontos (feita)
+
+- `SystemDomain`, `FamilyCategory`, `RefAltura` e `CaixaFisica` em `crates/free-eletrica/src/familia.rs`.
+- Família no XDATA do `BLOCK_RECORD`, painel no editor de blocos, geometria base, ponto de conexão e
+  atributos padrão.
+- Configurações com as abas Critérios elétricos e Alturas, camada `ELE-DADOS`, blocos `RJ45` e `RACK`
+  e o botão Inicializar projeto.
+- `ELEPONTOS` com filtros por categoria e campo de altura, e a regra do `h=X,XXm`.
+
+### Etapa 2: Circuitos e quadro de cargas em 2 abas
+
+- Separar lançar de dimensionar: nos pontos e circuitos só somar VA, W e Ib; FCA, queda e a escolha de
+  cabos e disjuntores só no botão Dimensionar.
+- Aba 1, enxuta: circuito, descrição, esquema, pontos, potência, Ib, fases, grupo DR, resumo e status;
+  Equilibrar fases e Gerenciar módulos IDR.
+- Aba 2, mestre-detalhe: método de instalação, FCT, FCA, I'b, distância, comparativo das três seções
+  mínimas, travas de seção, disjuntor com curva, polos e módulos DIN.
+- Limite de queda do alimentador no cálculo.
+
+### Etapa 3: Grafo com domínios
+
+- `domain` nas arestas (`POWER`, `DATA_TELECOM`) e cabos UTP e fibra nos condutores passantes.
+- Perguntar antes de inserir a caixa ao terminar um eletroduto no meio de outro.
+- Rack como origem da rede de dados; inspeção por domínio.
+
+### Etapa 4: Documentação e materiais
+
+- `ELEMATERIAIS`: caixas por tipo (a caixa física das famílias), pontos, disjuntores, metros de
+  eletroduto em 3D e metros de cabo por seção.
+- Tabela do quadro seguindo as colunas novas; tags de dados.
+
+### O que a Etapa 1 deixou de fora ou decidiu diferente
+
+- **Medidas da geometria base:** são proporcionais aos símbolos base do projeto, não medidas conferidas
+  com a NBR 5444, que a especificação cita. Confira antes de tratá-las como oficiais.
+- **Painel, não janela:** a especificação fala em janela `ELEPONTOS`; ela segue como aba do painel de
+  baixo, sem bloquear o desenho. Escolher o bloco já começa a inserir.
+- **Filtro de especiais:** dispositivos especiais e de incêndio só aparecem em Todos, porque a lista de
+  filtros pedida não tem um botão para eles.
+- **Queda do alimentador:** o valor já fica no Setup, mas só entra no cálculo na Etapa 2.
+- **Marcador de conexão:** fica na camada `Defpoints`, que por convenção de CAD não plota; ele aparece na
+  tela dentro de cada inserção.
+- **Barra sobre o desenho:** continua existindo durante o `ELEPONTO`, junto com a lista.
