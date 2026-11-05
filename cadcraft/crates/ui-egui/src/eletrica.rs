@@ -708,6 +708,7 @@ const PALETA_ELETRICA: [Secao; 6] = [
                 "1º clique no eletroduto, 2º clique onde os símbolos ficam: a chamada sai a 45° até a base, e o resto dela fica guardado. Enter no começo: uma tag no meio de todos (ELEFIACAO)",
             ),
             ferr(Icone::Grade, "Tabela do quadro", "elequadro_tabela", "Desenha o quadro de cargas num ponto da planta (ELEQUADRO_TABELA)"),
+            ferr(Icone::Quadro, "Diagrama unifilar", "eleunifilar", "Desenha o diagrama unifilar do quadro num ponto da planta (ELEUNIFILAR)"),
             ferr(
                 Icone::Etiqueta,
                 "Legenda de símbolos",
@@ -1911,6 +1912,13 @@ fn janela_dimensionar(ui: &mut egui::Ui, app: &CadApp, t: &Tokens, st: &mut Esta
                 |v| format!("Quadro dimensionado: {} circuito(s), {} aviso(s)", v["circuitos"], v["avisos"]),
             ));
         }
+        if ui
+            .button("Gerar Diagrama Unifilar")
+            .on_hover_text("Desenha ou atualiza o diagrama deste quadro; depois ele fica onde você o puser")
+            .clicked()
+        {
+            acoes.push(Acao::Rodar("eletrica.unifilar", json!({ "quadro": q.hex() })));
+        }
         if !o.calculado {
             ui.label(pequeno("Lançar pontos, circuitos e eletrodutos não muda o dimensionamento: revise aqui e aplique ao quadro.", t.text_dim));
         }
@@ -2147,6 +2155,32 @@ fn campos_do_quadro(ui: &mut egui::Ui, q: &PontoEletrico, analise: &ele::Analise
             }
         }
     });
+    ui.label("Montagem");
+    egui::ComboBox::from_id_salt(("ele-quadro-montagem", q.handle))
+        .selected_text(c.montagem.map_or("Não definida", ele::quadro::Montagem::nome))
+        .width(90.0)
+        .show_ui(ui, |ui| {
+            for v in ele::quadro::Montagem::TODAS {
+                if ui.selectable_label(c.montagem == Some(v), v.nome()).clicked() {
+                    enviar(acoes, "montagem", json!(v.codigo()));
+                }
+            }
+        });
+    // Número de módulos e reservas: vazio volta ao automático.
+    let numero_ou_nada = |t: &str| t.trim().parse::<u32>().map_or(Value::Null, |n| json!(n));
+    ui.label("Módulos").on_hover_text("Vazio: a estimativa pelos disjuntores e DRs, sem o DPS");
+    if let Some(v) = campo_de_texto(ui, egui::Id::new(("ele-quadro-modulos", q.handle)), &c.modulos.map_or(String::new(), |n| n.to_string()), 40.0) {
+        enviar(acoes, "modulos", numero_ou_nada(&v));
+    }
+    ui.label("Reservas").on_hover_text("Vazio: o mínimo da NBR 5410 (6.5.4.7, tabela 59)");
+    if let Some(v) = campo_de_texto(ui, egui::Id::new(("ele-quadro-reservas", q.handle)), &c.reservas.map_or(String::new(), |n| n.to_string()), 40.0)
+    {
+        enviar(acoes, "reservas", numero_ou_nada(&v));
+    }
+    ui.label("Observações");
+    if let Some(v) = campo_de_texto(ui, egui::Id::new(("ele-quadro-observacoes", q.handle)), c.observacoes.as_deref().unwrap_or(""), 260.0) {
+        enviar(acoes, "observacoes", json!(v));
+    }
 }
 
 /// A classe e o fator de demanda de um ponto de carga, no inspetor de atributos.

@@ -663,10 +663,9 @@ fn texto(valor: String, em: [f64; 2], altura: f64) -> EntityKind {
     })
 }
 
-/// Largura estimada de um texto (m) na fonte Standard: 0,8 da altura por caractere (`%%c`, o
-/// símbolo de diâmetro, conta como um).
+/// Largura estimada de um texto (m) na fonte Standard (`%%c`, o símbolo de diâmetro, conta como um).
 pub fn largura_texto(texto: &str, altura: f64) -> f64 {
-    texto.replace("%%c", "Ø").chars().count() as f64 * 0.8 * altura
+    texto.replace("%%c", "Ø").chars().count() as f64 * crate::tabela::LARGURA_CARACTERE * altura
 }
 
 /// O que um grupo de marcas ocupa ao longo do trecho (m), a partir da primeira marca: as marcas,

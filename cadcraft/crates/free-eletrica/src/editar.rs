@@ -257,6 +257,32 @@ pub fn definir_cabo_quadro(doc: &mut Drawing, quadro: Handle, cabo: Option<TipoC
     gravar_xdata(doc, quadro, CHAVE_CABO_QUADRO, cabo.map(TipoCabo::codigo))
 }
 
+/// A montagem do quadro. `None` tira.
+pub fn definir_montagem(doc: &mut Drawing, quadro: Handle, m: Option<crate::quadro::Montagem>) -> Result<(), String> {
+    gravar_xdata(doc, quadro, crate::quadro::CHAVE_MONTAGEM, m.map(crate::quadro::Montagem::codigo))
+}
+
+/// As observações do quadro. Vazio tira.
+pub fn definir_observacoes(doc: &mut Drawing, quadro: Handle, texto: Option<&str>) -> Result<(), String> {
+    gravar_xdata(doc, quadro, crate::quadro::CHAVE_OBSERVACOES, texto.map(str::trim).filter(|t| !t.is_empty()))
+}
+
+/// O número de módulos do quadro. `None` volta à estimativa.
+pub fn definir_modulos(doc: &mut Drawing, quadro: Handle, n: Option<u32>) -> Result<(), String> {
+    if n.is_some_and(|n| n > crate::quadro::MAXIMO_MODULOS) {
+        return Err(format!("use até {} módulos", crate::quadro::MAXIMO_MODULOS));
+    }
+    gravar_xdata(doc, quadro, crate::quadro::CHAVE_MODULOS, n.map(|n| n.to_string()).as_deref())
+}
+
+/// Quantos circuitos reserva o quadro tem. `None` volta ao mínimo da NBR 5410.
+pub fn definir_reservas(doc: &mut Drawing, quadro: Handle, n: Option<u32>) -> Result<(), String> {
+    if n.is_some_and(|n| n > crate::quadro::MAXIMO_RESERVAS) {
+        return Err(format!("use até {} reservas", crate::quadro::MAXIMO_RESERVAS));
+    }
+    gravar_xdata(doc, quadro, crate::quadro::CHAVE_RESERVAS, n.map(|n| n.to_string()).as_deref())
+}
+
 /// Quem alimenta o quadro: a concessionária ou outro quadro do desenho, sem formar ciclo.
 pub fn definir_alimentacao(doc: &mut Drawing, quadro: Handle, alimentador: Option<&str>) -> Result<(), String> {
     let valor = match alimentador.map(str::trim).filter(|t| !t.is_empty()) {

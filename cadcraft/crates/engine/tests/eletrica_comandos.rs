@@ -1354,3 +1354,51 @@ fn tag_de_fiacao_em_dois_cliques() {
     assert!(s.running.is_none());
     assert!(free_eletrica::fiacao::tags(s.doc().unwrap()).is_empty());
 }
+
+#[test]
+fn quadro_com_montagem_observacoes_e_unifilar_clicando() {
+    let _setup = trava_setup();
+    let (d, [qd, luz, ..]) = planta();
+    let mut s = Session::default();
+    s.open_drawing(d, "Quadro", None);
+    let q = qd.hex();
+    s.execute("elecircuito", &json!({ "quadro": q, "circuito": "1", "pontos": [luz.hex()] })).unwrap();
+    let r = s
+        .execute("eletrica.quadro", &json!({ "quadro": q, "montagem": "SOBREPOR", "observacoes": "Porta com chave", "modulos": 24, "reservas": 5 }))
+        .unwrap();
+    assert_eq!(r["config"]["montagem"], "sobrepor");
+    assert_eq!(r["config"]["observacoes"], "Porta com chave");
+    assert_eq!((r["config"]["modulos"].as_u64(), r["config"]["reservas"].as_u64()), (Some(24), Some(5)));
+    for ruim in [
+        json!({ "montagem": "X" }),
+        json!({ "modulos": -1 }),
+        json!({ "reservas": 1000 }),
+        json!({ "observacoes": 3 }),
+        json!({ "observacoes": "x".repeat(201) }),
+    ] {
+        assert!(s.execute("eletrica.quadro", &ruim).is_err(), "{ruim}");
+    }
+    let r = s.execute("eletrica.quadro", &json!({ "quadro": q, "montagem": null, "observacoes": null, "modulos": null, "reservas": null })).unwrap();
+    assert!(r["config"]["montagem"].is_null() && r["config"]["reservas"].is_null(), "{r}");
+    // O unifilar clicando: um quadro só vai direto ao ponto, e Esc não cria nada.
+    let contar = |s: &Session| free_eletrica::unifilar::unifilares(s.doc().unwrap()).len();
+    let quadros = s.execute("eletrica.analisar", &json!({})).unwrap();
+    let varios = quadros["pontos"].as_array().unwrap().iter().filter(|p| p["tipo"] == "quadro").count() > 1;
+    s.start("eleunifilar").unwrap();
+    if varios {
+        s.input(Input::Enter).unwrap();
+    }
+    s.input(Input::Cancel).unwrap();
+    assert_eq!(contar(&s), 0);
+    s.start("eleunifilar").unwrap();
+    if varios {
+        s.input(Input::Pick(vec![qd])).unwrap();
+    }
+    s.input(Input::Point(Vec2::new(30.0, 30.0))).unwrap();
+    assert!(s.running.is_none());
+    assert_eq!(contar(&s), 1);
+    let mut vazio = Session::default();
+    vazio.open_drawing(Drawing::new_metric(), "Vazio", None);
+    vazio.start("eleunifilar").unwrap();
+    assert!(vazio.running.is_none(), "sem quadro, avisa e termina");
+}

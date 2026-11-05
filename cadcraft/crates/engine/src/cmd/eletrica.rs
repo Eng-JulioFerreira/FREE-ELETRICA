@@ -84,6 +84,9 @@ pub fn specs() -> Vec<CommandSpec> {
             .params("{quadro?: hex | TAG (default: every board), compartilharPe?: bool, temperaturaAmbiente?: °C, fcaManual?: number | null, unifilar?: bool (also generates or updates the single-line diagram)} → applies the options, sizes the circuits, stores the result on the boards and updates tags, tables and diagrams: {quadros: [{tag, circuitos, avisos}], circuitos, avisos, unifilares}"),
         CommandSpec::new("eletrica.unifilar", "Single-Line Diagram", run_unifilar)
             .params("{quadro?: hex | TAG, ponto?: [x, y]} → generates or updates the board's single-line diagram; an existing one only moves when `ponto` is given: {unifilar}"),
+        CommandSpec::new("eleunifilar", "Single-Line Diagram", run_unifilar)
+            .params("{quadro?: hex | TAG, ponto?: [x, y]} → the same as eletrica.unifilar; typed, it asks for the board and the point: {unifilar}")
+            .interactive(|_| Ok(Box::new(UnifilarM::default()))),
         CommandSpec::new("eletrica.quadro.equilibrar", "Balance Phases", run_equilibrar)
             .params("{quadro?: hex | TAG} → unlocks the phases of every circuit, so the balancing applies to all: {destravados, desequilibrio}"),
         CommandSpec::new("eletrica.atributos", "Block Attributes", run_atributos)
@@ -121,7 +124,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("eletrica.sobrescrever", "Override Circuit", run_sobrescrever)
             .params("{quadro?: hex | TAG, circuito, secao?: mm², disjuntor?: A} (no value: back to the automatic choice) → {quadro, circuito}"),
         CommandSpec::new("eletrica.quadro", "Board Settings", run_quadro)
-            .params("{quadro?: hex | TAG, sistema?: \"F+N+T\" | \"2F+N+T\" | \"2F+T\" | \"3F+N+T\" | null, tensaoNominal?: \"127/220\" | \"220/380\" | null, cabo?: FLEX_PVC_70 | UNI_PVC_70 | HEPR_XLPE_90 | LSZH_70 | LSZH_HEPR_90 | null, alimentadoPor?: \"CONCESSIONARIA\" | hex | TAG | null, isolacao?: \"PVC\" | \"EPR\" | \"XLPE\" | null (from drawings before the board's cable)} (null: back to what the block says) → {quadro, isolacao, config}"),
+            .params("{quadro?: hex | TAG, sistema?: \"F+N+T\" | \"2F+N+T\" | \"2F+T\" | \"3F+N+T\" | null, tensaoNominal?: \"127/220\" | \"220/380\" | null, cabo?: FLEX_PVC_70 | UNI_PVC_70 | HEPR_XLPE_90 | LSZH_70 | LSZH_HEPR_90 | null, alimentadoPor?: \"CONCESSIONARIA\" | hex | TAG | null, montagem?: EMBUTIR | SOBREPOR | null, observacoes?: text | null, modulos?: number | null (null: the estimate), reservas?: number | null (null: the NBR 5410 minimum), isolacao?: \"PVC\" | \"EPR\" | \"XLPE\" | null (from drawings before the board's cable)} (null: back to what the block says) → {quadro, isolacao, config}"),
         CommandSpec::new("eletrica.cargas", "Load Schedule", run_cargas)
             .params("{quadro?: hex | TAG} → [{id, descricao, circuito}] (circuits with points and the ones created empty)")
             .noundo(),
@@ -299,7 +302,38 @@ fn run_quadro(s: &mut Session, p: &Value) -> Result<Value> {
         Some(Value::Null) => Some(None),
         Some(v) => Some(Some(v.as_str().ok_or_else(|| bad(CMD, "`alimentadoPor` must be text or null"))?.to_string())),
     };
+    let montagem = p.get("montagem").map(|_| codigo_de(CMD, p, "montagem", ele::quadro::Montagem::de_codigo)).transpose()?;
+    let observacoes = match p.get("observacoes") {
+        None => None,
+        Some(Value::Null) => Some(None),
+        Some(Value::String(t)) if t.chars().count() <= 200 => Some(Some(t.clone())),
+        Some(_) => return Err(bad(CMD, "`observacoes` must be text of up to 200 characters or null")),
+    };
+    let contagem = |k: &str, maximo: u32| -> Result<Option<Option<u32>>> {
+        match p.get(k) {
+            None => Ok(None),
+            Some(Value::Null) => Ok(Some(None)),
+            Some(v) => {
+                let n = v.as_u64().and_then(|n| u32::try_from(n).ok()).filter(|n| *n <= maximo);
+                Ok(Some(Some(n.ok_or_else(|| bad(CMD, format!("`{k}` must be a whole number from 0 to {maximo}")))?)))
+            }
+        }
+    };
+    let modulos = contagem("modulos", ele::quadro::MAXIMO_MODULOS)?;
+    let reservas = contagem("reservas", ele::quadro::MAXIMO_RESERVAS)?;
     let doc = s.doc_mut()?;
+    if let Some(v) = montagem {
+        ele::editar::definir_montagem(doc, q, v).map_err(erro)?;
+    }
+    if let Some(v) = &observacoes {
+        ele::editar::definir_observacoes(doc, q, v.as_deref()).map_err(erro)?;
+    }
+    if let Some(v) = modulos {
+        ele::editar::definir_modulos(doc, q, v).map_err(erro)?;
+    }
+    if let Some(v) = reservas {
+        ele::editar::definir_reservas(doc, q, v).map_err(erro)?;
+    }
     if let Some(a) = &alimentado {
         ele::editar::definir_alimentacao(doc, q, a.as_deref()).map_err(|e| bad(CMD, e))?;
     }
@@ -312,7 +346,16 @@ fn run_quadro(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(v) = cabo {
         ele::editar::definir_cabo_quadro(doc, q, v).map_err(erro)?;
     }
-    if p.get("isolacao").is_some() || (sistema.is_none() && tensao.is_none() && cabo.is_none() && alimentado.is_none()) {
+    if p.get("isolacao").is_some()
+        || (sistema.is_none()
+            && tensao.is_none()
+            && cabo.is_none()
+            && alimentado.is_none()
+            && montagem.is_none()
+            && observacoes.is_none()
+            && modulos.is_none()
+            && reservas.is_none())
+    {
         ele::editar::definir_isolacao(doc, q, isolacao).map_err(erro)?;
     }
     let config = ele::ponto::ler_ponto(s.doc()?, q).map(|x| ele::quadro::config_do_quadro(&x)).unwrap_or_default();
@@ -565,6 +608,68 @@ fn run_unifilar(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let h = ele::unifilar::gerar(s.doc_mut()?, &a, &ele::setup::atual(), q, pos).map_err(erro)?;
     Ok(json!({ "unifilar": h.hex() }))
+}
+
+/// ELEUNIFILAR digitado: o quadro (Enter: o primeiro) e o ponto de inserção.
+#[derive(Default)]
+struct UnifilarM {
+    quadro: Option<Handle>,
+}
+
+impl Interactive for UnifilarM {
+    fn name(&self) -> &'static str {
+        "ELEUNIFILAR"
+    }
+    fn begin(&mut self, s: &mut Session) -> Result<Step> {
+        s.set_selection(Vec::new());
+        let a = analise(s)?;
+        let quadros = a.quadros();
+        if quadros.is_empty() {
+            s.echo("Nenhum quadro no desenho: insira um com Inserir pontos.");
+            return Ok(Step::Done);
+        }
+        if let [q] = quadros.as_slice() {
+            self.quadro = Some(q.handle);
+        }
+        Ok(Step::Continue)
+    }
+    fn prompt(&self, _s: &Session) -> Prompt {
+        match self.quadro {
+            None => Prompt::new("Selecione o quadro", Accept::SELECT).default("Primeiro"),
+            Some(_) => Prompt::new("Ponto de inserção do diagrama", Accept::POINT),
+        }
+    }
+    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        match (self.quadro, i) {
+            (_, Input::Cancel) | (Some(_), Input::Enter) => Ok(Step::Done),
+            (None, Input::Enter) => {
+                self.quadro = analise(s)?.quadros().first().map(|q| q.handle);
+                Ok(Step::Continue)
+            }
+            (None, Input::Pick(hs)) => {
+                s.set_selection(Vec::new());
+                for h in hs {
+                    if quadro_valido(s, h)?.is_some() {
+                        self.quadro = Some(h);
+                        return Ok(Step::Continue);
+                    }
+                }
+                s.echo("Selecione um bloco de quadro.");
+                Ok(Step::Continue)
+            }
+            (Some(q), Input::Point(p)) => {
+                let a = analise(s)?;
+                match ele::unifilar::gerar(s.doc_mut()?, &a, &ele::setup::atual(), q, Some([p.x, p.y])) {
+                    Ok(_) => Ok(Step::Done),
+                    Err(e) => {
+                        s.echo(e);
+                        Ok(Step::Continue)
+                    }
+                }
+            }
+            _ => Ok(Step::Continue),
+        }
+    }
 }
 
 fn run_atributos(s: &mut Session, p: &Value) -> Result<Value> {

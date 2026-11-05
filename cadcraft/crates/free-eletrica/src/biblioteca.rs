@@ -596,6 +596,11 @@ fn laco_circular(x: f64, y: f64, r: f64, u: &dyn Fn(f64) -> f64) -> HatchLoop {
     HatchLoop { vertices: vec![vertice(x + r), vertice(x - r)], outer: false, sources: Vec::new() }
 }
 
+/// Um círculo cheio, em unidades do desenho.
+pub(crate) fn disco(x: f64, y: f64, r: f64) -> EntityKind {
+    cheio(vec![laco_circular(x, y, r, &|v| v)])
+}
+
 /// Uma hachura sólida dos laços.
 fn cheio(loops: Vec<HatchLoop>) -> EntityKind {
     EntityKind::Hatch(Hatch {

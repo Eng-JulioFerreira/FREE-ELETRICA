@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (C) 2026 Julio Ferreira. Free Elétrica: ver LICENSE e AVISO_LEGAL.md na raiz do repositorio.
-//! O diagrama unifilar de um quadro no desenho: um bloco `UNIFILAR_<handle do quadro>`. Mostra o
-//! alimentador, a barra, os grupos de DR e os circuitos, com o esquema, a seção, o disjuntor e a curva.
+//! O diagrama unifilar de um quadro no desenho: um bloco `UNIFILAR_<handle do quadro>`. À esquerda, o
+//! alimentador com fase, neutro e terra, e o disjuntor geral até a barra. À direita, os ramais: os circuitos
+//! sem DR saem da barra; os de um grupo saem da sub-barra depois do módulo DR; no fim, as reservas. Cada
+//! ramal tem o disjuntor, os traços de fiação, a potência, a fase e uma caixa com o circuito.
 //! Regenerar troca o conteúdo do bloco e mantém a inserção, como a tabela do quadro.
 
 use std::sync::Arc;
 
+use cadcraft_doc::color::Color;
 use cadcraft_doc::geom::Vec3;
-use cadcraft_doc::{Block, Common, Drawing, Entity, EntityKind, HAlign, Handle, Insert, Space};
+use cadcraft_doc::{Arc as Arco, Block, Circle, Common, Drawing, Entity, EntityKind, HAlign, Handle, Insert, Space};
 
 use crate::Analise;
 use crate::ponto::br;
@@ -19,14 +22,25 @@ use crate::tabela::{CAMADA, linha, texto};
 pub const PREFIXO: &str = "UNIFILAR_";
 /// Altura do texto (m).
 const ALTURA: f64 = 0.10;
-/// Distância entre os circuitos (m).
-const PASSO: f64 = 0.32;
-/// Onde a barra do quadro fica (m).
-const BARRA: f64 = 0.9;
-/// Onde a derivação dos circuitos começa (m).
-const DERIVACAO: f64 = 1.9;
+/// Distância entre os ramais e a folga a mais depois de cada grupo de DR (m).
+const PASSO: f64 = 0.55;
+const FOLGA_GRUPO: f64 = 0.20;
+/// As colunas do diagrama, da esquerda para a direita (m).
+const BARRA: f64 = 2.0;
+const DR_X: f64 = BARRA + 0.30;
+const DR_LARGURA: f64 = 0.45;
+const SUB_BARRA: f64 = BARRA + 1.15;
+const DISJUNTOR_X: f64 = SUB_BARRA + 0.30;
+const DISJUNTOR_LARGURA: f64 = 0.20;
+const MARCAS_X: f64 = DISJUNTOR_X + 1.00;
+const DADOS_X: f64 = MARCAS_X + 0.60;
+const CAIXA_X: f64 = DADOS_X + 1.40;
 /// A distância padrão entre o quadro e o diagrama (m).
 const AFASTAMENTO: f64 = 3.0;
+/// Fase vermelha, neutro azul e terra verde.
+const COR_FASE: u8 = 1;
+const COR_NEUTRO: u8 = 5;
+const COR_TERRA: u8 = 3;
 
 fn nome_do_bloco(quadro: Handle) -> String {
     format!("{PREFIXO}{}", quadro.hex())
@@ -43,83 +57,181 @@ pub fn unifilares(doc: &Drawing) -> Vec<(Handle, Handle)> {
         .collect()
 }
 
-/// O símbolo de um disjuntor na linha, de `x` a `x + 0,17`.
-fn disjuntor(p: &mut Vec<EntityKind>, x: f64, y: f64, u: &dyn Fn(f64) -> f64) {
-    let (x0, x1, y0, y1) = (x, x + 0.17, y - 0.05, y + 0.05);
-    for (a, b) in [([x0, y0], [x1, y0]), ([x1, y0], [x1, y1]), ([x1, y1], [x0, y1]), ([x0, y1], [x0, y0]), ([x0, y0], [x1, y1])] {
-        p.push(linha([u(a[0]), u(a[1])], [u(b[0]), u(b[1])]));
+/// Uma peça do bloco, em metros até a conversão, com a cor própria quando tem.
+struct Pecas {
+    lista: Vec<(EntityKind, Option<u8>)>,
+    m: f64,
+}
+
+impl Pecas {
+    fn u(&self, v: f64) -> f64 {
+        v / self.m
+    }
+
+    fn linha(&mut self, a: [f64; 2], b: [f64; 2], cor: Option<u8>) {
+        let k = linha([self.u(a[0]), self.u(a[1])], [self.u(b[0]), self.u(b[1])]);
+        self.lista.push((k, cor));
+    }
+
+    fn texto(&mut self, t: &str, em: [f64; 2], altura: f64, alinhar: HAlign) {
+        let k = texto(t, [self.u(em[0]), self.u(em[1])], self.u(altura), alinhar);
+        self.lista.push((k, None));
+    }
+
+    fn retangulo(&mut self, x0: f64, y0: f64, x1: f64, y1: f64) {
+        for (a, b) in [([x0, y0], [x1, y0]), ([x1, y0], [x1, y1]), ([x1, y1], [x0, y1]), ([x0, y1], [x0, y0])] {
+            self.linha(a, b, None);
+        }
+    }
+
+    /// O símbolo curvo do disjuntor, de `x` a `x + largura`, com um arco no lugar da linha.
+    fn disjuntor(&mut self, x: f64, y: f64, largura: f64) {
+        let c = Vec3::new(self.u(x + largura / 2.0), self.u(y), 0.0);
+        let k = EntityKind::Arc(Arco { center: c, radius: self.u(largura / 2.0), start: 0.0, end: std::f64::consts::PI });
+        self.lista.push((k, None));
+    }
+
+    /// Um nó circular na barra.
+    fn no(&mut self, x: f64, y: f64) {
+        let (cx, cy, r) = (self.u(x), self.u(y), self.u(0.03));
+        self.lista.push((EntityKind::Circle(Circle { center: Vec3::new(cx, cy, 0.0), radius: r }), None));
+        self.lista.push((crate::biblioteca::disco(cx, cy, r), None));
+    }
+
+    /// Os traços de fiação na linha, centrados em `x`: fases em vermelho, neutro em azul e terra em verde.
+    fn marcas(&mut self, x: f64, y: f64, fases: u8, neutro: bool, terra: bool) {
+        let mut cores: Vec<u8> = vec![COR_FASE; usize::from(fases)];
+        if neutro {
+            cores.push(COR_NEUTRO);
+        }
+        if terra {
+            cores.push(COR_TERRA);
+        }
+        let inicio = x - 0.03 * cores.len().saturating_sub(1) as f64;
+        for (i, cor) in cores.iter().enumerate() {
+            let xi = inicio + 0.06 * i as f64;
+            self.linha([xi - 0.02, y - 0.07], [xi + 0.02, y + 0.07], Some(*cor));
+        }
     }
 }
 
-/// O texto de um circuito no diagrama.
+/// O texto da caixa de um circuito.
 fn rotulo(l: &Linha) -> String {
-    let secao = l.escolha.secao.map_or("-".to_string(), |s| format!("#{}", br(s)));
-    let disjuntor = l.escolha.disjuntor.map_or("-".to_string(), |d| format!("{} A/{}", br(d), l.curva.codigo()));
-    let descricao = if l.descricao.is_empty() { String::new() } else { format!(" {}", l.descricao) };
-    format!("{}{descricao} | {} {secao} | {disjuntor} | {} VA", l.circuito.id, l.esquema.codigo(), br(l.circuito.potencia.round()))
+    if l.descricao.is_empty() { l.circuito.id.clone() } else { format!("{} - {}", l.circuito.id, l.descricao) }
+}
+
+/// Um ramal: o disjuntor, os traços, os dados e a caixa, a partir de `inicio`, que é a barra de onde ele sai.
+struct Ramal<'a> {
+    y: f64,
+    /// `None`: reserva.
+    linha: Option<&'a Linha>,
+    caixa: String,
+}
+
+fn desenhar_ramal(p: &mut Pecas, ramal: &Ramal, inicio: f64, largura_caixa: f64) {
+    let y = ramal.y;
+    p.linha([inicio, y], [DISJUNTOR_X, y], None);
+    p.no(inicio, y);
+    p.disjuntor(DISJUNTOR_X, y, DISJUNTOR_LARGURA);
+    p.linha([DISJUNTOR_X + DISJUNTOR_LARGURA, y], [CAIXA_X, y], None);
+    let meio_disjuntor = DISJUNTOR_X + DISJUNTOR_LARGURA / 2.0;
+    match ramal.linha {
+        Some(l) => {
+            let polos = l.esquema.fases();
+            let corrente = l.escolha.disjuntor.map_or("-".to_string(), br);
+            p.texto(&format!("{polos}P/{corrente}A"), [meio_disjuntor, y + 0.20], ALTURA * 0.8, HAlign::Center);
+            p.texto(&format!("Curva {}", l.curva.codigo()), [meio_disjuntor, y - 0.14], ALTURA * 0.7, HAlign::Center);
+            p.marcas(MARCAS_X, y, polos, l.esquema.neutro(), l.esquema.protecao());
+            p.texto(&l.circuito.id, [MARCAS_X, y + 0.16], ALTURA * 0.8, HAlign::Center);
+            p.texto(&l.escolha.secao.map_or("#-".to_string(), |s| format!("#{}", br(s))), [MARCAS_X, y - 0.16], ALTURA * 0.8, HAlign::Center);
+            p.texto(&format!("POT: {} VA", br(l.circuito.potencia.round())), [DADOS_X, y + 0.11], ALTURA * 0.8, HAlign::Left);
+            p.texto(&format!("FASE: {}", l.fases_texto()), [DADOS_X, y - 0.11], ALTURA * 0.8, HAlign::Left);
+        }
+        None => p.texto("1P", [meio_disjuntor, y + 0.20], ALTURA * 0.8, HAlign::Center),
+    }
+    p.retangulo(CAIXA_X, y - 0.14, CAIXA_X + largura_caixa, y + 0.14);
+    p.texto(&ramal.caixa, [CAIXA_X + ALTURA / 2.0, y], ALTURA, HAlign::Left);
 }
 
 /// O conteúdo do bloco, com o canto superior esquerdo na origem, em unidades do desenho.
-fn pecas(r: &ResumoQuadro, alimentado_por: &str, m: f64) -> Vec<EntityKind> {
-    let u = |v: f64| v / m;
-    let mut p = Vec::new();
-    p.push(texto(&format!("DIAGRAMA UNIFILAR: {}", r.tag), [0.0, u(-0.05)], u(ALTURA * 1.5), HAlign::Left));
-    p.push(texto(&format!("{} | Alimentado por: {alimentado_por}", r.alimentacao()), [0.0, u(-0.27)], u(ALTURA), HAlign::Left));
-    // O alimentador e o disjuntor geral.
-    let topo = -0.65;
-    p.push(linha([0.0, u(topo)], [u(0.3), u(topo)]));
-    disjuntor(&mut p, 0.3, topo, &u);
-    p.push(linha([u(0.47), u(topo)], [u(BARRA), u(topo)]));
-    let a = &r.alimentador;
-    let geral = format!(
-        "{} | {}",
-        a.secao.map_or("-".to_string(), |s| format!("#{}", br(s))),
-        a.disjuntor.map_or("-".to_string(), |d| format!("{} A", br(d)))
-    );
-    p.push(texto(&geral, [0.0, u(topo + 0.13)], u(ALTURA * 0.8), HAlign::Left));
+fn pecas(r: &ResumoQuadro, alimentado_por: &str, m: f64) -> Vec<(EntityKind, Option<u8>)> {
+    let mut p = Pecas { lista: Vec::new(), m };
+    p.texto(&format!("PAINEL: {}", r.tag), [0.0, -0.08], ALTURA * 1.5, HAlign::Left);
+    p.texto(&format!("POT. INSTALADA: {} VA", br(r.demanda.instalada.round())), [0.0, -0.30], ALTURA, HAlign::Left);
+    p.texto(&format!("POT. DEMANDADA: {} VA", br(r.demanda.demandada.round())), [0.0, -0.46], ALTURA, HAlign::Left);
+    p.texto(&format!("{} | Alimentado por: {alimentado_por}", r.alimentacao()), [0.0, -0.62], ALTURA * 0.8, HAlign::Left);
 
+    // Onde cada ramal fica: os grupos de DR, os circuitos sem DR e as reservas.
     let grupos = r.grupos_dr();
-    let mut y = topo - 0.3;
-    let mut fundo = topo;
-    let mut circuito = |p: &mut Vec<EntityKind>, l: &Linha, y: f64| {
-        p.push(linha([u(DERIVACAO), u(y)], [u(DERIVACAO + 0.2), u(y)]));
-        disjuntor(p, DERIVACAO + 0.2, y, &u);
-        p.push(linha([u(DERIVACAO + 0.37), u(y)], [u(DERIVACAO + 0.7), u(y)]));
-        p.push(texto(&rotulo(l), [u(DERIVACAO + 0.75), u(y)], u(ALTURA), HAlign::Left));
-        fundo = y;
-    };
-    for g in &grupos {
-        let membros: Vec<&Linha> = r.linhas.iter().filter(|l| g.circuitos.iter().any(|c| c.eq_ignore_ascii_case(&l.circuito.id))).collect();
-        // A barra até o DR, o DR e a barra dos circuitos dele.
-        p.push(linha([u(BARRA), u(y)], [u(1.25), u(y)]));
-        for (a, b) in [
-            ([1.25, y - 0.1], [1.6, y - 0.1]),
-            ([1.6, y - 0.1], [1.6, y + 0.1]),
-            ([1.6, y + 0.1], [1.25, y + 0.1]),
-            ([1.25, y + 0.1], [1.25, y - 0.1]),
-        ] {
-            p.push(linha([u(a[0]), u(a[1])], [u(b[0]), u(b[1])]));
-        }
-        let dr = g.dr.map_or(g.nome.clone(), |d| format!("{} {} A/30 mA", g.nome, br(d)));
-        p.push(texto(&dr, [u(1.0), u(y + 0.2)], u(ALTURA * 0.8), HAlign::Left));
-        p.push(linha([u(1.6), u(y)], [u(DERIVACAO), u(y)]));
+    let mut y = -1.15;
+    let mut faixas: Vec<(usize, f64, f64)> = Vec::new();
+    let mut ramais_grupo: Vec<Ramal> = Vec::new();
+    for (i, g) in grupos.iter().enumerate() {
         let inicio = y;
-        for l in membros {
-            circuito(&mut p, l, y);
+        for l in r.linhas.iter().filter(|l| g.circuitos.iter().any(|c| c.eq_ignore_ascii_case(&l.circuito.id))) {
+            ramais_grupo.push(Ramal { y, linha: Some(l), caixa: rotulo(l) });
             y -= PASSO;
         }
-        p.push(linha([u(DERIVACAO), u(inicio)], [u(DERIVACAO), u(y + PASSO)]));
-        // Espaço para o rótulo do próximo DR.
-        y -= 0.12;
+        faixas.push((i, inicio, y + PASSO));
+        y -= FOLGA_GRUPO;
     }
+    let mut ramais_barra: Vec<Ramal> = Vec::new();
     for l in r.linhas.iter().filter(|l| l.grupo_dr.is_none()) {
-        p.push(linha([u(BARRA), u(y)], [u(DERIVACAO), u(y)]));
-        circuito(&mut p, l, y);
+        ramais_barra.push(Ramal { y, linha: Some(l), caixa: rotulo(l) });
         y -= PASSO;
     }
-    // A barra do quadro, até o último circuito.
-    p.push(linha([u(BARRA), u(topo)], [u(BARRA), u(fundo.min(topo))]));
-    p
+    for id in r.ids_de_reserva() {
+        ramais_barra.push(Ramal { y, linha: None, caixa: format!("{id} - RESERVA") });
+        y -= PASSO;
+    }
+    let largura_caixa = ramais_grupo
+        .iter()
+        .chain(&ramais_barra)
+        .map(|x| x.caixa.chars().count() as f64 * ALTURA * crate::tabela::LARGURA_CARACTERE + ALTURA)
+        .fold(1.0, f64::max);
+
+    // Os nós da barra principal: um por grupo de DR e um por ramal direto.
+    let mut nos: Vec<f64> = faixas.iter().map(|(_, a, b)| (a + b) / 2.0).collect();
+    nos.extend(ramais_barra.iter().map(|x| x.y));
+    let topo = nos.iter().copied().fold(-1.15, f64::max);
+    let fundo = nos.iter().copied().fold(-1.15, f64::min);
+    let entrada = (topo + fundo) / 2.0;
+    p.linha([BARRA, topo], [BARRA, fundo], None);
+
+    // A entrada: o alimentador com fase, neutro e terra, e o disjuntor geral até a barra.
+    let geral_x = 1.15;
+    let neutro = r.config.sistema != Some(crate::quadro::SistemaQuadro::BifasicoSemNeutro);
+    p.linha([0.0, entrada], [geral_x, entrada], None);
+    p.marcas(0.45, entrada, r.fases_quadro.clamp(1, 3), neutro, true);
+    let a = &r.alimentador;
+    p.texto(&a.secao.map_or("#-".to_string(), |s| format!("#{}", br(s))), [0.45, entrada - 0.18], ALTURA * 0.8, HAlign::Center);
+    p.disjuntor(geral_x, entrada, 0.26);
+    p.texto(&format!("In: {} A", a.disjuntor.map_or("-".to_string(), br)), [geral_x + 0.13, entrada + 0.24], ALTURA * 0.8, HAlign::Center);
+    p.linha([geral_x + 0.26, entrada], [BARRA, entrada], None);
+    p.no(BARRA, entrada);
+
+    // Os grupos de DR: o módulo e a sub-barra de onde saem os circuitos dele.
+    for (i, y0, y1) in &faixas {
+        let Some(g) = grupos.get(*i) else { continue };
+        let meio = (y0 + y1) / 2.0;
+        p.no(BARRA, meio);
+        p.linha([BARRA, meio], [DR_X, meio], None);
+        p.retangulo(DR_X, meio - 0.12, DR_X + DR_LARGURA, meio + 0.12);
+        p.texto("DR", [DR_X + DR_LARGURA / 2.0, meio], ALTURA, HAlign::Center);
+        p.linha([DR_X + DR_LARGURA, meio], [SUB_BARRA, meio], None);
+        let corrente = g.dr.map_or("-".to_string(), br);
+        p.texto(&format!("IN: {corrente}A / 30mA"), [DR_X + DR_LARGURA / 2.0, meio + 0.20], ALTURA * 0.7, HAlign::Center);
+        p.texto(&g.nome, [DR_X + DR_LARGURA / 2.0, meio - 0.20], ALTURA * 0.7, HAlign::Center);
+        p.linha([SUB_BARRA, *y0], [SUB_BARRA, *y1], None);
+        p.no(SUB_BARRA, meio);
+    }
+    for ramal in &ramais_grupo {
+        desenhar_ramal(&mut p, ramal, SUB_BARRA, largura_caixa);
+    }
+    for ramal in &ramais_barra {
+        desenhar_ramal(&mut p, ramal, BARRA, largura_caixa);
+    }
+    p.lista
 }
 
 /// O texto de quem alimenta o quadro, para o título do diagrama.
@@ -135,8 +247,12 @@ fn gravar_bloco(doc: &mut Drawing, r: &ResumoQuadro, analise: &Analise) {
     let m = if r.metros_por_unidade > 0.0 { r.metros_por_unidade } else { 1.0 };
     let nome = nome_do_bloco(r.quadro);
     let mut b = Block::new(&nome);
-    for k in pecas(r, &quem_alimenta(r, analise), m) {
-        b.entities.push(Entity::new(doc.new_handle(), k));
+    for (k, cor) in pecas(r, &quem_alimenta(r, analise), m) {
+        let mut e = Entity::new(doc.new_handle(), k);
+        if let Some(c) = cor {
+            e.common.color = Color::Index(c);
+        }
+        b.entities.push(e);
     }
     doc.blocks.insert(nome, Arc::new(b));
 }

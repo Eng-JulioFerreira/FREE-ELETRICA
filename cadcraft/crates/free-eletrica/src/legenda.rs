@@ -41,7 +41,7 @@ fn pecas(analise: &Analise, m: f64) -> Vec<EntityKind> {
     let u = |v: f64| v / m;
     let lista = linhas(analise);
     let maior = lista.iter().map(|(_, n)| n.chars().count()).max().unwrap_or(0).max(20);
-    let largura = COLUNA_SIMBOLO + maior as f64 * ALTURA * 0.8 + 2.0 * ALTURA;
+    let largura = COLUNA_SIMBOLO + maior as f64 * ALTURA * crate::tabela::LARGURA_CARACTERE + 2.0 * ALTURA;
     let fundo = -TITULO - LINHA * lista.len() as f64;
     let mut p = vec![texto("LEGENDA DE SÍMBOLOS", [u(largura / 2.0), u(-TITULO / 2.0)], u(ALTURA * 1.4), HAlign::Center)];
     for (a, b) in [([0.0, 0.0], [largura, 0.0]), ([largura, 0.0], [largura, fundo]), ([largura, fundo], [0.0, fundo]), ([0.0, fundo], [0.0, 0.0])] {

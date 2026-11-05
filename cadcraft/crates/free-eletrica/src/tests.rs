@@ -2316,10 +2316,13 @@ fn esquemas_curva_grupos_de_dr_e_unifilar() {
             .collect()
     };
     let t = textos(&d);
-    assert!(t.iter().any(|x| x.starts_with("DIAGRAMA UNIFILAR")), "{t:?}");
-    assert!(t.iter().any(|x| x.starts_with("IDR2") && x.contains("30 mA")), "{t:?}");
-    assert!(t.iter().any(|x| x.starts_with("1 ") && x.contains("A/D")), "{t:?}");
-    assert_eq!(t.iter().filter(|x| x.contains(" VA")).count(), 3, "{t:?}");
+    assert!(t.iter().any(|x| x.starts_with("PAINEL:")), "{t:?}");
+    assert!(t.iter().any(|x| x.starts_with("POT. INSTALADA:")) && t.iter().any(|x| x.starts_with("POT. DEMANDADA:")), "{t:?}");
+    assert!(t.contains(&"IDR2".to_string()) && t.iter().any(|x| x.starts_with("IN: ") && x.ends_with("A / 30mA")), "{t:?}");
+    assert!(t.contains(&"Curva D".to_string()), "{t:?}");
+    assert_eq!(t.iter().filter(|x| x.starts_with("POT: ")).count(), 3, "{t:?}");
+    assert_eq!(t.iter().filter(|x| x.starts_with("FASE: ")).count(), 3, "{t:?}");
+    assert!(t.iter().any(|x| x.ends_with(" - RESERVA")), "{t:?}");
     unifilar::gerar(&mut d, &analise, &setup, q, Some([50.0, 50.0])).unwrap();
     assert_eq!(posicao(&d), [50.0, 50.0]);
     assert!(unifilar::gerar(&mut d, &analise, &setup, q, Some([f64::NAN, 0.0])).is_err());
@@ -3046,4 +3049,168 @@ fn tag_com_chamada_a_45_graus_e_base() {
     fiacao::limpar(&mut d, None);
     fiacao::regenerar(&mut d, &setup, Some(&[e])).unwrap();
     assert_eq!(fiacao::tags(&d).len(), 1);
+}
+
+/// As peças de texto de um bloco: (valor, x, y, altura, alinhamento).
+fn textos_do_bloco(d: &Drawing, nome: &str) -> Vec<(String, f64, f64, f64, cadcraft_doc::HAlign)> {
+    d.blocks[nome]
+        .entities
+        .iter()
+        .filter_map(|e| if let EntityKind::Text(t) = &e.kind { Some((t.value.clone(), t.insert.x, t.insert.y, t.height, t.halign)) } else { None })
+        .collect()
+}
+
+#[test]
+fn tabela_do_quadro_fica_toda_dentro_da_moldura() {
+    use cadcraft_doc::HAlign;
+    let mut d = planta();
+    let setup = Setup::default();
+    let qd = quadro(&d);
+    editar::definir_montagem(&mut d, qd, Some(quadro::Montagem::Embutir)).unwrap();
+    editar::definir_observacoes(&mut d, qd, Some("Quadro de PVC com barramentos de cobre, porta com fecho e identificação de todos os circuitos com etiquetas permanentes, conforme o memorial do projeto")).unwrap();
+    editar::definir_descricao(&mut d, qd, "2", Some("Uma descrição de circuito bem comprida, para alargar a coluna")).unwrap();
+    let a = analisar(&d);
+    tabela::inserir(&mut d, &a, &setup, qd, [0.0, 0.0]).unwrap();
+    let nome = format!("{}{}", tabela::PREFIXO, qd.hex());
+    let molduras: Vec<_> =
+        d.blocks[&nome].entities.iter().filter_map(|e| if let EntityKind::LwPolyline(p) = &e.kind { Some(p.clone()) } else { None }).collect();
+    assert_eq!(molduras.len(), 1, "um retângulo externo contínuo");
+    assert!(molduras[0].closed);
+    let (xs, ys): (Vec<f64>, Vec<f64>) = molduras[0].vertices.iter().map(|v| (v.p.x, v.p.y)).unzip();
+    let (x1, y0) = (xs.iter().copied().fold(0.0, f64::max), ys.iter().copied().fold(0.0, f64::min));
+    assert!(xs.iter().copied().fold(f64::MAX, f64::min) == 0.0 && ys.iter().copied().fold(f64::MIN, f64::max) == 0.0);
+    // Nenhum texto vaza, nem no pior caso de largura estimada.
+    let textos = textos_do_bloco(&d, &nome);
+    for (t, x, y, h, alinhar) in &textos {
+        let w = t.chars().count() as f64 * h * tabela::LARGURA_CARACTERE;
+        let (a, b) = if *alinhar == HAlign::Center { (x - w / 2.0, x + w / 2.0) } else { (*x, x + w) };
+        assert!(a >= -1e-9 && b <= x1 + 1e-9, "{t}: {a} a {b} em 0 a {x1}");
+        assert!(y - h / 2.0 >= y0 - 1e-9 && y + h / 2.0 <= 1e-9, "{t}: y {y} em {y0} a 0");
+    }
+    // Nenhuma linha da grade sai da moldura.
+    for e in d.blocks[&nome].entities.iter() {
+        if let EntityKind::Line(l) = &e.kind {
+            for p in [l.a, l.b] {
+                assert!(p.x >= -1e-9 && p.x <= x1 + 1e-9 && p.y >= y0 - 1e-9 && p.y <= 1e-9, "{l:?}");
+            }
+        }
+    }
+    let tem = |v: &str| textos.iter().any(|(t, ..)| t.starts_with(v));
+    for v in [
+        "PAINEL: QD-01",
+        "ALIMENTAÇÃO:",
+        "NÚMERO DE MÓDULOS:",
+        "MONTAGEM: Embutir",
+        "Observações: Quadro de PVC",
+        "ALIMENTADOR:",
+        "CIRCUITO",
+        "DESCRIÇÃO",
+        "CORRENTE (A)",
+        "TENSÃO (V)",
+        "F.P",
+        "POTÊNCIA REAL (W)",
+        "Queda de Tensão (%)",
+        "Seção do Circuito (mm²)",
+        "DISJUNTOR (A)",
+        "FASE R (VA)",
+        "Isolação",
+        "RESERVA",
+        "POTÊNCIA TOTAL (VA)",
+        "DEMANDA:",
+        "TIPO DE CARGA",
+        "POTÊNCIA INSTALADA",
+        "FATOR DE DEMANDA",
+        "POTÊNCIA DEMANDADA",
+        "TOTAIS DO PAINEL",
+        "POTÊNCIA INSTALADA (VA)",
+        "POTÊNCIA DEMANDADA (VA)",
+        "CORRENTE INSTALADA (A)",
+        "CORRENTE DEMANDADA (A)",
+    ] {
+        assert!(tem(v), "falta {v}: {textos:?}");
+    }
+    // O rodapé fica dividido ao meio: os totais à direita.
+    let totais = textos.iter().find(|(t, ..)| t == "TOTAIS DO PAINEL").unwrap();
+    assert!(perto(totais.1, x1 * 0.75, 1e-9), "{} em {x1}", totais.1);
+    let r = quadro::rotear(&d, &a, &setup, qd).unwrap();
+    assert_eq!(r.reservas(), 2, "{} circuitos", r.linhas.len());
+    assert!(r.modulos() >= r.reservas());
+}
+
+#[test]
+fn reservas_e_modulos_do_quadro() {
+    use quadro::reservas_da_norma as n;
+    assert_eq!((n(0), n(6), n(7), n(12), n(13), n(30), n(31), n(40)), (2, 2, 3, 3, 4, 4, 5, 6));
+    let setup = Setup::default();
+    let mut d = metros();
+    let q = qd(&mut d, 0.0, 0.0);
+    let a = tug(&mut d, 3.0, 0.0, "1");
+    let b = tug(&mut d, 3.0, 2.0, "5");
+    eletroduto::inserir(&mut d, q, a, rota::Instalacao::Teto, 0.0).unwrap();
+    eletroduto::inserir(&mut d, q, b, rota::Instalacao::Teto, 0.0).unwrap();
+    let resumo = |d: &Drawing| quadro::rotear(d, &analisar(d), &setup, q).unwrap();
+    let r = resumo(&d);
+    assert_eq!(r.ids_de_reserva(), ["6", "7"], "depois do maior número");
+    // 2 unipolares + 2 reservas + o geral.
+    assert_eq!(r.modulos(), 2 + 2 + u32::from(r.fases_quadro));
+    editar::definir_grupo_dr(&mut d, q, "1", Some("IDR1")).unwrap();
+    assert_eq!(resumo(&d).modulos(), 2 + 2 + u32::from(r.fases_quadro) + 2, "um DR de dois polos");
+    editar::definir_reservas(&mut d, q, Some(0)).unwrap();
+    assert!(resumo(&d).ids_de_reserva().is_empty());
+    editar::definir_modulos(&mut d, q, Some(36)).unwrap();
+    assert_eq!(resumo(&d).modulos(), 36);
+    assert!(editar::definir_modulos(&mut d, q, Some(quadro::MAXIMO_MODULOS + 1)).is_err());
+    assert!(editar::definir_reservas(&mut d, q, Some(quadro::MAXIMO_RESERVAS + 1)).is_err());
+    editar::definir_reservas(&mut d, q, None).unwrap();
+    assert_eq!(resumo(&d).reservas(), 2);
+}
+
+#[test]
+fn diagrama_unifilar_com_entrada_barra_dr_e_reservas() {
+    use cadcraft_doc::color::Color;
+    let setup = Setup::default();
+    let mut d = metros();
+    let q = qd(&mut d, 0.0, 0.0);
+    let a = tug(&mut d, 3.0, 0.0, "1");
+    let b = tug(&mut d, 3.0, 2.0, "2");
+    let c = tug(&mut d, 3.0, 4.0, "3");
+    for x in [a, b, c] {
+        eletroduto::inserir(&mut d, q, x, rota::Instalacao::Teto, 0.0).unwrap();
+    }
+    editar::definir_descricao(&mut d, q, "1", Some("Sala")).unwrap();
+    editar::definir_grupo_dr(&mut d, q, "1", Some("IDR1")).unwrap();
+    editar::definir_grupo_dr(&mut d, q, "2", Some("IDR1")).unwrap();
+    editar::definir_sobrescrita(&mut d, q, "3", Some(2.5), Some(20.0)).unwrap();
+    let an = analisar(&d);
+    unifilar::gerar(&mut d, &an, &setup, q, Some([0.0, 0.0])).unwrap();
+    let nome = format!("{}{}", unifilar::PREFIXO, q.hex());
+    let textos = textos_do_bloco(&d, &nome);
+    let achar = |v: &str| textos.iter().find(|(t, ..)| t == v).unwrap_or_else(|| panic!("falta {v}: {textos:?}"));
+    let tem = |v: &str| textos.iter().any(|(t, ..)| t.starts_with(v));
+    for v in ["PAINEL:", "POT. INSTALADA:", "POT. DEMANDADA:", "In: ", "IN: ", "1 - Sala", "POT: ", "FASE: "] {
+        assert!(tem(v), "falta {v}: {textos:?}");
+    }
+    // O circuito 3 sai da barra: disjuntor, número em cima e bitola embaixo; as reservas fecham a lista.
+    let disjuntor = achar("1P/20A");
+    let secao = achar("#2,5");
+    let numero = textos.iter().find(|(t, _, y, ..)| t == "3" && *y > secao.2).unwrap();
+    assert!(numero.2 > secao.2 && disjuntor.2 > secao.2);
+    let reservas: Vec<_> = textos.iter().filter(|(t, ..)| t.ends_with(" - RESERVA")).collect();
+    assert_eq!(reservas.len(), 2, "o mínimo da NBR 5410");
+    assert!(reservas.iter().all(|r| r.2 < secao.2), "as reservas vêm no fim");
+    assert!(reservas.iter().any(|r| r.0 == "4 - RESERVA"), "{reservas:?}");
+    // Fase vermelha, neutro azul e terra verde, nos traços.
+    let cor = |c: u8| d.blocks[&nome].entities.iter().filter(|e| e.common.color == Color::Index(c)).count();
+    assert!(cor(1) >= 4 && cor(5) >= 1 && cor(3) >= 1, "{} {} {}", cor(1), cor(5), cor(3));
+    // O disjuntor é curvo; a barra tem nós; a caixa fica alinhada à direita.
+    let contar = |f: &dyn Fn(&EntityKind) -> bool| d.blocks[&nome].entities.iter().filter(|e| f(&e.kind)).count();
+    assert_eq!(contar(&|k| matches!(k, EntityKind::Arc(_))), 3 + 2 + 1, "circuitos, reservas e o geral");
+    assert!(contar(&|k| matches!(k, EntityKind::Circle(_))) >= 6);
+    let caixas: Vec<f64> = textos.iter().filter(|(t, ..)| t.contains(" - ")).map(|(_, x, ..)| *x).collect();
+    assert!(caixas.windows(2).all(|p| perto(p[0], p[1], 1e-9)), "{caixas:?}");
+    // Um quadro sem nenhum circuito também gera, sem travar.
+    let mut v = metros();
+    let q2 = qd(&mut v, 0.0, 0.0);
+    let an = analisar(&v);
+    assert!(unifilar::gerar(&mut v, &an, &setup, q2, None).is_ok());
 }

@@ -55,6 +55,58 @@ pub const CHAVE_CABO_QUADRO: &str = "CABO_PADRAO_QUADRO";
 /// Quem alimenta o quadro: [`CONCESSIONARIA`] ou o handle de outro quadro.
 pub const CHAVE_ALIMENTADO_POR: &str = "ALIMENTADO_POR";
 pub const CONCESSIONARIA: &str = "CONCESSIONARIA";
+/// Como o quadro é montado: `EMBUTIR` ou `SOBREPOR`.
+pub const CHAVE_MONTAGEM: &str = "MONTAGEM_QUADRO";
+/// As observações do quadro, para o cabeçalho da tabela.
+pub const CHAVE_OBSERVACOES: &str = "OBS_QUADRO";
+/// O número de módulos, quando o projetista o define.
+pub const CHAVE_MODULOS: &str = "MODULOS_QUADRO";
+/// Quantos circuitos reserva, quando o projetista os define.
+pub const CHAVE_RESERVAS: &str = "RESERVAS_QUADRO";
+/// O máximo aceito em módulos e reservas: entrada hostil não vira uma tabela sem fim.
+pub const MAXIMO_MODULOS: u32 = 500;
+pub const MAXIMO_RESERVAS: u32 = 100;
+
+/// Como um quadro é montado.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Montagem {
+    Embutir,
+    Sobrepor,
+}
+
+impl Montagem {
+    pub const TODAS: [Montagem; 2] = [Self::Embutir, Self::Sobrepor];
+
+    pub fn codigo(self) -> &'static str {
+        match self {
+            Self::Embutir => "EMBUTIR",
+            Self::Sobrepor => "SOBREPOR",
+        }
+    }
+
+    pub fn nome(self) -> &'static str {
+        match self {
+            Self::Embutir => "Embutir",
+            Self::Sobrepor => "Sobrepor",
+        }
+    }
+
+    pub fn de_codigo(t: &str) -> Option<Self> {
+        Self::TODAS.into_iter().find(|m| m.codigo().eq_ignore_ascii_case(t.trim()))
+    }
+}
+
+/// Os espaços de reserva de um quadro de distribuição (NBR 5410, 6.5.4.7, tabela 59): 2 até 6 circuitos,
+/// 3 de 7 a 12, 4 de 13 a 30 e 15 % acima disso.
+pub fn reservas_da_norma(circuitos: usize) -> u32 {
+    match circuitos {
+        0..=6 => 2,
+        7..=12 => 3,
+        13..=30 => 4,
+        n => (n as f64 * 0.15).ceil() as u32,
+    }
+}
 
 /// O sistema de um quadro.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -149,6 +201,12 @@ pub struct ConfigQuadro {
     pub cabo: Option<nbr5410::TipoCabo>,
     /// [`CONCESSIONARIA`] ou o handle de outro quadro.
     pub alimentado_por: Option<String>,
+    pub montagem: Option<Montagem>,
+    pub observacoes: Option<String>,
+    /// `None`: a estimativa de [`ResumoQuadro::modulos`].
+    pub modulos: Option<u32>,
+    /// `None`: o mínimo da NBR 5410.
+    pub reservas: Option<u32>,
 }
 
 /// A configuração gravada num quadro.
@@ -159,6 +217,10 @@ pub fn config_do_quadro(q: &PontoEletrico) -> ConfigQuadro {
         tensao: valor(CHAVE_TENSAO_NOMINAL).and_then(TensaoNominal::de_codigo),
         cabo: valor(CHAVE_CABO_QUADRO).and_then(nbr5410::TipoCabo::de_codigo),
         alimentado_por: valor(CHAVE_ALIMENTADO_POR).map(str::trim).filter(|v| !v.is_empty()).map(str::to_string),
+        montagem: valor(CHAVE_MONTAGEM).and_then(Montagem::de_codigo),
+        observacoes: valor(CHAVE_OBSERVACOES).map(str::trim).filter(|v| !v.is_empty()).map(str::to_string),
+        modulos: valor(CHAVE_MODULOS).and_then(|v| v.trim().parse().ok()).filter(|n| *n <= MAXIMO_MODULOS),
+        reservas: valor(CHAVE_RESERVAS).and_then(|v| v.trim().parse().ok()).filter(|n| *n <= MAXIMO_RESERVAS),
     }
 }
 
@@ -550,6 +612,37 @@ impl ResumoQuadro {
         }
         grupos.sort_by(|a, b| crate::circuito::ordem_natural(&a.nome, &b.nome));
         grupos
+    }
+
+    /// Quantos circuitos reserva o quadro tem: os definidos ou o mínimo da NBR 5410.
+    pub fn reservas(&self) -> u32 {
+        self.config.reservas.unwrap_or_else(|| reservas_da_norma(self.linhas.len() + self.vazios.len()))
+    }
+
+    /// Os números dos circuitos reserva, depois do maior número em uso.
+    pub fn ids_de_reserva(&self) -> Vec<String> {
+        let ids = self.linhas.iter().map(|l| l.circuito.id.as_str()).chain(self.vazios.iter().map(|v| v.id.as_str()));
+        let maior = ids.filter_map(|i| i.trim().parse::<u32>().ok()).max().unwrap_or(0);
+        (1..=self.reservas()).map(|k| (maior.saturating_add(k)).to_string()).collect()
+    }
+
+    /// O número de módulos do quadro: o definido ou uma estimativa, sem o DPS. Um módulo por polo dos
+    /// disjuntores (reservas como unipolares), mais o geral, e 2 ou 4 por DR, conforme os circuitos dele.
+    pub fn modulos(&self) -> u32 {
+        if let Some(n) = self.config.modulos {
+            return n;
+        }
+        let polos: u32 = self.linhas.iter().map(|l| u32::from(l.esquema.fases())).sum();
+        let vazios = u32::try_from(self.vazios.len()).unwrap_or(0);
+        let drs: u32 = self
+            .grupos_dr()
+            .iter()
+            .map(|g| {
+                let multipolar = self.linhas.iter().any(|l| g.circuitos.contains(&l.circuito.id) && l.esquema.fases() > 1);
+                if multipolar { 4 } else { 2 }
+            })
+            .sum();
+        polos + vazios + self.reservas() + u32::from(self.fases_quadro.clamp(1, 3)) + drs
     }
 
     /// A alimentação do quadro em texto: "220/127 V bifásico".
