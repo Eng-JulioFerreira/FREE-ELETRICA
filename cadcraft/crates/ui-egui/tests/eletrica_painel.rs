@@ -623,6 +623,22 @@ fn paleta_ferramentas_e_fluxo_completo() {
     h.key_press(egui::Key::Escape);
     h.run_steps(3);
 
+    // Tags de fiação: a mini-barra escolhe o modo com o comando correndo.
+    h.get_by_label("Tags de fiação").click();
+    h.run_steps(3);
+    assert_eq!(h.state().session.running.as_ref().map(|r| r.id.as_str()), Some("elefiacao"));
+    h.get_by_label("Com linha de chamada").click();
+    h.run_steps(3);
+    let uid = h.state().session.state().unwrap().uid;
+    assert_eq!(free_eletrica::fiacao::modo(uid), free_eletrica::fiacao::ModoTag::Chamada);
+    h.get_by_label("Direto no eletroduto").click();
+    h.run_steps(3);
+    assert_eq!(free_eletrica::fiacao::modo(uid), free_eletrica::fiacao::ModoTag::Direto);
+    assert!(h.state().session.running.is_some());
+    h.state_mut().session.input(Input::Cancel).unwrap();
+    h.run_steps(3);
+    assert!(h.query_by_label("Com linha de chamada").is_none(), "a mini-barra some com o comando");
+
     // Editor de blocos: a paleta vira as propriedades da família.
     assert!(h.query_by_label("Propriedades da Família").is_none());
     h.state_mut().run("bedit", json!({ "name": "MINHA-TOMADA", "create": true })).unwrap();

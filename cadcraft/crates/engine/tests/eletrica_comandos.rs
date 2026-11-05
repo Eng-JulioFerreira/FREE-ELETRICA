@@ -1305,7 +1305,7 @@ fn excluir_por_comandos() {
 }
 
 #[test]
-fn tag_de_fiacao_em_dois_cliques() {
+fn tag_de_fiacao_direta_ou_com_chamada() {
     let _setup = trava_setup();
     let mut s = Session::new();
     let mut d = Drawing::new_metric();
@@ -1318,34 +1318,47 @@ fn tag_de_fiacao_em_dois_cliques() {
     let q = ponto(&mut s, "QDG", 0.0);
     let f = ponto(&mut s, "TOM-SIM-BAIXA", 6.0);
     let e = s.execute("eleeletroduto", &json!({ "de": q, "para": f, "tracado": "STRAIGHT" })).unwrap()["eletroduto"].as_str().unwrap().to_string();
-    let tag = |s: &Session, t: &str| s.doc().unwrap().model.get(Handle::parse_hex(t).unwrap()).unwrap().clone();
-    // Clicando: fora do eletroduto só avisa; a prévia mostra a chamada; os dois pontos ficam na tag.
+    let insercao = |s: &Session| {
+        let (h, _) = free_eletrica::fiacao::tags(s.doc().unwrap())[0];
+        match &s.doc().unwrap().model.get(h).unwrap().kind {
+            EntityKind::Insert(i) => (h, i.insert.x, i.insert.y),
+            _ => panic!("inserção"),
+        }
+    };
+    // O modo começa direto: um clique põe a tag sobre o eletroduto.
+    assert_eq!(s.execute("eletrica.fiacao.modo", &json!({})).unwrap()["modo"], "direct");
+    assert!(s.execute("eletrica.fiacao.modo", &json!({ "modo": "x" })).is_err());
     s.start("elefiacao").unwrap();
     s.input(Input::Point(Vec2::new(3.0, 5.0))).unwrap();
-    assert!(s.running.is_some());
-    s.input(Input::Point(Vec2::new(2.0, 0.0))).unwrap();
-    let previa = s.preview(Vec2::new(5.0, 2.0));
-    assert_eq!(previa.len(), 2);
+    assert!(s.running.is_some(), "fora do eletroduto só avisa");
+    s.input(Input::Point(Vec2::new(2.0, 0.05))).unwrap();
+    assert!(s.preview(Vec2::new(5.0, 2.0)).is_empty());
+    let (h, x, y) = insercao(&s);
+    assert_eq!((x, y), (2.0, 0.0));
+    // Com linha de chamada, trocada com o comando correndo: dois cliques e a prévia elástica.
+    s.input(Input::Keyword("Chamada".into())).unwrap();
+    s.input(Input::Point(Vec2::new(3.0, 0.0))).unwrap();
+    assert_eq!(s.preview(Vec2::new(5.0, 2.0)).len(), 2);
     s.input(Input::Point(Vec2::new(5.0, 2.0))).unwrap();
-    assert!(s.running.is_some(), "continua para o próximo eletroduto");
     assert!(s.preview(Vec2::new(5.0, 2.0)).is_empty(), "a prévia some");
     s.input(Input::Enter).unwrap();
     assert!(s.running.is_none());
-    let (h, _) = free_eletrica::fiacao::tags(s.doc().unwrap())[0];
-    let EntityKind::Insert(i) = &tag(&s, &h.hex()).kind.clone() else { panic!("inserção") };
-    assert_eq!((i.insert.x, i.insert.y, i.rotation), (5.0, 2.0, 0.0));
+    assert_eq!(insercao(&s), (h, 5.0, 2.0), "uma tag por eletroduto");
+    assert_eq!(s.execute("eletrica.fiacao.modo", &json!({})).unwrap()["modo"], "leader");
     // Por JSON, sem interface, e o erro não trava.
     let r = s.execute("elefiacao", &json!({ "ancora": [4.0, 0.0], "tag": [6.0, 1.0] })).unwrap();
-    assert_eq!(r["tag"], h.hex(), "uma tag por eletroduto");
-    assert!(s.execute("elefiacao", &json!({ "ancora": [4.0, 0.0] })).is_err());
+    assert_eq!((r["tag"].as_str(), r["modo"].as_str()), (Some(h.hex().as_str()), Some("leader")));
+    let r = s.execute("elefiacao", &json!({ "ancora": [4.0, 0.0] })).unwrap();
+    assert_eq!(r["modo"], "direct");
+    assert!(s.execute("elefiacao", &json!({ "modo": "leader", "ancora": [4.0, 0.0] })).is_err());
+    assert!(s.execute("elefiacao", &json!({ "modo": "zig", "ancora": [4.0, 0.0] })).is_err());
     assert!(s.execute("elefiacao", &json!({ "tag": [4.0, 0.0] })).is_err());
     assert!(s.execute("elefiacao", &json!({ "ancora": [40.0, 40.0], "tag": [6.0, 1.0] })).is_err());
     assert!(s.execute("elefiacao", &json!({ "eletroduto": q, "ancora": [4.0, 0.0], "tag": [6.0, 1.0] })).is_err());
-    s.execute("elefiacao", &json!({ "eletroduto": e, "ancora": [4.0, 0.0], "tag": [7.0, 1.0] })).unwrap();
+    s.execute("elefiacao", &json!({ "eletroduto": e, "modo": "leader", "ancora": [4.0, 0.0], "tag": [7.0, 1.0] })).unwrap();
     // ELEREGEN preserva.
     s.execute("eleregen", &json!({})).unwrap();
-    let EntityKind::Insert(i) = &tag(&s, &h.hex()).kind.clone() else { panic!("inserção") };
-    assert_eq!((i.insert.x, i.insert.y), (7.0, 1.0));
+    assert_eq!(insercao(&s), (h, 7.0, 1.0));
     // Esc no segundo clique cancela sem criar nada.
     s.execute("elefiacao", &json!({ "limpar": true })).unwrap();
     s.start("elefiacao").unwrap();

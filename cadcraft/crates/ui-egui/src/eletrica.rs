@@ -705,7 +705,7 @@ const PALETA_ELETRICA: [Secao; 6] = [
                 Icone::Chamada,
                 "Tags de fiação",
                 "elefiacao",
-                "1º clique no eletroduto, 2º clique onde os símbolos ficam: a chamada sai a 45° até a base, e o resto dela fica guardado. Enter no começo: uma tag no meio de todos (ELEFIACAO)",
+                "A mini-barra escolhe: direto no eletroduto (um clique) ou com linha de chamada (o ponto no eletroduto e o início da base). Enter no começo: uma tag no meio de todos (ELEFIACAO)",
             ),
             ferr(Icone::Grade, "Tabela do quadro", "elequadro_tabela", "Desenha o quadro de cargas num ponto da planta (ELEQUADRO_TABELA)"),
             ferr(Icone::Quadro, "Diagrama unifilar", "eleunifilar", "Desenha o diagrama unifilar do quadro num ponto da planta (ELEUNIFILAR)"),
@@ -1340,7 +1340,7 @@ pub fn sobre_canvas(app: &mut CadApp, ui: &mut egui::Ui, painter: &egui::Painter
         (j.inspecao, j.destaque.clone().filter(|_| j.abertas.contains(&Qual::Cargas)))
     };
     let comando = app.session.running.as_ref().map(|r| r.id.clone());
-    let barra = comando.as_deref().filter(|c| matches!(*c, "eleponto" | "eleeletroduto" | "elecircuito")).map(str::to_string);
+    let barra = comando.as_deref().filter(|c| matches!(*c, "eleponto" | "eleeletroduto" | "elecircuito" | "elefiacao")).map(str::to_string);
     if !inspecao && destaque.is_none() && barra.is_none() {
         return;
     }
@@ -1499,6 +1499,7 @@ fn barra_de_contexto(app: &CadApp, ctx: &egui::Context, xf: &crate::canvas::Xf, 
                     trava(&JANELAS).filtro_barra = filtro;
                 }
                 "eleeletroduto" => barra_eletroduto(ui, uid, s, acoes),
+                "elefiacao" => barra_fiacao(ui, uid, acoes),
                 _ => barra_circuito(ui, uid, st, acoes),
             });
         });
@@ -1589,6 +1590,21 @@ fn barra_ponto(ui: &mut egui::Ui, uid: u64, st: &Estado, s: &Setup, filtro: &mut
                 }
             }
         });
+    }
+}
+
+/// A mini-barra de ELEFIACAO: o modo da tag, que vale também com o comando correndo.
+fn barra_fiacao(ui: &mut egui::Ui, uid: u64, acoes: &mut Vec<Acao>) {
+    let atual = ele::fiacao::modo(uid);
+    ui.label("Tag");
+    for m in ele::fiacao::ModoTag::TODOS {
+        let dica = match m {
+            ele::fiacao::ModoTag::Direto => "Um clique no eletroduto: as marcas ficam sobre ele, perpendiculares",
+            ele::fiacao::ModoTag::Chamada => "Dois cliques: o ponto no eletroduto e o início da base, no ângulo que quiser",
+        };
+        if ui.selectable_label(atual == m, m.nome()).on_hover_text(dica).clicked() {
+            acoes.push(Acao::Rodar("eletrica.fiacao.modo", json!({ "modo": m.codigo() })));
+        }
     }
 }
 

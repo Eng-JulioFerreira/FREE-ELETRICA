@@ -117,9 +117,10 @@ Configurações; os outros usam valores típicos de catálogo no código, a conf
 
 ### Tags de fiação
 
-`ELEFIACAO`, em dois cliques, põe no eletroduto uma tag com linha de chamada: 45° a partir do primeiro clique até o nível do
-segundo, e a base horizontal que as marcas atravessam. O XDATA guarda `leader_anchor_x/y` e `leader_tag_x/y`, e `ELEREGEN` refaz
-essa geometria. Em lote (Enter no começo, ou o JSON sem pontos), a tag fica perpendicular ao meio do trecho. A tag é um bloco
+`ELEFIACAO` tem dois modos, escolhidos na mini-barra ou por `eletrica.fiacao.modo`. Direto no eletroduto (`direct`): um clique, e
+as marcas ficam sobre o trecho, perpendiculares a ele naquele ponto. Com linha de chamada (`leader`): o primeiro clique no
+eletroduto e o segundo onde a base começa; a chamada liga os dois pontos no ângulo que der, e a base horizontal sai do segundo
+clique. O XDATA guarda `tag_mode`, `leader_anchor_x/y` e `leader_tag_x/y`, e `ELEREGEN` refaz essa geometria. Em lote (Enter no começo, ou o JSON sem pontos), a tag fica perpendicular ao meio do trecho. A tag é um bloco
 `ELE_TAG_FIACAO_<handle>` com uma marca por condutor, agrupadas por circuito:
 
 - em cima, o número do circuito sobre a primeira marca e a letra sobre cada retorno (lado a

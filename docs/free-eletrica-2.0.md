@@ -269,7 +269,7 @@ Limites:
 - **Legenda e materiais:** `LEGENDA` e `DESC_MATERIAL` em toda família e todo ponto; `ELELEGENDA` desenha a legenda da prancha.
 - **Famílias de fábrica:** 6 tomadas e 18 interruptores, com o preenchimento dizendo a altura ou a função.
 - **Eletrodutos:** a cor é do material e o tipo de linha é do caminhamento.
-- **Tag em dois cliques:** chamada a 45° com base, guardada no XDATA.
+- **Tag de fiação:** direto no eletroduto (um clique) ou com linha de chamada em ângulo livre (dois cliques), guardada no XDATA.
 - **Tabela do quadro:** tudo dentro de uma moldura, com cabeçalho, grade, total e rodapé dividido.
 - **Unifilar:** entrada com fase, neutro e terra, disjuntores curvos, barra com nós, DR com sub-barra e reservas.
 

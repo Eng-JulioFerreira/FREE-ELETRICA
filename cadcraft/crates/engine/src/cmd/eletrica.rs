@@ -39,8 +39,11 @@ pub fn specs() -> Vec<CommandSpec> {
             .params("{interruptor: hex, luminarias: [hex], comando?: letter (default: the next free key of the switch)} → {comando, circuito, luminarias}")
             .interactive(|_| Ok(Box::new(ComandoM::default()))),
         CommandSpec::new("elefiacao", "Wiring Tags", run_fiacao)
-            .params("{quadro?: hex | TAG, eletrodutos?: [hex], limpar?: bool (erase the tags), ancora?: [x, y] (the point on the conduit), tag?: [x, y] (where the wiring symbols go: draws the 45° leader and its base line), eletroduto?: hex (default: the conduit at `ancora`)} (default: every conduit, at its middle) → {tags, criadas, apagadas, tabelas, avisos} or {tag}")
+            .params("{quadro?: hex | TAG, eletrodutos?: [hex], limpar?: bool (erase the tags), ancora?: [x, y] (the point on the conduit), modo?: direct | leader (default: direct without `tag`, leader with it), tag?: [x, y] (leader: where the base line starts; the leader takes the angle of the two points), eletroduto?: hex (default: the conduit at `ancora`)} (default: every conduit, at its middle) → {tags, criadas, apagadas, tabelas, avisos} or {tag}")
             .interactive(|_| Ok(Box::new(FiacaoM::default()))),
+        CommandSpec::new("eletrica.fiacao.modo", "Wiring Tag Mode", run_modo_fiacao)
+            .params("{modo?: direct | leader} → how the next ELEFIACAO clicks place the tag, also while it runs: {modo}")
+            .noundo(),
         CommandSpec::new("eleregen", "Regenerate Electrical Drawing", run_regen).params("{} → updates tags and tables in place, keeping their positions: {tags, apagadas, tabelas, avisos}"),
         CommandSpec::new("elequadro_tabela", "Load Schedule Table", run_tabela)
             .params("{quadro?: hex | TAG, ponto: [x, y]} → draws the load schedule as a block at the point (moves it if the board already has one): {tabela}")
@@ -783,9 +786,18 @@ fn regenerar_criando(s: &mut Session, criar: &[Handle]) -> Result<ele::fiacao::R
 
 fn run_fiacao(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "elefiacao";
-    if p.get("ancora").is_some() || p.get("tag").is_some() {
-        let ancora = p.get("ancora").and_then(ponto_de).ok_or_else(|| bad(CMD, "`ancora` ([x, y]) is required with `tag`"))?;
-        let tag = p.get("tag").and_then(ponto_de).ok_or_else(|| bad(CMD, "`tag` ([x, y]) is required with `ancora`"))?;
+    if p.get("ancora").is_some() || p.get("tag").is_some() || p.get("modo").is_some() {
+        let ancora = p.get("ancora").and_then(ponto_de).ok_or_else(|| bad(CMD, "`ancora` ([x, y]) is required"))?;
+        let modo = match p.get("modo").filter(|v| !v.is_null()) {
+            Some(v) => v.as_str().and_then(ele::fiacao::ModoTag::de_codigo).ok_or_else(|| bad(CMD, "`modo` must be direct or leader"))?,
+            None if p.get("tag").is_some() => ele::fiacao::ModoTag::Chamada,
+            None => ele::fiacao::ModoTag::Direto,
+        };
+        let tag = match (modo, p.get("tag")) {
+            (_, Some(v)) => ponto_de(v).ok_or_else(|| bad(CMD, "`tag` must be [x, y]"))?,
+            (ele::fiacao::ModoTag::Chamada, None) => return Err(bad(CMD, "`tag` ([x, y]) is required with a leader")),
+            (ele::fiacao::ModoTag::Direto, None) => ancora,
+        };
         let e = match p.get("eletroduto").filter(|v| !v.is_null()) {
             Some(_) => handle(CMD, p, "eletroduto")?,
             None => {
@@ -796,8 +808,8 @@ fn run_fiacao(s: &mut Session, p: &Value) -> Result<Value> {
             }
         };
         preparar(s)?;
-        let h = ele::fiacao::criar_chamada(s.doc_mut()?, &ele::setup::atual(), e, ancora, tag).map_err(|e| bad(CMD, e))?;
-        return Ok(json!({ "tag": h.hex() }));
+        let h = ele::fiacao::criar_tag(s.doc_mut()?, &ele::setup::atual(), e, modo, ancora, tag).map_err(|e| bad(CMD, e))?;
+        return Ok(json!({ "tag": h.hex(), "modo": modo.codigo() }));
     }
     let lista: Option<Vec<Handle>> = match (p.get("eletrodutos"), p.get("quadro")) {
         (Some(_), _) => Some(handles(CMD, p, "eletrodutos")?),
@@ -821,6 +833,16 @@ fn run_fiacao(s: &mut Session, p: &Value) -> Result<Value> {
     json_de(&regenerar_criando(s, &lista)?)
 }
 
+fn run_modo_fiacao(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "eletrica.fiacao.modo";
+    let uid = s.state()?.uid;
+    if let Some(v) = p.get("modo").filter(|v| !v.is_null()) {
+        let m = v.as_str().and_then(ele::fiacao::ModoTag::de_codigo).ok_or_else(|| bad(CMD, "`modo` must be direct or leader"))?;
+        ele::fiacao::definir_modo(uid, m);
+    }
+    Ok(json!({ "modo": ele::fiacao::modo(uid).codigo() }))
+}
+
 fn run_regen(s: &mut Session, _p: &Value) -> Result<Value> {
     let r = ele::fiacao::regenerar(s.doc_mut()?, &ele::setup::atual(), None).map_err(erro)?;
     let mut v = json_de(&r)?;
@@ -830,8 +852,9 @@ fn run_regen(s: &mut Session, _p: &Value) -> Result<Value> {
     Ok(v)
 }
 
-/// ELEFIACAO digitado, em dois cliques: o ponto no eletroduto, onde a chamada nasce, e o ponto da planta
-/// onde os símbolos ficam, até Enter. Enter no começo põe uma tag no meio de todos os eletrodutos.
+/// ELEFIACAO digitado, até Enter. Direto no eletroduto: um clique no trecho. Com linha de chamada: o ponto no
+/// eletroduto e o início da base. A mini-barra (ou `Direto` e `Chamada` digitados) troca o modo. Enter no
+/// começo põe uma tag no meio de todos os eletrodutos.
 #[derive(Default)]
 struct FiacaoM {
     /// O primeiro clique: o eletroduto e o ponto nele.
@@ -863,15 +886,23 @@ impl Interactive for FiacaoM {
         preparar(s)?;
         Ok(Step::Continue)
     }
-    fn prompt(&self, _s: &Session) -> Prompt {
+    fn prompt(&self, s: &Session) -> Prompt {
+        let modo = s.state().map(|st| ele::fiacao::modo(st.uid)).unwrap_or_default();
+        let onde = match modo {
+            ele::fiacao::ModoTag::Direto => "Clique no eletroduto, onde a tag fica",
+            ele::fiacao::ModoTag::Chamada => "Clique no eletroduto, onde a chamada nasce",
+        };
         match (self.ancora, self.feitas) {
-            (Some(_), _) => Prompt::new("Clique onde os símbolos da fiação ficam", Accept::POINT),
-            (None, 0) => Prompt::new("Clique no eletroduto, onde a chamada nasce", Accept::POINT).default("Todos, no meio"),
-            (None, _) => Prompt::new("Clique no próximo eletroduto (Enter termina)", Accept::POINT),
+            (Some(_), _) => Prompt::new("Clique onde a base da tag começa", Accept::POINT),
+            (None, 0) => Prompt::new(onde, Accept::POINT).default("Todos, no meio").kw(&["Direto", "Chamada"]),
+            (None, _) => Prompt::new(format!("{onde} (Enter termina)"), Accept::POINT).kw(&["Direto", "Chamada"]),
         }
     }
-    fn preview(&self, _s: &Session, cursor: Vec2) -> Vec<EntityKind> {
-        self.ancora.map_or_else(Vec::new, |(_, a)| ele::fiacao::Chamada { ancora: a, tag: [cursor.x, cursor.y] }.linhas())
+    fn preview(&self, s: &Session, cursor: Vec2) -> Vec<EntityKind> {
+        let m = metros(s).unwrap_or(1.0);
+        self.ancora.map_or_else(Vec::new, |(_, a)| {
+            ele::fiacao::Chamada { modo: ele::fiacao::ModoTag::Chamada, ancora: a, tag: [cursor.x, cursor.y] }.linhas(m)
+        })
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
         match i {
@@ -885,19 +916,41 @@ impl Interactive for FiacaoM {
                 let todos = todos_os_eletrodutos(s)?;
                 Self::executar(s, todos)
             }
+            Input::Keyword(k) | Input::Text(k) => {
+                match ele::fiacao::ModoTag::de_codigo(&k).or_else(|| match k.trim().to_ascii_lowercase().as_str() {
+                    "direto" => Some(ele::fiacao::ModoTag::Direto),
+                    "chamada" => Some(ele::fiacao::ModoTag::Chamada),
+                    _ => None,
+                }) {
+                    Some(m) => {
+                        ele::fiacao::definir_modo(s.state()?.uid, m);
+                        self.ancora = None;
+                    }
+                    None => s.echo("Opção inválida."),
+                }
+                Ok(Step::Continue)
+            }
             Input::Point(q) => {
                 let q = [q.x, q.y];
+                let modo = ele::fiacao::modo(s.state()?.uid);
+                let criar = |s: &mut Session, h: Handle, a: [f64; 2], t: [f64; 2]| {
+                    ele::fiacao::criar_tag(s.doc_mut()?, &ele::setup::atual(), h, modo, a, t).map_err(erro)
+                };
                 match self.ancora.take() {
                     None => {
                         let (setup, m) = (ele::setup::atual(), metros(s)?);
-                        match ele::eletroduto::eletroduto_em(s.doc()?, &setup, q, m) {
-                            Some((h, p)) => self.ancora = Some((h, p)),
-                            None => s.echo("Clique num eletroduto."),
+                        match (ele::eletroduto::eletroduto_em(s.doc()?, &setup, q, m), modo) {
+                            (Some((h, p)), ele::fiacao::ModoTag::Direto) => match criar(s, h, p, p) {
+                                Ok(_) => self.feitas += 1,
+                                Err(e) => s.echo(e.to_string()),
+                            },
+                            (Some((h, p)), ele::fiacao::ModoTag::Chamada) => self.ancora = Some((h, p)),
+                            (None, _) => s.echo("Clique num eletroduto."),
                         }
                     }
-                    Some((h, a)) => match ele::fiacao::criar_chamada(s.doc_mut()?, &ele::setup::atual(), h, a, q) {
+                    Some((h, a)) => match criar(s, h, a, q) {
                         Ok(_) => self.feitas += 1,
-                        Err(e) => s.echo(e),
+                        Err(e) => s.echo(e.to_string()),
                     },
                 }
                 Ok(Step::Continue)

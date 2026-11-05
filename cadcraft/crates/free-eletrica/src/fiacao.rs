@@ -11,9 +11,10 @@
 //!   four-way).
 //!
 //! **Tags não destrutivas:** cada eletroduto tem uma tag, um bloco próprio
-//! (`ELE_TAG_FIACAO_<handle>`). Com dois cliques ([`criar_chamada`]), ela nasce com uma linha de chamada:
-//! um trecho a 45° a partir do eletroduto até o nível do segundo clique e uma base horizontal, que as
-//! marcas atravessam. Os dois pontos ficam no XDATA, e regenerar refaz exatamente essa geometria.
+//! (`ELE_TAG_FIACAO_<handle>`). [`criar_tag`] tem dois modos: direto no eletroduto, com um clique, as marcas
+//! sobre a própria linha, perpendiculares a ela naquele ponto; e com linha de chamada, em dois cliques, uma
+//! reta do ponto no eletroduto até o segundo clique, no ângulo que resultar, e a base horizontal que as
+//! marcas atravessam. O modo e os pontos ficam no XDATA, e regenerar refaz exatamente essa geometria.
 //! Criada em lote, a tag vai para o meio do eletroduto, e regenerar mantém o deslocamento que o
 //! projetista deu a ela; afastada, ganha uma linha de chamada reta. O eletroduto de cada trecho é o menor do tipo do projeto que
 //! comporta os condutores com a ocupação máxima da NBR 5410 (6.2.11.1.6), salvo se travado à mão.
@@ -48,7 +49,8 @@ const CHAVE_OFFSET_X: &str = "user_offset_x";
 const CHAVE_OFFSET_Y: &str = "user_offset_y";
 const CHAVE_ANCORA_X: &str = "anchor_x";
 const CHAVE_ANCORA_Y: &str = "anchor_y";
-/// XDATA da tag com linha de chamada a 45°: o ponto no eletroduto e o ponto da tag.
+/// XDATA da tag posta por clique: o modo (`direct` ou `leader`), o ponto no eletroduto e o início da base.
+const CHAVE_MODO: &str = "tag_mode";
 const CHAVE_LIDER_X: &str = "leader_anchor_x";
 const CHAVE_LIDER_Y: &str = "leader_anchor_y";
 const CHAVE_LIDER_TAG_X: &str = "leader_tag_x";
@@ -104,29 +106,80 @@ const AFASTAMENTO_TEXTO: f64 = MEIA_MARCA + FOLGA + ALTURA_TEXTO / 2.0;
 const AFASTAMENTO_DIAMETRO: f64 = AFASTAMENTO_TEXTO + ALTURA_TEXTO / 2.0 + FOLGA + ALTURA_DIAMETRO / 2.0;
 /// A tag afastada mais que isto do eletroduto (m) ganha linha de chamada.
 const OFFSET_COM_CHAMADA: f64 = 0.02;
-/// Folga entre o joelho da chamada e os textos, e a sobra da base depois da última marca (m).
-const FOLGA_JOELHO: f64 = 0.04;
+/// Folga entre o início da base e as marcas, e a sobra da base depois da última marca (m).
+const FOLGA_BASE: f64 = 0.04;
+/// O comprimento da base na prévia do segundo clique (m).
+const BASE_DA_PREVIA: f64 = 0.30;
 
-/// A linha de chamada de uma tag: o ponto no eletroduto e o ponto da tag.
+/// Como a tag posta por clique fica no desenho.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ModoTag {
+    /// Um clique: as marcas sobre o próprio eletroduto, perpendiculares a ele naquele ponto.
+    #[default]
+    Direto,
+    /// Dois cliques: a linha de chamada, no ângulo que os cliques derem, e a base horizontal.
+    Chamada,
+}
+
+impl ModoTag {
+    pub const TODOS: [ModoTag; 2] = [Self::Direto, Self::Chamada];
+
+    pub fn codigo(self) -> &'static str {
+        match self {
+            Self::Direto => "direct",
+            Self::Chamada => "leader",
+        }
+    }
+
+    pub fn nome(self) -> &'static str {
+        match self {
+            Self::Direto => "Direto no eletroduto",
+            Self::Chamada => "Com linha de chamada",
+        }
+    }
+
+    pub fn de_codigo(t: &str) -> Option<Self> {
+        let t = t.trim();
+        Self::TODOS.into_iter().find(|m| m.codigo().eq_ignore_ascii_case(t) || m.nome().eq_ignore_ascii_case(t))
+    }
+}
+
+/// O modo de cada desenho aberto (`uid`), que a mini-barra de ELEFIACAO escolhe.
+static MODO: std::sync::Mutex<BTreeMap<u64, ModoTag>> = std::sync::Mutex::new(BTreeMap::new());
+
+/// Escolhe o modo das próximas tags do desenho `desenho`.
+pub fn definir_modo(desenho: u64, modo: ModoTag) {
+    MODO.lock().unwrap_or_else(|e| e.into_inner()).insert(desenho, modo);
+}
+
+/// O modo das tags do desenho `desenho`.
+pub fn modo(desenho: u64) -> ModoTag {
+    MODO.lock().unwrap_or_else(|e| e.into_inner()).get(&desenho).copied().unwrap_or_default()
+}
+
+/// Uma tag posta por clique: o modo, o ponto no eletroduto e o início da base (no modo direto, o mesmo
+/// ponto).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Chamada {
+    pub modo: ModoTag,
     pub ancora: [f64; 2],
     pub tag: [f64; 2],
 }
 
 impl Chamada {
-    /// Onde o trecho a 45° encontra o nível da tag, indo para o lado dela.
-    pub fn joelho(&self) -> [f64; 2] {
-        let lado = if self.tag[0] < self.ancora[0] { -1.0 } else { 1.0 };
-        [self.ancora[0] + lado * (self.tag[1] - self.ancora[1]).abs(), self.tag[1]]
-    }
-
-    /// As linhas da chamada, para a prévia do segundo clique.
-    pub fn linhas(&self) -> Vec<EntityKind> {
+    /// A prévia do segundo clique: a linha de chamada até o cursor e o começo da base. `m` = metros por
+    /// unidade.
+    pub fn linhas(&self, m: f64) -> Vec<EntityKind> {
+        if self.modo == ModoTag::Direto {
+            return Vec::new();
+        }
+        let m = if m > 0.0 { m } else { 1.0 };
         let v = |p: [f64; 2]| Vec3::new(p[0], p[1], 0.0);
-        let j = self.joelho();
-        vec![EntityKind::Line(Line { a: v(self.ancora), b: v(j) }), EntityKind::Line(Line { a: v(j), b: v(self.tag) })]
+        let lado = if self.ancora[0] <= self.tag[0] { 1.0 } else { -1.0 };
+        let ponta = [self.tag[0] + lado * BASE_DA_PREVIA / m, self.tag[1]];
+        vec![EntityKind::Line(Line { a: v(self.ancora), b: v(self.tag) }), EntityKind::Line(Line { a: v(self.tag), b: v(ponta) })]
     }
 }
 
@@ -135,8 +188,8 @@ impl Chamada {
 enum LigacaoLocal {
     /// A linha reta da tag movida com MOVE.
     Reta([f64; 2]),
-    /// A chamada a 45°: o ponto no eletroduto e o x do joelho, com a tag na origem.
-    Lider { ancora: [f64; 2], joelho_x: f64 },
+    /// A linha de chamada: o ponto no eletroduto, com o início da base na origem.
+    Lider { ancora: [f64; 2] },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
@@ -712,12 +765,13 @@ fn bloco_da_tag(
     // de circuitos vizinhos não ficarem um sobre o outro.
     let faixas: Vec<(f64, f64)> = circuitos.iter().zip(&grupos).map(|(k, g)| faixa_do_grupo(k, g, setup)).collect();
     let largura: f64 = faixas.iter().map(|(lo, hi)| (hi - lo) / m).sum::<f64>() + faixas.len().saturating_sub(1) as f64 * entre;
-    let fora = largura / 2.0 + FOLGA_JOELHO / m;
-    let centro = match ligacao {
-        Some(LigacaoLocal::Lider { ancora, joelho_x }) if ancora[0] <= 0.0 => (joelho_x + fora).max(0.0),
-        Some(LigacaoLocal::Lider { joelho_x, .. }) => (joelho_x - fora).min(0.0),
-        _ => 0.0,
+    // Com a chamada, as marcas ficam na base, do lado contrário ao eletroduto: a linha não corta os textos.
+    let fora = largura / 2.0 + FOLGA_BASE / m;
+    let lado = match ligacao {
+        Some(LigacaoLocal::Lider { ancora }) if ancora[0] > 0.0 => -1.0,
+        _ => 1.0,
     };
+    let centro = if matches!(ligacao, Some(LigacaoLocal::Lider { .. })) { lado * fora } else { 0.0 };
     let mut borda = centro - largura / 2.0;
     let mut pecas: Vec<EntityKind> = Vec::new();
     for ((k, grupo), (lo, hi)) in circuitos.iter().zip(&grupos).zip(&faixas) {
@@ -764,10 +818,9 @@ fn bloco_da_tag(
     let reta = |a: [f64; 2], b: [f64; 2]| EntityKind::Line(Line { a: Vec3::new(a[0], a[1], 0.0), b: Vec3::new(b[0], b[1], 0.0) });
     match ligacao {
         Some(LigacaoLocal::Reta(c)) => pecas.push(reta([0.0, 0.0], c)),
-        Some(LigacaoLocal::Lider { ancora, joelho_x }) => {
-            pecas.push(reta(ancora, [joelho_x, 0.0]));
-            let ponta = if ancora[0] <= 0.0 { centro + fora } else { centro - fora };
-            pecas.push(reta([joelho_x, 0.0], [ponta, 0.0]));
+        Some(LigacaoLocal::Lider { ancora }) => {
+            pecas.push(reta(ancora, [0.0, 0.0]));
+            pecas.push(reta([0.0, 0.0], [centro + lado * fora, 0.0]));
         }
         None => {}
     }
@@ -823,38 +876,55 @@ fn gravar_no_eletroduto(doc: &mut Drawing, t: &Trecho, tag: Option<Handle>) {
 }
 
 fn gravar_chamada(xd: &mut Vec<cadcraft_doc::RawTag>, c: &Chamada) {
+    xdata::gravar(xd, CHAVE_MODO, Some(c.modo.codigo()));
     xdata::gravar(xd, CHAVE_LIDER_X, Some(&c.ancora[0].to_string()));
     xdata::gravar(xd, CHAVE_LIDER_Y, Some(&c.ancora[1].to_string()));
     xdata::gravar(xd, CHAVE_LIDER_TAG_X, Some(&c.tag[0].to_string()));
     xdata::gravar(xd, CHAVE_LIDER_TAG_Y, Some(&c.tag[1].to_string()));
 }
 
-/// A chamada gravada numa tag. O ponto da tag é onde ela está agora: movê-la com MOVE vale.
+/// A tag posta por clique. O ponto da tag é onde ela está agora: movê-la com MOVE vale. No modo direto,
+/// ela é o próprio ponto no eletroduto. Tags da versão anterior, sem o modo, tinham chamada.
 fn ler_chamada(doc: &Drawing, tag: Handle) -> Option<Chamada> {
     let e = doc.model.get(tag)?;
     let EntityKind::Insert(i) = &e.kind else { return None };
     let xd = xdata::ler(&e.common.xdata);
-    Some(Chamada { ancora: [numero_do_xdata(&xd, CHAVE_LIDER_X)?, numero_do_xdata(&xd, CHAVE_LIDER_Y)?], tag: [i.insert.x, i.insert.y] })
+    let ancora = [numero_do_xdata(&xd, CHAVE_LIDER_X)?, numero_do_xdata(&xd, CHAVE_LIDER_Y)?];
+    let modo = xd.iter().find(|(k, _)| k.eq_ignore_ascii_case(CHAVE_MODO)).and_then(|(_, v)| ModoTag::de_codigo(v)).unwrap_or(ModoTag::Chamada);
+    let aqui = [i.insert.x, i.insert.y];
+    Some(match modo {
+        ModoTag::Direto => Chamada { modo, ancora: aqui, tag: aqui },
+        ModoTag::Chamada => Chamada { modo, ancora, tag: aqui },
+    })
 }
 
-/// O ponto da chamada volta para cima do eletroduto, se ele mudou de lugar, e a tag vai junto. Com o
-/// eletroduto no lugar, nada muda.
+/// O ponto no eletroduto mais perto de `q` e o ângulo do traçado ali.
+fn no_eletroduto(doc: &Drawing, eletroduto: Handle, q: [f64; 2], m: f64) -> Option<([f64; 2], f64, f64)> {
+    let t = doc.model.get(eletroduto).and_then(|e| rota::tracado(&e.kind, 0.005 / m))?;
+    let (p, d, i) = rota::perto_do_tracado(&t, q)?;
+    let (a, b) = (t.get(i)?, t.get(i + 1)?);
+    Some((p, d, (b[1] - a[1]).atan2(b[0] - a[0])))
+}
+
+/// O ponto volta para cima do eletroduto, se ele mudou de lugar, e a tag vai junto. Com o eletroduto no
+/// lugar, nada muda.
 fn ajustar_chamada(doc: &Drawing, eletroduto: Handle, c: Chamada, m: f64) -> Chamada {
-    let Some((q, d, _)) =
-        doc.model.get(eletroduto).and_then(|e| rota::tracado(&e.kind, 0.005 / m)).and_then(|t| rota::perto_do_tracado(&t, c.ancora))
-    else {
-        return c;
-    };
+    let Some((q, d, _)) = no_eletroduto(doc, eletroduto, c.ancora, m) else { return c };
     if d * m < 1e-6 {
         return c;
     }
     let (dx, dy) = (q[0] - c.ancora[0], q[1] - c.ancora[1]);
-    Chamada { ancora: q, tag: [c.tag[0] + dx, c.tag[1] + dy] }
+    match c.modo {
+        ModoTag::Direto => Chamada { ancora: q, tag: q, ..c },
+        ModoTag::Chamada => Chamada { ancora: q, tag: [c.tag[0] + dx, c.tag[1] + dy], ..c },
+    }
 }
 
-/// Põe a tag de um eletroduto com a linha de chamada a 45°: o primeiro clique (`ancora`, levado para cima
-/// do eletroduto) e o segundo (`tag`). Uma tag que já existe passa para essa geometria. Devolve a tag.
-pub fn criar_chamada(doc: &mut Drawing, setup: &Setup, eletroduto: Handle, ancora: [f64; 2], tag: [f64; 2]) -> Result<Handle, String> {
+/// Põe a tag de um eletroduto pelo clique: `ancora` (levado para cima do eletroduto) e, com a chamada,
+/// `tag`, o início da base. No modo direto, `tag` não conta. Uma tag que já existe passa para essa
+/// geometria. Devolve a tag.
+pub fn criar_tag(doc: &mut Drawing, setup: &Setup, eletroduto: Handle, modo: ModoTag, ancora: [f64; 2], tag: [f64; 2]) -> Result<Handle, String> {
+    let tag = if modo == ModoTag::Direto { ancora } else { tag };
     if !ancora.iter().chain(tag.iter()).all(|v| v.is_finite()) {
         return Err("ponto inválido".into());
     }
@@ -864,7 +934,8 @@ pub fn criar_chamada(doc: &mut Drawing, setup: &Setup, eletroduto: Handle, ancor
     let t = rota::tracado(&e.kind, 0.005 / m).ok_or("o objeto não é um eletroduto aberto")?;
     let (q, _, _) = rota::perto_do_tracado(&t, ancora).ok_or("não achei o ponto no eletroduto")?;
     garantir_blocos(doc, m);
-    let c = Chamada { ancora: q, tag };
+    let tag = if modo == ModoTag::Direto { q } else { tag };
+    let c = Chamada { modo, ancora: q, tag };
     let mut xd = Vec::new();
     xdata::gravar(&mut xd, rota::CHAVE_ESQUEMA, Some(rota::VERSAO_ESQUEMA));
     xdata::gravar(&mut xd, CHAVE_PAI, Some(&eletroduto.hex()));
@@ -955,9 +1026,16 @@ pub fn regenerar(doc: &mut Drawing, setup: &Setup, criar: Option<&[Handle]>) -> 
         if ja.is_none() && !criar.is_some_and(|l| l.contains(&h)) {
             continue;
         }
-        // A chamada a 45° guarda os dois pontos: a base fica horizontal, em qualquer ângulo do eletroduto.
+        // A tag posta por clique guarda o modo e os pontos. Com a chamada, a base fica horizontal; direto, as
+        // marcas seguem a tangente do eletroduto naquele ponto.
         let lider = ja.and_then(|t| ler_chamada(doc, t)).map(|c| ajustar_chamada(doc, h, c, m));
-        let rotacao = if lider.is_some() { 0.0 } else { angulo_de_leitura(angulo) };
+        let rotacao = match &lider {
+            Some(l) if l.modo == ModoTag::Direto => {
+                no_eletroduto(doc, h, l.ancora, m).map_or(angulo_de_leitura(angulo), |(_, _, a)| angulo_de_leitura(a))
+            }
+            Some(_) => 0.0,
+            None => angulo_de_leitura(angulo),
+        };
         // O deslocamento: o que o projetista moveu em relação ao meio do eletroduto na última
         // regeneração. Se o eletroduto mudou, a tag o acompanha.
         let offset = ja
@@ -973,7 +1051,8 @@ pub fn regenerar(doc: &mut Drawing, setup: &Setup, criar: Option<&[Handle]>) -> 
         let (s, c) = rotacao.sin_cos();
         // O ponto do eletroduto em coordenadas locais: -offset girado de -rotacao.
         let ligacao = match &lider {
-            Some(l) => Some(LigacaoLocal::Lider { ancora: [l.ancora[0] - l.tag[0], l.ancora[1] - l.tag[1]], joelho_x: l.joelho()[0] - l.tag[0] }),
+            Some(l) if l.modo == ModoTag::Direto => None,
+            Some(l) => Some(LigacaoLocal::Lider { ancora: [l.ancora[0] - l.tag[0], l.ancora[1] - l.tag[1]] }),
             None => afastada.then_some(LigacaoLocal::Reta([-offset[0] * c - offset[1] * s, offset[0] * s - offset[1] * c])),
         };
         let nome = nome_do_bloco(h);

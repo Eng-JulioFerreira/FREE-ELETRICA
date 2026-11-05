@@ -84,8 +84,9 @@ Depois de mudar algo, calcule e aplique de novo.
 
 ## 6. Documente
 
-- **Tags de fiação:** clique no eletroduto e depois onde os símbolos devem ficar. A chamada sai a 45° até a base. Enter no
-  começo põe uma tag no meio de todos os eletrodutos. Mova a tag para onde quiser; ela fica lá.
+- **Tags de fiação:** a mini-barra escolhe o modo. **Direto no eletroduto:** um clique no trecho, e as marcas ficam sobre ele.
+  **Com linha de chamada:** clique no eletroduto e depois onde a base da tag começa; a chamada liga os dois pontos no ângulo que
+  você der. Enter no começo põe uma tag no meio de todos os eletrodutos. Mova a tag para onde quiser; ela fica lá.
 - **Tabela do quadro:** desenha o quadro de cargas, todo dentro de uma moldura. Montagem, módulos, reservas e observações ficam
   no Inspetor de atributos do quadro.
 - **Diagrama unifilar:** desenha o diagrama do quadro num ponto da planta, com os grupos de DR e as reservas.

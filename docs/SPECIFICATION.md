@@ -78,7 +78,7 @@ próprio `CommandSpec`.
 | Circuitos | `elecircuito`, `eleremoverponto`, `elecomando`, `eletrica.circuito.criar`, `.definir`, `.descrever`, `.juntar`, `.excluir`, `.alvo` |
 | Eletrodutos | `eleeletroduto`, `eletrica.eletroduto.modelo`, `.dividir`, `.definir`, `eletrica.eletrodutos` |
 | Cálculo | `eletrica.dimensionar`, `eletrica.rotear`, `eletrica.sobrescrever`, `eletrica.quadro`, `eletrica.quadro.equilibrar`, `eletrica.cargas`, `eletrica.demanda.tabelas`, `.salvar`, `.excluir`, `eletrica.setup` |
-| Documentação | `elefiacao` (com `ancora` e `tag`: chamada a 45°), `eleregen`, `elequadro_tabela`, `eletrica.unifilar`, `eleunifilar`, `elelegenda`, `eletrica.materiais`, `eletrica.inspecionar`, `eletrica.analisar` |
+| Documentação | `elefiacao` (com `ancora`: direto no eletroduto; com `tag` também: linha de chamada), `eletrica.fiacao.modo`, `eleregen`, `elequadro_tabela`, `eletrica.unifilar`, `eleunifilar`, `elelegenda`, `eletrica.materiais`, `eletrica.inspecionar`, `eletrica.analisar` |
 
 Comandos que só existem na interface, porque abrem janelas: `ELETRICA`, `ELECONFIG`, `ELEPONTOS`, `ELEBLOCOS`, `ELEATRIBUTOS`,
 `ELECARGAS`, `ELEROTEAR`, `ELEDIMENSIONAR`, `ELEMATERIAIS`, `ELECONFERIR`, `ELEINSPECAO`.
