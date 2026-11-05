@@ -48,6 +48,8 @@ pub struct Materiais {
     pub eletrodutos: Vec<ItemEletroduto>,
     pub caixas: Vec<ItemContado>,
     pub pontos: Vec<ItemContado>,
+    /// Os pontos pela descrição comercial, a do bloco ou a da família.
+    pub conjuntos: Vec<ItemContado>,
     pub disjuntores: Vec<ItemContado>,
     /// Circuitos por grupo de DR.
     pub grupos_dr: Vec<ItemContado>,
@@ -121,6 +123,7 @@ pub fn levantar(doc: &Drawing, analise: &Analise, setup: &Setup) -> Materiais {
     m.cabos = cabos.into_values().collect();
 
     m.pontos = contar(analise.pontos.iter().map(|p| p.tipo.nome().to_string()));
+    m.conjuntos = contar(analise.pontos.iter().filter_map(|p| p.desc_material.clone()));
     m.caixas =
         contar(analise.pontos.iter().filter_map(|p| p.caixa).filter(|c| *c != crate::familia::CaixaFisica::Nenhuma).map(|c| c.nome().to_string()));
     m.pontos_sem_caixa = analise.pontos.iter().filter(|p| p.caixa.is_none()).count();

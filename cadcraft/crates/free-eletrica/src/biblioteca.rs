@@ -206,8 +206,98 @@ pub fn inserir_ponto(
 /// A caixa de passagem que ELEELETRODUTO insere ao dividir um trecho.
 pub const BLOCO_CAIXA: &str = "CX-PASSAGEM";
 /// Blocos base, na ordem da barra de inserção.
-pub const BLOCOS_BASE: [&str; 13] =
-    ["TOM-SIM-BAIXA", "TOM-TUE", "ILU-OCT", "INT-SIM", "INT-2S", "INT-3S", "INT-PAR", "INT-INT", "QDG", "QDC", "RJ45", "RACK", BLOCO_CAIXA];
+pub const BLOCOS_BASE: [&str; 31] = [
+    "TOM-SIM-BAIXA",
+    "TOM-DUP-BAIXA",
+    "TOM-SIM-MEDIA",
+    "TOM-DUP-MEDIA",
+    "TOM-SIM-ALTA",
+    "TOM-DUP-ALTA",
+    "TOM-TUE",
+    "ILU-OCT",
+    "INT-SIM",
+    "INT-2S",
+    "INT-3S",
+    "INT-PAR",
+    "INT-PAR-2S",
+    "INT-PAR-3S",
+    "INT-INT",
+    "INT-INT-2S",
+    "INT-INT-3S",
+    "INT-SIM-ALTO",
+    "INT-2S-ALTO",
+    "INT-3S-ALTO",
+    "INT-PAR-ALTO",
+    "INT-PAR-2S-ALTO",
+    "INT-PAR-3S-ALTO",
+    "INT-INT-ALTO",
+    "INT-INT-2S-ALTO",
+    "INT-INT-3S-ALTO",
+    "QDG",
+    "QDC",
+    "RJ45",
+    "RACK",
+    BLOCO_CAIXA,
+];
+
+/// A altura de uma tomada base, que o preenchimento do triângulo mostra.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Nivel {
+    Baixo,
+    Medio,
+    Alto,
+}
+
+/// Uma tomada base: (dupla, altura).
+pub fn tomada_base(nome: &str) -> Option<(bool, Nivel)> {
+    Some(match nome {
+        "TOM-SIM-BAIXA" => (false, Nivel::Baixo),
+        "TOM-DUP-BAIXA" => (true, Nivel::Baixo),
+        "TOM-SIM-MEDIA" => (false, Nivel::Medio),
+        "TOM-DUP-MEDIA" => (true, Nivel::Medio),
+        "TOM-SIM-ALTA" => (false, Nivel::Alto),
+        "TOM-DUP-ALTA" => (true, Nivel::Alto),
+        _ => return None,
+    })
+}
+
+/// A função de cada tecla, que o preenchimento do círculo mostra.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FuncaoTecla {
+    Simples,
+    Paralelo,
+    Intermediario,
+}
+
+/// Um interruptor base.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct InterruptorBase {
+    pub funcao: FuncaoTecla,
+    pub secoes: u8,
+    /// Ponto alto; sem isso, ponto médio.
+    pub alto: bool,
+}
+
+/// O interruptor base de um nome: `INT-<SIM|2S|3S|PAR|INT>[-2S|-3S][-ALTO]`.
+pub fn interruptor_base(nome: &str) -> Option<InterruptorBase> {
+    let (corpo, alto) = match nome.strip_suffix("-ALTO") {
+        Some(c) => (c, true),
+        None => (nome, false),
+    };
+    let (funcao, secoes) = match corpo {
+        "INT-SIM" => (FuncaoTecla::Simples, 1),
+        "INT-2S" => (FuncaoTecla::Simples, 2),
+        "INT-3S" => (FuncaoTecla::Simples, 3),
+        "INT-PAR" => (FuncaoTecla::Paralelo, 1),
+        "INT-PAR-2S" => (FuncaoTecla::Paralelo, 2),
+        "INT-PAR-3S" => (FuncaoTecla::Paralelo, 3),
+        "INT-INT" => (FuncaoTecla::Intermediario, 1),
+        "INT-INT-2S" => (FuncaoTecla::Intermediario, 2),
+        "INT-INT-3S" => (FuncaoTecla::Intermediario, 3),
+        _ => return None,
+    };
+    Some(InterruptorBase { funcao, secoes, alto })
+}
 
 /// Um traço do símbolo, em metros.
 enum Peca {
@@ -217,7 +307,19 @@ enum Peca {
     Cheio([(f64, f64); 3]),
     /// Anel cheio: raio interno e externo.
     Anel(f64, f64),
+    /// Círculo cheio: centro e raio.
+    Disco(f64, f64, f64),
+    /// Metade esquerda de um círculo, cheia: centro e raio.
+    MeioDisco(f64, f64, f64),
 }
+
+/// O raio do círculo do interruptor e a altura do centro do primeiro (m).
+const RAIO_TECLA: f64 = 0.075;
+const CENTRO_TECLA: f64 = 0.135;
+/// O triângulo da tomada: a base, o topo e a meia largura (m).
+const BASE_TRIANGULO: f64 = 0.0595;
+const TOPO_TRIANGULO: f64 = 0.205;
+const MEIA_BASE: f64 = 0.084;
 
 /// Um atributo da definição: tag, valor, pergunta, constante, posição do texto visível (m).
 type Att = (&'static str, String, &'static str, bool, Option<(f64, f64)>);
@@ -234,48 +336,107 @@ fn visivel(tag: &'static str, valor: &str, prompt: &'static str, pos: (f64, f64)
     (tag, valor.to_string(), prompt, false, Some(pos))
 }
 
-/// O interruptor: a caixa na parede e o círculo; `marcas` diferenciam os tipos.
-fn pecas_interruptor(marcas: &[Peca]) -> Vec<Peca> {
-    let mut v = vec![
-        Peca::Linha(-0.035, 0.0, 0.035, 0.0),
-        Peca::Linha(-0.035, 0.0, -0.035, -0.0475),
-        Peca::Linha(0.035, 0.0, 0.035, -0.0475),
-        Peca::Linha(0.035, -0.0475, -0.035, -0.0475),
-        Peca::Linha(0.0, 0.0, 0.0, 0.06),
-        Peca::Circulo(0.0, 0.135, 0.075),
-    ];
+/// O desenho de interruptor das versões anteriores: a caixa na parede, um círculo e as marcas. Só para
+/// reconhecer e trocar um bloco base antigo.
+fn pecas_interruptor_antigo(marcas: &[Peca]) -> Vec<Peca> {
+    let mut v = caixa_e_haste(0.06);
+    v.push(Peca::Circulo(0.0, CENTRO_TECLA, RAIO_TECLA));
     for m in marcas {
-        v.push(match m {
-            Peca::Linha(a, b, c, d) => Peca::Linha(*a, *b, *c, *d),
-            Peca::Circulo(a, b, c) => Peca::Circulo(*a, *b, *c),
-            Peca::Cheio(p) => Peca::Cheio(*p),
-            Peca::Anel(a, b) => Peca::Anel(*a, *b),
-        });
+        if let Peca::Linha(a, b, c, d) = m {
+            v.push(Peca::Linha(*a, *b, *c, *d));
+        }
     }
     v
 }
 
-fn pecas_tomada() -> Vec<Peca> {
+/// O bloco base no desenho antigo, se o nome teve um.
+fn geometria_antiga(nome: &str) -> Option<Vec<Peca>> {
+    let tecla = |x: f64| Peca::Linha(x, 0.205, x, 0.235);
+    let marcas: Vec<Peca> = match nome {
+        "INT-SIM" => Vec::new(),
+        "INT-2S" => vec![tecla(-0.02), tecla(0.02)],
+        "INT-3S" => vec![tecla(-0.035), tecla(0.0), tecla(0.035)],
+        "INT-PAR" => vec![Peca::Linha(-0.053, 0.082, 0.053, 0.188)],
+        "INT-INT" => vec![Peca::Linha(-0.053, 0.082, 0.053, 0.188), Peca::Linha(-0.053, 0.188, 0.053, 0.082)],
+        _ => return None,
+    };
+    Some(pecas_interruptor_antigo(&marcas))
+}
+
+/// O bloco é o desenho padrão de uma versão anterior: linhas e círculos iguais, na mesma ordem.
+fn e_desenho_antigo(b: &Block, pecas: &[Peca], m: f64) -> bool {
+    let perto = |a: f64, b: f64| (a - b).abs() < 1e-6;
+    let desenho: Vec<&Entity> = b.entities.iter().map(|e| &**e).filter(|e| !matches!(e.kind, EntityKind::AttDef(_))).collect();
+    desenho.len() == pecas.len()
+        && desenho.iter().zip(pecas).all(|(e, p)| match (&e.kind, p) {
+            (EntityKind::Line(l), Peca::Linha(a, b, c, d)) => {
+                perto(l.a.x * m, *a) && perto(l.a.y * m, *b) && perto(l.b.x * m, *c) && perto(l.b.y * m, *d)
+            }
+            (EntityKind::Circle(k), Peca::Circulo(x, y, r)) => perto(k.center.x * m, *x) && perto(k.center.y * m, *y) && perto(k.radius * m, *r),
+            _ => false,
+        })
+}
+
+/// A caixa na parede e a haste até o símbolo.
+fn caixa_e_haste(haste: f64) -> Vec<Peca> {
     vec![
         Peca::Linha(-0.035, 0.0, 0.035, 0.0),
+        Peca::Linha(-0.035, 0.0, -0.035, -0.0475),
         Peca::Linha(0.035, 0.0, 0.035, -0.0475),
         Peca::Linha(0.035, -0.0475, -0.035, -0.0475),
-        Peca::Linha(-0.035, -0.0475, -0.035, 0.0),
-        Peca::Linha(0.0, 0.0, 0.0, 0.0595),
-        Peca::Linha(-0.084, 0.0595, 0.084, 0.0595),
-        Peca::Linha(0.0, 0.205, 0.084, 0.0595),
-        Peca::Linha(-0.084, 0.0595, 0.0, 0.205),
+        Peca::Linha(0.0, 0.0, 0.0, haste),
     ]
+}
+
+/// O interruptor: um círculo por seção, empilhados e tangentes na direção da haste. Vazio é simples,
+/// cheio é paralelo (three-way) e meio cheio é intermediário (four-way).
+fn pecas_interruptor(i: InterruptorBase) -> Vec<Peca> {
+    let mut v = caixa_e_haste(CENTRO_TECLA - RAIO_TECLA);
+    for k in 0..i.secoes {
+        let y = CENTRO_TECLA + 2.0 * RAIO_TECLA * f64::from(k);
+        match i.funcao {
+            FuncaoTecla::Simples => {}
+            FuncaoTecla::Paralelo => v.push(Peca::Disco(0.0, y, RAIO_TECLA)),
+            FuncaoTecla::Intermediario => v.push(Peca::MeioDisco(0.0, y, RAIO_TECLA)),
+        }
+        v.push(Peca::Circulo(0.0, y, RAIO_TECLA));
+    }
+    v
+}
+
+/// A tomada: um triângulo, ou dois empilhados na dupla. Vazio é baixa, meio cheio é média, cheio é alta.
+fn pecas_tomada(dupla: bool, nivel: Nivel) -> Vec<Peca> {
+    let mut v = caixa_e_haste(BASE_TRIANGULO);
+    let altura = TOPO_TRIANGULO - BASE_TRIANGULO;
+    for k in 0..(if dupla { 2 } else { 1 }) {
+        let (y0, y1) = (BASE_TRIANGULO + altura * f64::from(k), TOPO_TRIANGULO + altura * f64::from(k));
+        match nivel {
+            Nivel::Baixo => {}
+            Nivel::Medio => v.push(Peca::Cheio([(-MEIA_BASE, y0), (0.0, y0), (0.0, y1)])),
+            Nivel::Alto => v.push(Peca::Cheio([(-MEIA_BASE, y0), (MEIA_BASE, y0), (0.0, y1)])),
+        }
+        v.push(Peca::Linha(-MEIA_BASE, y0, MEIA_BASE, y0));
+        v.push(Peca::Linha(0.0, y1, MEIA_BASE, y0));
+        v.push(Peca::Linha(-MEIA_BASE, y0, 0.0, y1));
+    }
+    v
 }
 
 /// A definição de um bloco base: as peças e os atributos.
 fn definicao_base(nome: &str, tensao: &str) -> Option<(Vec<Peca>, Vec<Att>)> {
-    let interruptor = |tipo: &str, marcas: &[Peca]| {
+    let interruptor = |i: InterruptorBase| {
+        let tipo = match (i.funcao, i.secoes) {
+            (FuncaoTecla::Simples, n) => format!("{n}S"),
+            (FuncaoTecla::Paralelo, 1) => "PARALELO".to_string(),
+            (FuncaoTecla::Paralelo, n) => format!("PARALELO-{n}S"),
+            (FuncaoTecla::Intermediario, 1) => "INTERMEDIARIO".to_string(),
+            (FuncaoTecla::Intermediario, n) => format!("INTERMEDIARIO-{n}S"),
+        };
         (
-            pecas_interruptor(marcas),
+            pecas_interruptor(i),
             vec![
                 constante("TIPO_PONTO", "INTERRUPTOR"),
-                constante("TIPO_INTERRUPTOR", tipo),
+                constante("TIPO_INTERRUPTOR", &tipo),
                 att("TAG", "", "Identificação"),
                 visivel("COMANDO", "", "Letra do comando (a, b, c...)", (0.10, 0.10)),
                 att("CIRCUITO", "", "Circuito"),
@@ -286,7 +447,25 @@ fn definicao_base(nome: &str, tensao: &str) -> Option<(Vec<Peca>, Vec<Att>)> {
             ],
         )
     };
-    let tecla = |x: f64| Peca::Linha(x, 0.205, x, 0.235);
+    if let Some(i) = interruptor_base(nome) {
+        return Some(interruptor(i));
+    }
+    if let Some((dupla, nivel)) = tomada_base(nome) {
+        return Some((
+            pecas_tomada(dupla, nivel),
+            vec![
+                constante("TIPO_PONTO", "TUG"),
+                att("TAG", "", "Identificação"),
+                visivel("CIRCUITO", "", "Circuito", (0.10, 0.10)),
+                att("POTENCIA", "100VA", "Potência"),
+                att("TENSAO", tensao, "Tensão"),
+                att("NUMERO_FASES", "1", "Número de fases"),
+                visivel("ALTURA", "", "Altura fora da legenda", (0.10, 0.03)),
+                att("TIPO_CARGA", "ILUM_TUG", "Tipo de carga"),
+                att("FP", "0,92", "Fator de potência"),
+            ],
+        ));
+    }
     let quadro = |cheio: bool, tag: &str| {
         let mut p = vec![
             Peca::Linha(-0.1, -0.05, -0.1, 0.0),
@@ -310,23 +489,8 @@ fn definicao_base(nome: &str, tensao: &str) -> Option<(Vec<Peca>, Vec<Att>)> {
         )
     };
     Some(match nome {
-        "TOM-SIM-BAIXA" => (
-            pecas_tomada(),
-            vec![
-                constante("TIPO_PONTO", "TUG"),
-                att("TAG", "", "Identificação"),
-                visivel("CIRCUITO", "", "Circuito", (0.10, 0.10)),
-                att("POTENCIA", "100VA", "Potência"),
-                att("TENSAO", tensao, "Tensão"),
-                att("NUMERO_FASES", "1", "Número de fases"),
-                visivel("ALTURA", "", "Altura fora da legenda", (0.10, 0.03)),
-                att("TIPO_CARGA", "ILUM_TUG", "Tipo de carga"),
-                att("FP", "0,92", "Fator de potência"),
-            ],
-        ),
         "TOM-TUE" => {
-            let mut p = pecas_tomada();
-            p.push(Peca::Cheio([(-0.084, 0.0595), (0.084, 0.0595), (0.0, 0.205)]));
+            let p = pecas_tomada(false, Nivel::Alto);
             (
                 p,
                 vec![
@@ -357,11 +521,6 @@ fn definicao_base(nome: &str, tensao: &str) -> Option<(Vec<Peca>, Vec<Att>)> {
                 att("FP", "0,92", "Fator de potência"),
             ],
         ),
-        "INT-SIM" => interruptor("1S", &[]),
-        "INT-2S" => interruptor("2S", &[tecla(-0.02), tecla(0.02)]),
-        "INT-3S" => interruptor("3S", &[tecla(-0.035), tecla(0.0), tecla(0.035)]),
-        "INT-PAR" => interruptor("PARALELO", &[Peca::Linha(-0.053, 0.082, 0.053, 0.188)]),
-        "INT-INT" => interruptor("INTERMEDIARIO", &[Peca::Linha(-0.053, 0.082, 0.053, 0.188), Peca::Linha(-0.053, 0.188, 0.053, 0.082)]),
         "QDG" => quadro(true, "QDG"),
         "QDC" => quadro(false, "QDC"),
         BLOCO_CAIXA => (
@@ -422,31 +581,37 @@ fn entidade_da_peca(p: &Peca, u: &dyn Fn(f64) -> f64) -> EntityKind {
             let v = t.map(|(x, y)| Vec3::new(u(x), u(y), 0.0));
             EntityKind::Solid(Solid { corners: [v[0], v[1], v[2], v[2]] })
         }
-        Peca::Anel(r1, r2) => {
-            let circulo = |r: f64| HatchLoop {
-                vertices: vec![
-                    PolyVertex { p: Vec2::new(u(r), 0.0), bulge: 1.0, start_width: 0.0, end_width: 0.0 },
-                    PolyVertex { p: Vec2::new(-u(r), 0.0), bulge: 1.0, start_width: 0.0, end_width: 0.0 },
-                ],
-                outer: false,
-                sources: Vec::new(),
-            };
-            EntityKind::Hatch(Hatch {
-                pattern: "SOLID".into(),
-                solid: true,
-                loops: vec![circulo(*r1), circulo(*r2)],
-                scale: 1.0,
-                angle: 0.0,
-                associative: false,
-                style: 0,
-                elevation: 0.0,
-                gradient: None,
-                origin: Vec2::new(0.0, 0.0),
-                background: None,
-                pattern_lines: Vec::new(),
-            })
+        Peca::Anel(r1, r2) => cheio(vec![laco_circular(0.0, 0.0, *r1, u), laco_circular(0.0, 0.0, *r2, u)]),
+        Peca::Disco(x, y, r) => cheio(vec![laco_circular(*x, *y, *r, u)]),
+        Peca::MeioDisco(x, y, r) => {
+            // De baixo para cima pela esquerda (horário), e a volta reta pelo diâmetro.
+            let vertice = |vy: f64, bulge: f64| PolyVertex { p: Vec2::new(u(*x), u(vy)), bulge, start_width: 0.0, end_width: 0.0 };
+            cheio(vec![HatchLoop { vertices: vec![vertice(*y - *r, -1.0), vertice(*y + *r, 0.0)], outer: false, sources: Vec::new() }])
         }
     }
+}
+
+fn laco_circular(x: f64, y: f64, r: f64, u: &dyn Fn(f64) -> f64) -> HatchLoop {
+    let vertice = |vx: f64| PolyVertex { p: Vec2::new(u(vx), u(y)), bulge: 1.0, start_width: 0.0, end_width: 0.0 };
+    HatchLoop { vertices: vec![vertice(x + r), vertice(x - r)], outer: false, sources: Vec::new() }
+}
+
+/// Uma hachura sólida dos laços.
+fn cheio(loops: Vec<HatchLoop>) -> EntityKind {
+    EntityKind::Hatch(Hatch {
+        pattern: "SOLID".into(),
+        solid: true,
+        loops,
+        scale: 1.0,
+        angle: 0.0,
+        associative: false,
+        style: 0,
+        elevation: 0.0,
+        gradient: None,
+        origin: Vec2::new(0.0, 0.0),
+        background: None,
+        pattern_lines: Vec::new(),
+    })
 }
 
 fn atributo_base(a: &Att, m: f64) -> Attrib {
@@ -504,8 +669,12 @@ pub fn garantir_base(doc: &mut Drawing, setup: &crate::setup::Setup, metros: f64
     }
     crate::fiacao::garantir_blocos(doc, m);
     for nome in BLOCOS_BASE {
-        if doc.blocks.contains_key(nome) {
-            continue;
+        if let Some(existente) = doc.blocks.get(nome) {
+            let antigo = geometria_antiga(nome).is_some_and(|p| e_desenho_antigo(existente, &p, m));
+            if !antigo {
+                completar_familia(doc, nome);
+                continue;
+            }
         }
         let Some((pecas, atributos)) = definicao_base(nome, &tensao) else { continue };
         let mut b = Block::new(nome);
@@ -524,6 +693,17 @@ pub fn garantir_base(doc: &mut Drawing, setup: &crate::setup::Setup, metros: f64
         }
     }
     true
+}
+
+/// Uma família base de desenho anterior ganha os textos da legenda e da lista de materiais. O que o
+/// projetista já escreveu fica.
+fn completar_familia(doc: &mut Drawing, nome: &str) {
+    let (Some(mut f), Some(base)) = (familia::ler(doc, nome), familia::da_base(nome)) else { return };
+    if f.legenda.trim().is_empty() && f.desc_material.trim().is_empty() {
+        f.legenda = base.legenda;
+        f.desc_material = base.desc_material;
+        let _ = familia::gravar(doc, nome, Some(&f));
+    }
 }
 
 // ---------------------------------------------------------------- utilitários do editor de blocos

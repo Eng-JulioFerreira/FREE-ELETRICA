@@ -2709,3 +2709,197 @@ fn material_define_a_cor_e_o_caminhamento_define_a_linha() {
     assert_eq!(d.model.get(p).unwrap().common.linetype, "DASHDOT");
     assert_eq!(eletroduto::padronizar(&mut d, &s), 0);
 }
+
+#[test]
+fn familias_de_fabrica_de_tomadas_e_interruptores() {
+    use biblioteca::{BLOCOS_BASE, FuncaoTecla, Nivel, interruptor_base, tomada_base};
+    let setup = Setup::default();
+    let mut d = metros();
+    assert!(biblioteca::garantir_base(&mut d, &setup, 1.0));
+    let geometria = |d: &Drawing, n: &str| -> (usize, usize, usize, usize) {
+        let e = &d.blocks[n].entities;
+        let conta = |f: &dyn Fn(&EntityKind) -> bool| e.iter().filter(|x| f(&x.kind)).count();
+        (
+            conta(&|k| matches!(k, EntityKind::Circle(_))),
+            conta(&|k| matches!(k, EntityKind::Hatch(_))),
+            conta(&|k| matches!(k, EntityKind::Solid(_))),
+            conta(&|k| matches!(k, EntityKind::Line(_))),
+        )
+    };
+    // Interruptores: 3 funções em 1, 2 e 3 seções, no ponto médio e no ponto alto.
+    let mut alturas = Vec::new();
+    for (corpo, funcao) in [("SIM", FuncaoTecla::Simples), ("PAR", FuncaoTecla::Paralelo), ("INT", FuncaoTecla::Intermediario)] {
+        for secoes in 1u8..=3 {
+            let nome = match (corpo, secoes) {
+                ("SIM", 1) => "INT-SIM".to_string(),
+                ("SIM", n) => format!("INT-{n}S"),
+                (c, 1) => format!("INT-{c}"),
+                (c, n) => format!("INT-{c}-{n}S"),
+            };
+            for (nome, alto) in [(nome.clone(), false), (format!("{nome}-ALTO"), true)] {
+                assert!(BLOCOS_BASE.contains(&nome.as_str()), "{nome}");
+                assert_eq!(interruptor_base(&nome), Some(biblioteca::InterruptorBase { funcao, secoes, alto }));
+                let (circulos, hachuras, _, _) = geometria(&d, &nome);
+                assert_eq!(circulos, usize::from(secoes), "{nome}");
+                assert_eq!(hachuras, if funcao == FuncaoTecla::Simples { 0 } else { usize::from(secoes) }, "{nome}");
+                let h = biblioteca::inserir_ponto(&mut d, &nome, [0.0, 0.0], 0.0, &[], &setup).unwrap();
+                let p = ponto::ler_ponto(&d, h).unwrap();
+                assert_eq!(p.tipo_interruptor.unwrap().teclas(), usize::from(secoes), "{nome}");
+                alturas.push(rota::altura(&p, &setup));
+            }
+        }
+    }
+    assert_eq!(alturas.iter().filter(|a| perto(**a, 1.20, 1e-9)).count(), 9);
+    assert_eq!(alturas.iter().filter(|a| perto(**a, 2.10, 1e-9)).count(), 9);
+    // Círculos tangentes, empilhados na direção da haste.
+    let centros: Vec<(f64, f64)> = d.blocks["INT-3S"]
+        .entities
+        .iter()
+        .filter_map(|e| if let EntityKind::Circle(c) = &e.kind { Some((c.center.y, c.radius)) } else { None })
+        .collect();
+    assert!(perto(centros[1].0 - centros[0].0, 2.0 * centros[0].1, 1e-9) && perto(centros[2].0 - centros[1].0, 2.0 * centros[0].1, 1e-9));
+    // Meia hachura: a metade esquerda do círculo; hachura cheia: o círculo todo.
+    let laco = |d: &Drawing, n: &str| -> Vec<(f64, f64, f64)> {
+        d.blocks[n]
+            .entities
+            .iter()
+            .find_map(|e| {
+                if let EntityKind::Hatch(h) = &e.kind { Some(h.loops[0].vertices.iter().map(|v| (v.p.x, v.p.y, v.bulge)).collect()) } else { None }
+            })
+            .unwrap()
+    };
+    let meio = laco(&d, "INT-INT");
+    assert_eq!(meio.len(), 2);
+    assert!(perto(meio[0].0, 0.0, 1e-9) && perto(meio[1].0, 0.0, 1e-9) && meio[0].2 == -1.0 && meio[1].2 == 0.0, "{meio:?}");
+    let cheio = laco(&d, "INT-PAR");
+    assert!(cheio[0].2 == 1.0 && cheio[1].2 == 1.0, "{cheio:?}");
+    // Tomadas: simples e dupla em 3 alturas, sem hachura, com meia e com ela cheia.
+    for (nome, dupla, nivel, h) in [
+        ("TOM-SIM-BAIXA", false, Nivel::Baixo, 0.30),
+        ("TOM-DUP-BAIXA", true, Nivel::Baixo, 0.30),
+        ("TOM-SIM-MEDIA", false, Nivel::Medio, 1.20),
+        ("TOM-DUP-MEDIA", true, Nivel::Medio, 1.20),
+        ("TOM-SIM-ALTA", false, Nivel::Alto, 2.10),
+        ("TOM-DUP-ALTA", true, Nivel::Alto, 2.10),
+    ] {
+        assert_eq!(tomada_base(nome), Some((dupla, nivel)));
+        let triangulos = if dupla { 2 } else { 1 };
+        let (_, _, cheios, linhas) = geometria(&d, nome);
+        assert_eq!(cheios, if nivel == Nivel::Baixo { 0 } else { triangulos }, "{nome}");
+        assert_eq!(linhas, 5 + 3 * triangulos, "{nome}");
+        let i = biblioteca::inserir_ponto(&mut d, nome, [1.0, 1.0], 0.0, &[], &setup).unwrap();
+        let p = ponto::ler_ponto(&d, i).unwrap();
+        assert_eq!(p.tipo, TipoPonto::Tomada);
+        assert!(perto(rota::altura(&p, &setup), h, 1e-9), "{nome}");
+    }
+    // A meia hachura do triângulo é a metade: a área vale metade do triângulo cheio.
+    let solido = |n: &str| d.blocks[n].entities.iter().find_map(|e| if let EntityKind::Solid(s) = &e.kind { Some(s.corners) } else { None }).unwrap();
+    let area = |c: [Vec3; 4]| ((c[1].x - c[0].x) * (c[2].y - c[0].y) - (c[2].x - c[0].x) * (c[1].y - c[0].y)).abs() / 2.0;
+    assert!(perto(area(solido("TOM-SIM-MEDIA")) * 2.0, area(solido("TOM-SIM-ALTA")), 1e-9));
+    // Toda família de fábrica tem os dois textos.
+    for n in BLOCOS_BASE {
+        let f = familia::ler(&d, n).unwrap();
+        assert!(!f.legenda.is_empty() && !f.desc_material.is_empty(), "{n}");
+    }
+    assert_eq!(familia::ler(&d, "TOM-SIM-BAIXA").unwrap().legenda, "Tomada baixa 2P+T 10A - h=0,30m");
+    assert_eq!(familia::ler(&d, "TOM-SIM-BAIXA").unwrap().desc_material, "Conjunto 1 Tomada 2P+T 10A + Placa 4x2 + Caixa 4x2");
+    assert!(!biblioteca::falta_base(&d));
+}
+
+#[test]
+fn bloco_base_antigo_e_trocado_e_o_redesenhado_fica() {
+    let setup = Setup::default();
+    let mut d = metros();
+    biblioteca::garantir_base(&mut d, &setup, 1.0);
+    // Um desenho antigo: o INT-PAR de antes (círculo com uma linha), sem os blocos novos.
+    let antigo = |nome: &str| {
+        let mut b = cadcraft_doc::Block::new(nome);
+        let l = |a: f64, c: f64, e: f64, g: f64| EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(a, c, 0.0), b: Vec3::new(e, g, 0.0) });
+        let mut k = vec![
+            l(-0.035, 0.0, 0.035, 0.0),
+            l(-0.035, 0.0, -0.035, -0.0475),
+            l(0.035, 0.0, 0.035, -0.0475),
+            l(0.035, -0.0475, -0.035, -0.0475),
+            l(0.0, 0.0, 0.0, 0.06),
+        ];
+        k.push(EntityKind::Circle(cadcraft_doc::Circle { center: Vec3::new(0.0, 0.135, 0.0), radius: 0.075 }));
+        k.push(l(-0.053, 0.082, 0.053, 0.188));
+        for (i, x) in k.into_iter().enumerate() {
+            b.entities.push(cadcraft_doc::Entity::new(Handle(900_000 + i as u64), x));
+        }
+        b
+    };
+    d.blocks.insert("INT-PAR".into(), std::sync::Arc::new(antigo("INT-PAR")));
+    // Redesenhado pelo projetista: nada a ver com o padrão.
+    let mut meu = cadcraft_doc::Block::new("INT-SIM");
+    let circulo = EntityKind::Circle(cadcraft_doc::Circle { center: Vec3::new(0.0, 0.0, 0.0), radius: 0.3 });
+    meu.entities.push(cadcraft_doc::Entity::new(Handle(910_000), circulo));
+    d.blocks.insert("INT-SIM".into(), std::sync::Arc::new(meu));
+    d.blocks.remove("TOM-DUP-ALTA");
+    // Uma família antiga, sem os textos, os ganha; a escrita à mão fica.
+    let mut f = familia::ler(&d, "QDC").unwrap();
+    f.legenda.clear();
+    f.desc_material.clear();
+    familia::gravar(&mut d, "QDC", Some(&f)).unwrap();
+    let mut g = familia::ler(&d, "QDG").unwrap();
+    g.legenda = "Meu QDG".into();
+    familia::gravar(&mut d, "QDG", Some(&g)).unwrap();
+    assert!(biblioteca::garantir_base(&mut d, &setup, 1.0));
+    assert!(d.blocks["INT-PAR"].entities.iter().any(|e| matches!(e.kind, EntityKind::Hatch(_))), "o antigo vira o novo");
+    assert_eq!(d.blocks["INT-SIM"].entities.len(), 1, "o redesenhado fica");
+    assert!(d.blocks.contains_key("TOM-DUP-ALTA"));
+    assert!(!familia::ler(&d, "QDC").unwrap().legenda.is_empty());
+    assert_eq!(familia::ler(&d, "QDG").unwrap().legenda, "Meu QDG");
+}
+
+#[test]
+fn legenda_e_descricao_nos_pontos_na_lista_e_na_prancha() {
+    let setup = Setup::default();
+    let mut d = metros();
+    biblioteca::garantir_base(&mut d, &setup, 1.0);
+    let a = biblioteca::inserir_ponto(&mut d, "TOM-SIM-BAIXA", [0.0, 0.0], 0.0, &[], &setup).unwrap();
+    let b = biblioteca::inserir_ponto(&mut d, "TOM-SIM-BAIXA", [1.0, 0.0], 0.0, &[], &setup).unwrap();
+    let c = biblioteca::inserir_ponto(&mut d, "INT-PAR", [2.0, 0.0], 0.0, &[], &setup).unwrap();
+    // Herda da família, e o ponto pode ter o seu.
+    let p = |d: &Drawing, h: Handle| ponto::ler_ponto(d, h).unwrap();
+    assert_eq!(p(&d, a).legenda.as_deref(), Some("Tomada baixa 2P+T 10A - h=0,30m"));
+    editar::definir(&mut d, b, ponto::TAGS_LEGENDA, Some("Tomada da bancada")).unwrap();
+    editar::definir(&mut d, b, ponto::TAGS_DESC_MATERIAL, Some("Módulo de bancada")).unwrap();
+    assert_eq!(p(&d, b).legenda.as_deref(), Some("Tomada da bancada"));
+    assert_eq!(p(&d, a).legenda.as_deref(), Some("Tomada baixa 2P+T 10A - h=0,30m"));
+    // A lista de materiais conta pela descrição.
+    let m = materiais::levantar(&d, &analisar(&d), &setup);
+    let qtd = |n: &str| m.conjuntos.iter().find(|i| i.nome == n).map(|i| i.quantidade);
+    assert_eq!(qtd("Conjunto 1 Tomada 2P+T 10A + Placa 4x2 + Caixa 4x2"), Some(1));
+    assert_eq!(qtd("Módulo de bancada"), Some(1));
+    assert_eq!(qtd(&p(&d, c).desc_material.unwrap()), Some(1));
+    // Voltar à família.
+    editar::definir(&mut d, b, ponto::TAGS_DESC_MATERIAL, None).unwrap();
+    assert_eq!(p(&d, b).desc_material, p(&d, a).desc_material);
+    // A legenda da prancha: uma linha por tipo, com o símbolo e o nome; regenerar não mexe no lugar.
+    let an = analisar(&d);
+    assert_eq!(legenda::linhas(&an).len(), 3);
+    let h = legenda::inserir(&mut d, &an, [5.0, 5.0], 1.0).unwrap();
+    let textos = |d: &Drawing| -> Vec<String> {
+        d.blocks[legenda::BLOCO]
+            .entities
+            .iter()
+            .filter_map(|e| if let EntityKind::Text(t) = &e.kind { Some(t.value.clone()) } else { None })
+            .collect()
+    };
+    let t = textos(&d);
+    assert!(t.contains(&"LEGENDA DE SÍMBOLOS".to_string()) && t.contains(&"Tomada da bancada".to_string()), "{t:?}");
+    let simbolos = d.blocks[legenda::BLOCO].entities.iter().filter(|e| matches!(e.kind, EntityKind::Insert(_))).count();
+    assert_eq!(simbolos, 3);
+    assert_eq!(analisar(&d).pontos.len(), 3, "a legenda não é ponto elétrico");
+    editar::definir(&mut d, b, ponto::TAGS_LEGENDA, Some("Outra")).unwrap();
+    let reg = fiacao::regenerar(&mut d, &setup, None).unwrap();
+    assert_eq!(reg.legendas, 1);
+    assert!(textos(&d).contains(&"Outra".to_string()));
+    assert_eq!(legenda::inserida(&d), Some(h));
+    assert!(legenda::inserir(&mut d, &analisar(&Drawing::new_metric()), [f64::NAN, 0.0], 1.0).is_err());
+    // Texto grande demais na família é recusado.
+    let mut f = familia::ler(&d, "QDG").unwrap();
+    f.legenda = "x".repeat(201);
+    assert!(familia::gravar(&mut d, "QDG", Some(&f)).is_err());
+}

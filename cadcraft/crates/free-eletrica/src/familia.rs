@@ -26,6 +26,10 @@ const CHAVE_FP: &str = "power_factor";
 const CHAVE_TECLAS: &str = "keys";
 const CHAVE_CLASSE: &str = "demand_class";
 const CHAVE_FATOR: &str = "demand_factor";
+const CHAVE_LEGENDA: &str = "legend_name";
+const CHAVE_DESC_MATERIAL: &str = "material_desc";
+/// O tamanho máximo dos textos da família: um grupo do XDATA tem limite.
+const TEXTO_MAXIMO: usize = 200;
 
 /// O sistema a que um elemento pertence.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
@@ -277,6 +281,10 @@ pub struct Familia {
     pub classe_demanda: Option<crate::demanda::TipoCarga>,
     /// Fator de demanda, de 0 a 1. `None`: automático, pela tabela da concessionária.
     pub fator_demanda: Option<f64>,
+    /// O nome na Legenda de Símbolos da prancha.
+    pub legenda: String,
+    /// A descrição comercial na Lista de Materiais.
+    pub desc_material: String,
 }
 
 impl Default for Familia {
@@ -304,6 +312,8 @@ impl Familia {
             teclas: 1,
             classe_demanda: None,
             fator_demanda: None,
+            legenda: String::new(),
+            desc_material: String::new(),
         }
     }
 
@@ -329,6 +339,11 @@ impl Familia {
         }
         if !(1..=3).contains(&self.teclas) {
             return Err(format!("{} teclas: use de 1 a 3", self.teclas));
+        }
+        for (nome, t) in [("o nome na legenda", &self.legenda), ("a descrição na lista de materiais", &self.desc_material)] {
+            if t.chars().count() > TEXTO_MAXIMO {
+                return Err(format!("{nome} passa de {TEXTO_MAXIMO} caracteres"));
+            }
         }
         Ok(())
     }
@@ -361,6 +376,8 @@ fn de_xdata(x: &[RawTag]) -> Option<Familia> {
         teclas: num(CHAVE_TECLAS).map_or(base.teclas, |t| t as u8),
         classe_demanda: valor(CHAVE_CLASSE).and_then(crate::demanda::TipoCarga::de_codigo),
         fator_demanda: num(CHAVE_FATOR),
+        legenda: valor(CHAVE_LEGENDA).unwrap_or_default().to_string(),
+        desc_material: valor(CHAVE_DESC_MATERIAL).unwrap_or_default().to_string(),
     };
     // Um arquivo editado à mão não derruba a leitura: volta ao natural da categoria.
     Some(if f.validar().is_ok() { f } else { base })
@@ -377,7 +394,7 @@ pub fn gravar(doc: &mut Drawing, bloco: &str, familia: Option<&Familia>) -> Resu
     let foreign = Arc::make_mut(&mut doc.foreign);
     let registro: &mut ForeignExtra = foreign.records.entry(chave(bloco)).or_default();
     let texto = |v: f64| v.to_string();
-    let pares: [(&str, Option<String>); 11] = [
+    let pares: [(&str, Option<String>); 13] = [
         (crate::rota::CHAVE_ESQUEMA, familia.map(|_| crate::rota::VERSAO_ESQUEMA.to_string())),
         (CHAVE_DOMINIO, familia.map(|f| f.dominio.codigo().to_string())),
         (CHAVE_CATEGORIA, familia.map(|f| f.categoria.codigo().to_string())),
@@ -389,6 +406,8 @@ pub fn gravar(doc: &mut Drawing, bloco: &str, familia: Option<&Familia>) -> Resu
         (CHAVE_TECLAS, familia.map(|f| f.teclas.to_string())),
         (CHAVE_CLASSE, familia.and_then(|f| f.classe_demanda).map(|c| c.codigo().to_string())),
         (CHAVE_FATOR, familia.and_then(|f| f.fator_demanda).map(texto)),
+        (CHAVE_LEGENDA, familia.map(|f| f.legenda.trim().to_string()).filter(|t| !t.is_empty())),
+        (CHAVE_DESC_MATERIAL, familia.map(|f| f.desc_material.trim().to_string()).filter(|t| !t.is_empty())),
     ];
     for (k, v) in &pares {
         xdata::gravar(&mut registro.xdata, k, v.as_deref());
@@ -396,25 +415,62 @@ pub fn gravar(doc: &mut Drawing, bloco: &str, familia: Option<&Familia>) -> Resu
     Ok(())
 }
 
-/// A família natural de um bloco base.
+/// A família natural de um bloco base, com os textos da legenda e da lista de materiais.
 pub fn da_base(nome: &str) -> Option<Familia> {
     use FamilyCategory as C;
-    let com = |categoria: C, ajustar: &dyn Fn(&mut Familia)| {
+    let com = |categoria: C, legenda: String, material: String, ajustar: &dyn Fn(&mut Familia)| {
         let mut f = Familia::da_categoria(categoria);
+        f.legenda = legenda;
+        f.desc_material = material;
         ajustar(&mut f);
         Some(f)
     };
-    match nome {
-        "TOM-SIM-BAIXA" => com(C::PontoForca, &|_| {}),
-        "TOM-TUE" => com(C::PontoForca, &|f| f.ref_altura = RefAltura::Media),
-        "ILU-OCT" => com(C::Luminaria, &|_| {}),
-        "INT-SIM" | "INT-PAR" | "INT-INT" => com(C::Interruptor, &|_| {}),
-        "INT-2S" => com(C::Interruptor, &|f| f.teclas = 2),
-        "INT-3S" => com(C::Interruptor, &|f| f.teclas = 3),
-        "QDG" | "QDC" => com(C::QuadroEletrico, &|_| {}),
-        "RJ45" => com(C::Dados, &|_| {}),
-        "RACK" => com(C::QuadroDados, &|_| {}),
-        "CX-PASSAGEM" => com(C::Caixa, &|_| {}),
-        _ => None,
+    let txt = |a: &str, b: &str| (a.to_string(), b.to_string());
+    if let Some((duplas, altura)) = crate::biblioteca::tomada_base(nome) {
+        let (ref_altura, onde, h) = match altura {
+            crate::biblioteca::Nivel::Baixo => (RefAltura::Baixa, "baixa", "0,30"),
+            crate::biblioteca::Nivel::Medio => (RefAltura::Media, "média", "1,20"),
+            crate::biblioteca::Nivel::Alto => (RefAltura::Alta, "alta", "2,10"),
+        };
+        let (quantas, conjunto) = if duplas { ("dupla ", "Conjunto 2 Tomadas 2P+T 10A") } else { ("", "Conjunto 1 Tomada 2P+T 10A") };
+        return com(C::PontoForca, format!("Tomada {onde} {quantas}2P+T 10A - h={h}m"), format!("{conjunto} + Placa 4x2 + Caixa 4x2"), &|f| {
+            f.ref_altura = ref_altura;
+            f.teclas = if duplas { 2 } else { 1 };
+        });
     }
+    if let Some(i) = crate::biblioteca::interruptor_base(nome) {
+        let (tipo, comercial) = match i.funcao {
+            crate::biblioteca::FuncaoTecla::Simples => ("simples", "simples"),
+            crate::biblioteca::FuncaoTecla::Paralelo => ("paralelo", "paralela (three-way)"),
+            crate::biblioteca::FuncaoTecla::Intermediario => ("intermediário", "intermediária (four-way)"),
+        };
+        let (ponto, h, ref_altura) = if i.alto { ("alto", "2,10", RefAltura::Alta) } else { ("médio", "1,20", RefAltura::Media) };
+        let secoes = i.secoes;
+        let tecla = if secoes == 1 { "tecla" } else { "teclas" };
+        let secao = if secoes == 1 { "seção" } else { "seções" };
+        return com(
+            C::Interruptor,
+            format!("Interruptor {tipo} {secoes} {secao} - ponto {ponto}, h={h}m"),
+            format!("Conjunto {secoes} {tecla} {comercial} + Placa 4x2 + Caixa 4x2"),
+            &|f| {
+                f.teclas = secoes;
+                f.ref_altura = ref_altura;
+            },
+        );
+    }
+    let (categoria, (legenda, material)) = match nome {
+        "TOM-TUE" => (C::PontoForca, txt("Tomada de uso específico (TUE)", "Conjunto 1 Tomada 2P+T 20A + Placa 4x2 + Caixa 4x2")),
+        "ILU-OCT" => (C::Luminaria, txt("Ponto de luz no teto", "Ponto de luz + Caixa octogonal")),
+        "QDG" => (C::QuadroEletrico, txt("Quadro de distribuição geral", "Quadro de distribuição geral")),
+        "QDC" => (C::QuadroEletrico, txt("Quadro de distribuição de circuitos", "Quadro de distribuição de circuitos")),
+        "RJ45" => (C::Dados, txt("Ponto de dados/telecom", "Conjunto 1 Tomada RJ45 + Placa 4x2 + Caixa 4x2")),
+        "RACK" => (C::QuadroDados, txt("Rack de dados", "Rack de dados")),
+        "CX-PASSAGEM" => (C::Caixa, txt("Caixa de passagem", "Caixa de passagem")),
+        _ => return None,
+    };
+    com(categoria, legenda, material, &|f| {
+        if nome == "TOM-TUE" {
+            f.ref_altura = RefAltura::Media;
+        }
+    })
 }

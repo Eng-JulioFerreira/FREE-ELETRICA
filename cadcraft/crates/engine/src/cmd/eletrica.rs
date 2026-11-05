@@ -55,11 +55,16 @@ pub fn specs() -> Vec<CommandSpec> {
             .params("{pontos: [hex], altura: m | null} (at the project's standard height or null: the visible ALTURA stays empty; otherwise the exact value goes to XDATA and the plan shows h=1,45m) → {pontos}"),
         CommandSpec::new("eletrica.ponto.demanda", "Point Demand", run_ponto_demanda)
             .params("{pontos: [hex], classe?: ILUM_TUG | AQUECIMENTO | AR | MOTORES | ELETRODOMESTICOS | FATOR_MANUAL | null, fator?: 0-1 | null} (null: back to the family's or to the utility's table) → {pontos}"),
+        CommandSpec::new("eletrica.ponto.documentacao", "Point Documentation", run_ponto_documentacao)
+            .params("{pontos: [hex], legenda?: text | null, descMaterial?: text | null} (null or empty: back to the family's) → {pontos}"),
+        CommandSpec::new("elelegenda", "Symbol Legend", run_legenda)
+            .params("{ponto: [x, y]} → draws the symbol legend of the points in the drawing as a block at the point (moves it if there is one): {legenda, linhas}")
+            .interactive(|_| Ok(Box::new(LegendaM))),
         CommandSpec::new("eletrica.familia.ler", "Block Family", run_familia_ler)
             .params("{bloco? (default: the block being edited)} → the family, or null")
             .noundo(),
         CommandSpec::new("eletrica.familia.definir", "Family Properties", run_familia_definir)
-            .params("{bloco? (default: the block being edited), categoria?: NONE | ELECTRICAL_FIXTURE | LIGHTING_FIXTURE | LIGHTING_DEVICE | DATA_DEVICE | FIRE_SECURITY_DEVICE | ELECTRICAL_EQUIPMENT | TELECOM_ENCLOSURE | JUNCTION_BOX, dominio?: POWER | DATA_TELECOM | FIRE_SECURITY | INFRA, refAltura?: LOW | MEDIUM | HIGH | CEILING | FLOOR | FIXED, cotaFixa?: m, caixa?: NONE | 4X2 | 4X4 | OCTAGONAL | PULL_15X15 | PULL_20X20 | PULL_30X30, potencia?: VA | null, fp?: 0-1 | null, teclas?: 1-3, classeDemanda?: ILUM_TUG | AQUECIMENTO | AR | MOTORES | ELETRODOMESTICOS | FATOR_MANUAL | null, fatorDemanda?: 0-1 | null (null: automatic, from the utility's table), remover?: bool} → the family"),
+            .params("{bloco? (default: the block being edited), categoria?: NONE | ELECTRICAL_FIXTURE | LIGHTING_FIXTURE | LIGHTING_DEVICE | DATA_DEVICE | FIRE_SECURITY_DEVICE | ELECTRICAL_EQUIPMENT | TELECOM_ENCLOSURE | JUNCTION_BOX, dominio?: POWER | DATA_TELECOM | FIRE_SECURITY | INFRA, refAltura?: LOW | MEDIUM | HIGH | CEILING | FLOOR | FIXED, cotaFixa?: m, caixa?: NONE | 4X2 | 4X4 | OCTAGONAL | PULL_15X15 | PULL_20X20 | PULL_30X30, potencia?: VA | null, fp?: 0-1 | null, teclas?: 1-3, classeDemanda?: ILUM_TUG | AQUECIMENTO | AR | MOTORES | ELETRODOMESTICOS | FATOR_MANUAL | null, fatorDemanda?: 0-1 | null (null: automatic, from the utility's table), legenda?: text (name in the symbol legend), descMaterial?: text (description in the materials list), remover?: bool} → the family"),
         CommandSpec::new("eletrica.familia.geometria", "Family Base Geometry", run_familia_geometria)
             .params("{forma: tomada | comando | luminaria | contorno4x2 | contorno4x4} → inserts it into the block being edited: {entidades}")
             .enabled(no_editor_de_blocos),
@@ -1699,6 +1704,73 @@ fn run_ponto_demanda(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({ "pontos": hs.len() }))
 }
 
+fn run_ponto_documentacao(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "eletrica.ponto.documentacao";
+    let hs = handles(CMD, p, "pontos")?;
+    if p.get("legenda").is_none() && p.get("descMaterial").is_none() {
+        return Err(bad(CMD, "give `legenda` or `descMaterial`"));
+    }
+    // Vazio ou null volta ao texto da família.
+    let campo = |k: &str| -> Result<Option<Option<String>>> {
+        match p.get(k) {
+            None => Ok(None),
+            Some(Value::Null) => Ok(Some(None)),
+            Some(Value::String(t)) if t.chars().count() <= 200 => Ok(Some(Some(t.trim().to_string()).filter(|t| !t.is_empty()))),
+            Some(_) => Err(bad(CMD, format!("`{k}` must be text of up to 200 characters or null"))),
+        }
+    };
+    let (legenda, material) = (campo("legenda")?, campo("descMaterial")?);
+    for h in &hs {
+        if ele::ponto::ler_ponto(s.doc()?, *h).is_none() {
+            return Err(bad(CMD, format!("{} is not an electrical point", h.hex())));
+        }
+    }
+    let doc = s.doc_mut()?;
+    for h in &hs {
+        if let Some(v) = &legenda {
+            ele::editar::definir(doc, *h, ele::ponto::TAGS_LEGENDA, v.as_deref()).map_err(erro)?;
+        }
+        if let Some(v) = &material {
+            ele::editar::definir(doc, *h, ele::ponto::TAGS_DESC_MATERIAL, v.as_deref()).map_err(erro)?;
+        }
+    }
+    Ok(json!({ "pontos": hs.len() }))
+}
+
+fn run_legenda(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "elelegenda";
+    let pos = p.get("ponto").and_then(ponto_de).ok_or_else(|| bad(CMD, "`ponto` ([x, y]) is required"))?;
+    let (a, m) = (analise(s)?, metros(s)?);
+    let h = ele::legenda::inserir(s.doc_mut()?, &a, pos, m).map_err(erro)?;
+    Ok(json!({ "legenda": h.hex(), "linhas": ele::legenda::linhas(&a).len() }))
+}
+
+/// ELELEGENDA digitado: o ponto de inserção.
+struct LegendaM;
+
+impl Interactive for LegendaM {
+    fn name(&self) -> &'static str {
+        "ELELEGENDA"
+    }
+    fn begin(&mut self, s: &mut Session) -> Result<Step> {
+        s.set_selection(Vec::new());
+        Ok(Step::Continue)
+    }
+    fn prompt(&self, _s: &Session) -> Prompt {
+        Prompt::new("Ponto de inserção da legenda", Accept::POINT)
+    }
+    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        match i {
+            Input::Point(q) => {
+                run_legenda(s, &json!({ "ponto": [q.x, q.y] }))?;
+                Ok(Step::Done)
+            }
+            Input::Cancel | Input::Enter => Ok(Step::Done),
+            _ => Ok(Step::Continue),
+        }
+    }
+}
+
 fn run_altura(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "eletrica.ponto.altura";
     let hs = handles(CMD, p, "pontos")?;
@@ -1770,6 +1842,8 @@ fn run_familia_definir(s: &mut Session, p: &Value) -> Result<Value> {
                 teclas: a.teclas,
                 classe_demanda: a.classe_demanda,
                 fator_demanda: a.fator_demanda,
+                legenda: a.legenda,
+                desc_material: a.desc_material,
                 ..Familia::da_categoria(c)
             },
             (Some(a), _) => a,
@@ -1799,6 +1873,13 @@ fn run_familia_definir(s: &mut Session, p: &Value) -> Result<Value> {
         }
         if let Some(v) = p.get("fatorDemanda") {
             f.fator_demanda = if v.is_null() { None } else { Some(numero_finito(CMD, v, "fatorDemanda")?) };
+        }
+        if let Some(v) = p.get("legenda") {
+            f.legenda = v.as_str().map(str::to_string).or_else(|| v.is_null().then(String::new)).ok_or_else(|| bad(CMD, "`legenda` must be text"))?;
+        }
+        if let Some(v) = p.get("descMaterial") {
+            f.desc_material =
+                v.as_str().map(str::to_string).or_else(|| v.is_null().then(String::new)).ok_or_else(|| bad(CMD, "`descMaterial` must be text"))?;
         }
         if let Some(v) = p.get("teclas").filter(|v| !v.is_null()) {
             f.teclas = v.as_u64().and_then(|n| u8::try_from(n).ok()).ok_or_else(|| bad(CMD, "`teclas` must be from 1 to 3"))?;

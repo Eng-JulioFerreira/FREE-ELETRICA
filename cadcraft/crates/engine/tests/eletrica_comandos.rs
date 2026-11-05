@@ -1222,3 +1222,42 @@ fn bloco_no_caminho_do_eletroduto_ja_e_a_caixa() {
     assert_eq!(lista.iter().filter(|t| t["de"] == de_lado.as_str() || t["para"] == de_lado.as_str()).count(), 3, "{r}");
     assert!(lista.iter().any(|t| t["de"] == outro.as_str() || t["para"] == outro.as_str()));
 }
+
+#[test]
+fn documentacao_dos_pontos_e_legenda_por_comando() {
+    let _setup = trava_setup();
+    let mut s = Session::new();
+    let mut d = Drawing::new_metric();
+    d.header.set_i64("INSUNITS", 6);
+    s.open_drawing(d, "Legenda", None);
+    s.execute("eletrica.bootstrap", &json!({})).unwrap();
+    let h = s.execute("eleponto", &json!({ "bloco": "TOM-DUP-MEDIA", "pontos": [[1.0, 1.0]] })).unwrap()["pontos"][0].as_str().unwrap().to_string();
+    let f = s.execute("eletrica.familia.ler", &json!({ "bloco": "TOM-DUP-MEDIA" })).unwrap();
+    assert_eq!(f["legenda"], "Tomada média dupla 2P+T 10A - h=1,20m");
+    // Na família e no ponto; vazio volta à família.
+    s.execute("eletrica.familia.definir", &json!({ "bloco": "TOM-DUP-MEDIA", "legenda": "Dupla", "descMaterial": "Kit" })).unwrap();
+    let ler = |s: &mut Session| s.execute("eletrica.analisar", &json!({})).unwrap()["pontos"][0].clone();
+    assert_eq!(ler(&mut s)["legenda"], "Dupla");
+    assert_eq!(ler(&mut s)["descMaterial"], "Kit");
+    s.execute("eletrica.ponto.documentacao", &json!({ "pontos": [h], "legenda": "Da bancada" })).unwrap();
+    assert_eq!(ler(&mut s)["legenda"], "Da bancada");
+    s.execute("eletrica.ponto.documentacao", &json!({ "pontos": [h], "legenda": "" })).unwrap();
+    assert_eq!(ler(&mut s)["legenda"], "Dupla");
+    assert!(s.execute("eletrica.ponto.documentacao", &json!({ "pontos": [h] })).is_err());
+    assert!(s.execute("eletrica.ponto.documentacao", &json!({ "pontos": [h], "legenda": 3 })).is_err());
+    assert!(s.execute("eletrica.ponto.documentacao", &json!({ "pontos": [h], "legenda": "x".repeat(201) })).is_err());
+    assert!(s.execute("eletrica.ponto.documentacao", &json!({ "pontos": ["0"], "legenda": "x" })).is_err());
+    assert!(s.execute("eletrica.familia.definir", &json!({ "bloco": "TOM-DUP-MEDIA", "legenda": 3 })).is_err());
+    // A lista de materiais conta pela descrição.
+    let m = s.execute("eletrica.materiais", &json!({})).unwrap();
+    assert_eq!(m["conjuntos"][0]["nome"], "Kit");
+    // A legenda da prancha, por JSON e clicando.
+    let r = s.execute("elelegenda", &json!({ "ponto": [10.0, 10.0] })).unwrap();
+    assert_eq!(r["linhas"], 1);
+    assert!(s.execute("elelegenda", &json!({})).is_err());
+    let antes = s.doc().unwrap().model.len();
+    s.start("elelegenda").unwrap();
+    s.input(Input::Point(Vec2::new(20.0, 20.0))).unwrap();
+    assert!(s.running.is_none());
+    assert_eq!(s.doc().unwrap().model.len(), antes, "a legenda é uma só");
+}

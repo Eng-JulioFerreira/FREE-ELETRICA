@@ -16,6 +16,7 @@ pub mod eletroduto;
 pub mod familia;
 pub mod fiacao;
 pub mod inspecao;
+pub mod legenda;
 pub mod materiais;
 pub mod nbr5410;
 pub mod ponto;

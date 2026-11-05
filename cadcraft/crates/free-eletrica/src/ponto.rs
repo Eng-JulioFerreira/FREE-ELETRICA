@@ -29,8 +29,13 @@ pub const TAGS_CARGA: &[&str] = &["TIPO_CARGA", "CARGA"];
 pub const TAGS_FATOR_DEMANDA: &[&str] = &["FATOR_DEMANDA", "FD"];
 /// A altura exata (m) de uma inserção que foge da legenda, no XDATA: é a que vale para o cálculo.
 pub const CHAVE_ALTURA: &str = "elevation_m";
-/// Tipo de interruptor: 1S, 2S, 3S, PARALELO, INTERMEDIARIO.
+/// Tipo de interruptor: 1S, 2S, 3S, PARALELO, PARALELO-2S, PARALELO-3S, INTERMEDIARIO, INTERMEDIARIO-2S e
+/// INTERMEDIARIO-3S.
 pub const TAGS_INTERRUPTOR: &[&str] = &["TIPO_INTERRUPTOR", "TECLAS"];
+/// O nome do ponto na Legenda de Símbolos da prancha.
+pub const TAGS_LEGENDA: &[&str] = &["LEGENDA"];
+/// A descrição comercial do ponto na Lista de Materiais.
+pub const TAGS_DESC_MATERIAL: &[&str] = &["DESC_MATERIAL"];
 
 /// O tipo de um interruptor.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
@@ -41,11 +46,25 @@ pub enum TipoInterruptor {
     Simples2,
     Simples3,
     Paralelo,
+    Paralelo2,
+    Paralelo3,
     Intermediario,
+    Intermediario2,
+    Intermediario3,
 }
 
 impl TipoInterruptor {
-    pub const TODOS: [TipoInterruptor; 5] = [Self::Simples1, Self::Simples2, Self::Simples3, Self::Paralelo, Self::Intermediario];
+    pub const TODOS: [TipoInterruptor; 9] = [
+        Self::Simples1,
+        Self::Simples2,
+        Self::Simples3,
+        Self::Paralelo,
+        Self::Paralelo2,
+        Self::Paralelo3,
+        Self::Intermediario,
+        Self::Intermediario2,
+        Self::Intermediario3,
+    ];
 
     pub fn nome(self) -> &'static str {
         match self {
@@ -53,15 +72,19 @@ impl TipoInterruptor {
             Self::Simples2 => "2S",
             Self::Simples3 => "3S",
             Self::Paralelo => "Paralelo",
+            Self::Paralelo2 => "Paralelo 2S",
+            Self::Paralelo3 => "Paralelo 3S",
             Self::Intermediario => "Intermediário",
+            Self::Intermediario2 => "Intermediário 2S",
+            Self::Intermediario3 => "Intermediário 3S",
         }
     }
 
     /// Quantas teclas (letras de comando) o interruptor tem.
     pub fn teclas(self) -> usize {
         match self {
-            Self::Simples2 => 2,
-            Self::Simples3 => 3,
+            Self::Simples2 | Self::Paralelo2 | Self::Intermediario2 => 2,
+            Self::Simples3 | Self::Paralelo3 | Self::Intermediario3 => 3,
             _ => 1,
         }
     }
@@ -73,8 +96,16 @@ impl TipoInterruptor {
             "1S" | "1" | "SIMPLES" => Self::Simples1,
             "2S" | "2" => Self::Simples2,
             "3S" | "3" => Self::Simples3,
-            _ if n.starts_with("PARALEL") || n.contains("THREE") => Self::Paralelo,
-            _ if n.starts_with("INTERMED") || n.contains("FOUR") => Self::Intermediario,
+            _ if n.starts_with("PARALEL") || n.contains("THREE") => match () {
+                _ if n.contains('2') => Self::Paralelo2,
+                _ if n.contains('3') => Self::Paralelo3,
+                _ => Self::Paralelo,
+            },
+            _ if n.starts_with("INTERMED") || n.contains("FOUR") => match () {
+                _ if n.contains('2') => Self::Intermediario2,
+                _ if n.contains('3') => Self::Intermediario3,
+                _ => Self::Intermediario,
+            },
             _ => return None,
         })
     }
@@ -226,6 +257,10 @@ pub struct PontoEletrico {
     pub fator_demanda: Option<f64>,
     /// Tipo de interruptor (atributo TIPO_INTERRUPTOR). `None`: um simples de uma tecla.
     pub tipo_interruptor: Option<TipoInterruptor>,
+    /// O nome na Legenda de Símbolos: o do ponto ou o da família. `None`: nenhum dos dois.
+    pub legenda: Option<String>,
+    /// A descrição na Lista de Materiais: a do ponto ou a da família. `None`: nenhuma das duas.
+    pub desc_material: Option<String>,
     /// Todos os atributos lidos, na ordem do bloco.
     pub atributos: Vec<(String, String)>,
     /// Valores que o Free Elétrica gravou no XDATA do bloco (valem quando o bloco não tem o atributo).
@@ -333,6 +368,9 @@ impl PontoEletrico {
                     _ => None,
                 })
             }),
+            legenda: texto(TAGS_LEGENDA).or_else(|| familia.as_ref().map(|f| f.legenda.trim().to_string()).filter(|t| !t.is_empty())),
+            desc_material: texto(TAGS_DESC_MATERIAL)
+                .or_else(|| familia.as_ref().map(|f| f.desc_material.trim().to_string()).filter(|t| !t.is_empty())),
             atributos,
             extras,
         })

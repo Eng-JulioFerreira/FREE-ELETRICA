@@ -704,6 +704,12 @@ const PALETA_ELETRICA: [Secao; 6] = [
                 "Põe a simbologia de fiação e o diâmetro nos eletrodutos; a posição que você der fica guardada (ELEFIACAO)",
             ),
             ferr(Icone::Grade, "Tabela do quadro", "elequadro_tabela", "Desenha o quadro de cargas num ponto da planta (ELEQUADRO_TABELA)"),
+            ferr(
+                Icone::Etiqueta,
+                "Legenda de símbolos",
+                "elelegenda",
+                "Desenha, num ponto da planta, o símbolo e o nome de cada tipo de ponto do desenho (ELELEGENDA)",
+            ),
             ferr(Icone::Atualizar, "Atualizar tags e tabelas", "eleregen", "Refaz o que é gerado sem mudar as posições (ELEREGEN)"),
             ferr(
                 Icone::Prancheta,
@@ -1435,15 +1441,33 @@ fn legenda_inspecao(ctx: &egui::Context, xf: &crate::canvas::Xf, itens: &[Item])
 }
 
 /// O bloco de cada tipo da barra de inserção: (rótulo, bloco).
-const TIPOS_BARRA: [(&str, &str); 13] = [
-    ("TUG", "TOM-SIM-BAIXA"),
+const TIPOS_BARRA: [(&str, &str); 31] = [
+    ("Tomada baixa simples", "TOM-SIM-BAIXA"),
+    ("Tomada baixa dupla", "TOM-DUP-BAIXA"),
+    ("Tomada média simples", "TOM-SIM-MEDIA"),
+    ("Tomada média dupla", "TOM-DUP-MEDIA"),
+    ("Tomada alta simples", "TOM-SIM-ALTA"),
+    ("Tomada alta dupla", "TOM-DUP-ALTA"),
     ("TUE", "TOM-TUE"),
     ("Iluminação", "ILU-OCT"),
-    ("Interruptor 1S", "INT-SIM"),
-    ("Interruptor 2S", "INT-2S"),
-    ("Interruptor 3S", "INT-3S"),
-    ("Paralelo", "INT-PAR"),
-    ("Intermediário", "INT-INT"),
+    ("Simples 1 seção, médio", "INT-SIM"),
+    ("Simples 2 seções, médio", "INT-2S"),
+    ("Simples 3 seções, médio", "INT-3S"),
+    ("Paralelo 1 seção, médio", "INT-PAR"),
+    ("Paralelo 2 seções, médio", "INT-PAR-2S"),
+    ("Paralelo 3 seções, médio", "INT-PAR-3S"),
+    ("Intermediário 1 seção, médio", "INT-INT"),
+    ("Intermediário 2 seções, médio", "INT-INT-2S"),
+    ("Intermediário 3 seções, médio", "INT-INT-3S"),
+    ("Simples 1 seção, alto", "INT-SIM-ALTO"),
+    ("Simples 2 seções, alto", "INT-2S-ALTO"),
+    ("Simples 3 seções, alto", "INT-3S-ALTO"),
+    ("Paralelo 1 seção, alto", "INT-PAR-ALTO"),
+    ("Paralelo 2 seções, alto", "INT-PAR-2S-ALTO"),
+    ("Paralelo 3 seções, alto", "INT-PAR-3S-ALTO"),
+    ("Intermediário 1 seção, alto", "INT-INT-ALTO"),
+    ("Intermediário 2 seções, alto", "INT-INT-2S-ALTO"),
+    ("Intermediário 3 seções, alto", "INT-INT-3S-ALTO"),
     ("Quadro QDG", "QDG"),
     ("Quadro QDC", "QDC"),
     ("Ponto de dados", "RJ45"),
@@ -1511,7 +1535,7 @@ fn barra_ponto(ui: &mut egui::Ui, uid: u64, st: &Estado, s: &Setup, filtro: &mut
     });
     ui.label("Bloco");
     let nome_de = |nome: &str| TIPOS_BARRA.iter().find(|(_, b)| b.eq_ignore_ascii_case(nome)).map_or(nome, |(n, _)| n).to_string();
-    egui::ComboBox::from_id_salt("ele-barra-tipo").selected_text(nome_de(&bloco.nome)).width(140.0).show_ui(ui, |ui| {
+    egui::ComboBox::from_id_salt("ele-barra-tipo").selected_text(nome_de(&bloco.nome)).width(210.0).show_ui(ui, |ui| {
         for b in st.blocos.iter().filter(|b| filtro.aceita(b.tipo)) {
             if ui.selectable_label(bloco.nome == b.nome, nome_de(&b.nome)).on_hover_text(b.nome.as_str()).clicked() {
                 enviar(acoes, &b.nome, &[], m.quadro);
@@ -2124,6 +2148,33 @@ fn campos_de_demanda(ui: &mut egui::Ui, p: &PontoEletrico, acoes: &mut Vec<Acao>
     });
 }
 
+/// Um texto que vai para o comando ao sair do campo. Devolve o texto novo, quando mudou.
+fn campo_de_texto(ui: &mut egui::Ui, chave: egui::Id, gravado: &str, largura: f32) -> Option<String> {
+    let chave = chave.with(gravado);
+    let mut texto: String = ui.ctx().data_mut(|d| d.get_temp(chave)).unwrap_or_else(|| gravado.to_string());
+    let r = ui.add(egui::TextEdit::singleline(&mut texto).desired_width(largura));
+    let novo = (r.lost_focus() && texto.trim() != gravado).then(|| texto.trim().to_string());
+    ui.ctx().data_mut(|d| d.insert_temp(chave, texto));
+    novo
+}
+
+/// O nome na legenda e a descrição na lista de materiais de um ponto. Vazio volta ao texto da família.
+fn campos_de_documentacao(ui: &mut egui::Ui, p: &PontoEletrico, acoes: &mut Vec<Acao>) {
+    let h = p.handle.hex();
+    egui::Grid::new("ele-atributos-documentacao").num_columns(2).spacing(vec2(12.0, 4.0)).show(ui, |ui| {
+        ui.label("Nome na Legenda").on_hover_text("Aparece na Legenda de Símbolos da prancha. Vazio: o da família");
+        if let Some(v) = campo_de_texto(ui, egui::Id::new(("ele-ponto-legenda", p.handle)), p.legenda.as_deref().unwrap_or(""), 340.0) {
+            acoes.push(Acao::Rodar("eletrica.ponto.documentacao", json!({ "pontos": [h], "legenda": v })));
+        }
+        ui.end_row();
+        ui.label("Descrição na Lista de Materiais").on_hover_text("Conta na Lista de Materiais. Vazio: a da família");
+        if let Some(v) = campo_de_texto(ui, egui::Id::new(("ele-ponto-material", p.handle)), p.desc_material.as_deref().unwrap_or(""), 340.0) {
+            acoes.push(Acao::Rodar("eletrica.ponto.documentacao", json!({ "pontos": [h], "descMaterial": v })));
+        }
+        ui.end_row();
+    });
+}
+
 /// O inspetor de atributos do bloco selecionado.
 fn janela_atributos(ui: &mut egui::Ui, app: &CadApp, t: &Tokens, acoes: &mut Vec<Acao>) {
     let Ok(doc) = app.session.doc() else {
@@ -2140,6 +2191,8 @@ fn janela_atributos(ui: &mut egui::Ui, app: &CadApp, t: &Tokens, acoes: &mut Vec
     };
     ui.label(RichText::new(format!("{nome} #{}", h.hex())).strong());
     if let Some(p) = ele::ponto::ler_ponto(doc, h) {
+        campos_de_documentacao(ui, &p, acoes);
+        ui.separator();
         if p.tipo.e_carga() {
             campos_de_demanda(ui, &p, acoes);
             ui.separator();
@@ -2618,6 +2671,18 @@ fn detalhes_do_circuito(ui: &mut egui::Ui, s: &Setup, q: Handle, l: &ele::quadro
 
 /// A lista de materiais.
 fn lista_de_materiais(ui: &mut egui::Ui, t: &Tokens, m: &ele::materiais::Materiais) {
+    if !m.conjuntos.is_empty() {
+        titulo(ui, t, "Pontos pela descrição");
+        egui::Grid::new("ele-mat-conjuntos").num_columns(2).striped(true).spacing(vec2(16.0, 2.0)).show(ui, |ui| {
+            for c in &m.conjuntos {
+                celula(ui, 420.0, c.nome.as_str(), false);
+                celula(ui, 50.0, numero(c.quantidade.to_string()), true);
+                ui.end_row();
+            }
+        });
+        ui.label(pequeno("A caixa que entra na descrição também aparece na contagem de caixas, mais abaixo.", t.text_dim));
+        ui.add_space(6.0);
+    }
     titulo(ui, t, "Cabos, com a folga do projeto");
     if m.cabos.is_empty() {
         ui.label(pequeno("Nenhum circuito dimensionado.", t.text_dim));
@@ -3071,6 +3136,14 @@ fn propriedades_da_familia(ui: &mut egui::Ui, t: &Tokens, nome: &str, familia: O
     if familia.is_none() {
         ui.label(pequeno("Escolha a categoria para o bloco virar uma família.", t.text_dim));
         return;
+    }
+    linha(ui, "Nome na Legenda");
+    if let Some(v) = campo_de_texto(ui, egui::Id::new(("ele-familia-legenda", nome)), &f.legenda, largura) {
+        enviar(acoes, "legenda", json!(v));
+    }
+    linha(ui, "Descrição na Lista de Materiais");
+    if let Some(v) = campo_de_texto(ui, egui::Id::new(("ele-familia-material", nome)), &f.desc_material, largura) {
+        enviar(acoes, "descMaterial", json!(v));
     }
     linha(ui, "Domínio");
     egui::ComboBox::from_id_salt("ele-familia-dominio").selected_text(f.dominio.nome()).width(largura).show_ui(ui, |ui| {
