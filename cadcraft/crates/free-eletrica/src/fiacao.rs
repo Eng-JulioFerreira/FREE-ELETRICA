@@ -781,6 +781,8 @@ pub struct Regeneracao {
     pub apagadas: usize,
     /// Tabelas de quadro de cargas refeitas.
     pub tabelas: usize,
+    /// Diagramas unifilares refeitos.
+    pub unifilares: usize,
     pub avisos: Vec<String>,
 }
 
@@ -876,12 +878,13 @@ pub fn regenerar(doc: &mut Drawing, setup: &Setup, criar: Option<&[Handle]>) -> 
         }
     }
     reg.tabelas = crate::tabela::regenerar(doc, &analise, setup)?;
+    reg.unifilares = crate::unifilar::regenerar(doc, &analise, setup)?;
     Ok(reg)
 }
 
 /// Regenera se o desenho já tem tags ou tabelas (o gatilho das edições no quadro de cargas).
 pub fn regenerar_se_houver(doc: &mut Drawing, setup: &Setup) -> Result<Option<Regeneracao>, String> {
-    if tags(doc).is_empty() && crate::tabela::tabelas(doc).is_empty() {
+    if tags(doc).is_empty() && crate::tabela::tabelas(doc).is_empty() && crate::unifilar::unifilares(doc).is_empty() {
         return Ok(None);
     }
     regenerar(doc, setup, None).map(Some)

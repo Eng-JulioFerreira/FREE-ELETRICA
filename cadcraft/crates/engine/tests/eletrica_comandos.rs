@@ -1136,3 +1136,47 @@ fn nome_do_cabo_do_catalogo_por_comando() {
     let r = s.execute("eletrica.rotear", &json!({})).unwrap();
     assert_ne!(r["linhas"][0]["nomeCabo"], "Cabo da obra");
 }
+
+#[test]
+fn esquema_curva_dr_e_unifilar_por_comando() {
+    let _setup = trava_setup();
+    let (d, [qd, luz, _, tug]) = planta();
+    let mut s = Session::default();
+    s.open_drawing(d, "Dimensionar", None);
+    s.execute("elecircuito", &json!({ "quadro": qd.hex(), "circuito": "1", "pontos": [luz.hex()] })).unwrap();
+    s.execute("elecircuito", &json!({ "quadro": qd.hex(), "circuito": "2", "pontos": [tug.hex()] })).unwrap();
+    // Os esquemas novos, a curva e qualquer nome de grupo de DR.
+    assert!(s.execute("eletrica.circuito.definir", &json!({ "circuito": "1", "curva": "Z" })).is_err());
+    assert!(s.execute("eletrica.circuito.definir", &json!({ "circuito": "1", "esquema": "4F" })).is_err());
+    s.execute("eletrica.circuito.definir", &json!({ "circuito": "1", "esquema": "2F+N+T", "curva": "B", "grupoDr": "IDR9" })).unwrap();
+    s.execute("eletrica.circuito.definir", &json!({ "circuito": "2", "esquema": "3F+T", "grupoDr": "IDR9" })).unwrap();
+    let r = s.execute("eletrica.rotear", &json!({})).unwrap();
+    let l = r["linhas"].as_array().unwrap();
+    assert_eq!(
+        (l[0]["esquema"].as_str(), l[0]["condutores"].as_u64(), l[0]["curva"].as_str(), l[0]["curvaPropria"].as_bool()),
+        (Some("ffnt"), Some(4), Some("B"), Some(true))
+    );
+    assert_eq!((l[1]["esquema"].as_str(), l[1]["condutores"].as_u64(), l[1]["curva"].as_str()), (Some("ffft"), Some(4), Some("C")));
+    s.execute("eletrica.circuito.definir", &json!({ "circuito": "1", "curva": null })).unwrap();
+    assert_eq!(s.execute("eletrica.rotear", &json!({})).unwrap()["linhas"][0]["curvaPropria"], false);
+    // Dimensionar com o unifilar: o diagrama nasce e é um passo de desfazer.
+    let v = s.execute("eletrica.dimensionar", &json!({ "unifilar": true })).unwrap();
+    assert_eq!(v["unifilares"], 1);
+    let contar = |s: &Session| free_eletrica::unifilar::unifilares(s.doc().unwrap()).len();
+    assert_eq!(contar(&s), 1);
+    s.execute("eletrica.dimensionar", &json!({ "unifilar": true })).unwrap();
+    assert_eq!(contar(&s), 1, "atualiza, não duplica");
+    s.undo().unwrap();
+    assert_eq!(contar(&s), 1);
+    s.undo().unwrap();
+    assert_eq!(contar(&s), 0);
+    assert_eq!(s.execute("eletrica.dimensionar", &json!({})).unwrap()["unifilares"], 0);
+    assert_eq!(contar(&s), 0, "sem pedir, não cria");
+    // Direto, num ponto.
+    assert!(s.execute("eletrica.unifilar", &json!({ "ponto": "aqui" })).is_err());
+    let u = s.execute("eletrica.unifilar", &json!({ "ponto": [10.0, 20.0] })).unwrap();
+    let h = Handle::parse_hex(u["unifilar"].as_str().unwrap()).unwrap();
+    let EntityKind::Insert(i) = &s.doc().unwrap().model.get(h).unwrap().kind else { panic!("inserção") };
+    assert_eq!((i.insert.x, i.insert.y), (10.0, 20.0));
+    s.execute("eletrica.setup", &json!({ "compartilharPe": false })).unwrap();
+}

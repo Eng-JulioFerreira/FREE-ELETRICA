@@ -2225,6 +2225,112 @@ fn catalogos_de_cabos_com_edicao_e_exclusao() {
 }
 
 #[test]
+fn esquemas_curva_grupos_de_dr_e_unifilar() {
+    use nbr5410::{Curva, Esquema as E};
+    // Os seis esquemas, com os condutores de cada um.
+    let codigos: Vec<&str> = E::TODOS.iter().map(|e| e.codigo()).collect();
+    assert_eq!(codigos, ["F+N", "F+N+T", "2F+T", "2F+N+T", "3F+T", "3F+N+T"]);
+    for e in E::TODOS {
+        assert_eq!(E::de_codigo(e.codigo()), Some(e));
+    }
+    assert_eq!((E::Ffnt.fases(), E::Ffnt.neutro(), E::Ffnt.protecao(), E::Ffnt.condutores(), E::Ffnt.carregados()), (2, true, true, 4, 3));
+    assert_eq!((E::Ffft.fases(), E::Ffft.neutro(), E::Ffft.protecao(), E::Ffft.condutores(), E::Ffft.carregados()), (3, false, true, 4, 3));
+    assert_eq!(E::Fft.carregados(), 2);
+
+    let setup = Setup::default();
+    let mut d = metros();
+    let q = qd(&mut d, 0.0, 0.0);
+    let a = tug(&mut d, 2.0, 0.0, "1");
+    let b = tug(&mut d, 4.0, 0.0, "2");
+    let c = tug(&mut d, 6.0, 0.0, "3");
+    for (de, para) in [(q, a), (a, b), (b, c)] {
+        eletroduto::inserir(&mut d, de, para, rota::Instalacao::Teto, 0.0).unwrap();
+    }
+    let rotear = |d: &Drawing| rotear_quadro(d, &analisar(d), &setup, q).unwrap();
+
+    // Duas fases com neutro carregam três condutores: a capacidade é a da coluna de três.
+    let dois = {
+        editar::definir_esquema(&mut d, q, "1", Some(E::Fft)).unwrap();
+        rotear(&d).linhas[0].escolha.iz
+    };
+    editar::definir_esquema(&mut d, q, "1", Some(E::Ffnt)).unwrap();
+    let r = rotear(&d);
+    assert_eq!((r.linhas[0].esquema, r.linhas[0].condutores, r.linhas[0].circuito.fases), (E::Ffnt, 4, 2));
+    assert!(r.linhas[0].escolha.iz.unwrap() < dois.unwrap(), "{:?} {:?}", r.linhas[0].escolha.iz, dois);
+    assert_eq!(r.linhas[0].indicacao.split(' ').next(), Some("2F+N+T"));
+    editar::definir_esquema(&mut d, q, "2", Some(E::Ffft)).unwrap();
+    assert_eq!(rotear(&d).linhas[1].condutores, 4);
+    editar::definir_esquema(&mut d, q, "1", None).unwrap();
+    editar::definir_esquema(&mut d, q, "2", None).unwrap();
+
+    // Curva: a sugerida e a escolhida.
+    assert_eq!(quadro::curva_sugerida(&[demanda::TipoCarga::Aquecimento]), Curva::B);
+    assert_eq!(quadro::curva_sugerida(&[demanda::TipoCarga::Aquecimento, demanda::TipoCarga::IluminacaoTug]), Curva::C);
+    assert_eq!(quadro::curva_sugerida(&[]), Curva::C);
+    let r = rotear(&d);
+    assert_eq!((r.linhas[0].curva, r.linhas[0].curva_propria), (Curva::C, false));
+    editar::definir_curva(&mut d, q, "1", Some(Curva::D)).unwrap();
+    let r = rotear(&d);
+    assert_eq!((r.linhas[0].curva, r.linhas[0].curva_propria), (Curva::D, true));
+    assert_eq!(Curva::de_codigo(" d "), Some(Curva::D));
+    assert_eq!(Curva::de_codigo("Z"), None);
+
+    // Grupos de DR à vontade, com a soma das correntes.
+    assert!(rotear(&d).grupos_dr().is_empty());
+    assert_eq!(quadro::proximo_grupo_dr(&[]), "IDR1");
+    assert_eq!(quadro::proximo_grupo_dr(&["idr1".into(), "IDR3".into()]), "IDR2");
+    editar::definir_grupo_dr(&mut d, q, "1", Some("IDR2")).unwrap();
+    editar::definir_grupo_dr(&mut d, q, "2", Some("idr2")).unwrap();
+    editar::definir_grupo_dr(&mut d, q, "3", Some("IDR7")).unwrap();
+    let r = rotear(&d);
+    let g = r.grupos_dr();
+    assert_eq!(g.iter().map(|x| x.nome.as_str()).collect::<Vec<_>>(), ["IDR2", "IDR7"]);
+    assert_eq!(g[0].circuitos, ["1", "2"]);
+    assert!(perto(g[0].ib, r.linhas[0].escolha.ib + r.linhas[1].escolha.ib, 1e-9));
+    assert_eq!(g[0].dr, Some(25.0));
+
+    // Unifilar: nasce ao lado do quadro, com um disjuntor por circuito e o geral; regenerar mantém o lugar.
+    let analise = analisar(&d);
+    let h = unifilar::gerar(&mut d, &analise, &setup, q, None).unwrap();
+    assert_eq!(unifilar::unifilares(&d), vec![(h, q)]);
+    let posicao = |d: &Drawing| match &d.model.get(h).unwrap().kind {
+        EntityKind::Insert(i) => [i.insert.x, i.insert.y],
+        _ => panic!("inserção"),
+    };
+    assert_eq!(posicao(&d), [3.0, 0.0]);
+    let nome = format!("{}{}", unifilar::PREFIXO, q.hex());
+    let textos = |d: &Drawing| -> Vec<String> {
+        d.blocks
+            .get(&nome)
+            .unwrap()
+            .entities
+            .iter()
+            .filter_map(|e| if let EntityKind::Text(t) = &e.kind { Some(t.value.clone()) } else { None })
+            .collect()
+    };
+    let t = textos(&d);
+    assert!(t.iter().any(|x| x.starts_with("DIAGRAMA UNIFILAR")), "{t:?}");
+    assert!(t.iter().any(|x| x.starts_with("IDR2") && x.contains("30 mA")), "{t:?}");
+    assert!(t.iter().any(|x| x.starts_with("1 ") && x.contains("A/D")), "{t:?}");
+    assert_eq!(t.iter().filter(|x| x.contains(" VA")).count(), 3, "{t:?}");
+    unifilar::gerar(&mut d, &analise, &setup, q, Some([50.0, 50.0])).unwrap();
+    assert_eq!(posicao(&d), [50.0, 50.0]);
+    assert!(unifilar::gerar(&mut d, &analise, &setup, q, Some([f64::NAN, 0.0])).is_err());
+    // ELEREGEN atualiza o conteúdo e não mexe na posição.
+    editar::definir_descricao(&mut d, q, "1", Some("Sala")).unwrap();
+    let reg = fiacao::regenerar(&mut d, &setup, None).unwrap();
+    assert_eq!(reg.unifilares, 1);
+    assert!(textos(&d).iter().any(|x| x.contains("Sala")));
+    assert_eq!(posicao(&d), [50.0, 50.0]);
+    assert_eq!(unifilar::unifilares(&d).len(), 1);
+    // O quadro saiu: o diagrama sai junto.
+    d.model.remove(q);
+    let analise = analisar(&d);
+    assert_eq!(unifilar::regenerar(&mut d, &analise, &setup).unwrap(), 0);
+    assert!(unifilar::unifilares(&d).is_empty());
+}
+
+#[test]
 fn liberar_fases_devolve_ao_balanceamento() {
     let mut d = planta();
     let qd = quadro(&d);

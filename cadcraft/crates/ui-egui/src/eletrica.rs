@@ -149,10 +149,18 @@ enum AbaCargas {
 /// As premissas do dimensionamento, até processar.
 #[derive(Clone, Default)]
 struct OpcoesDimensionar {
+    quadro: Option<Handle>,
     compartilhar_pe: bool,
+    unifilar: bool,
     temperatura: f64,
     fca_manual: bool,
     fca: f64,
+    /// Calcular Dimensionamento foi pedido: mostra os resultados para revisar antes de aplicar.
+    calculado: bool,
+    /// Os circuitos marcados para mover de grupo de DR.
+    selecionados: Vec<String>,
+    /// Grupos criados com + Novo Grupo DR, ainda sem circuito.
+    grupos_novos: Vec<String>,
 }
 
 /// A janela de blocos.
@@ -365,12 +373,18 @@ pub fn route(app: &mut CadApp, id: &str, _params: &Value) -> Option<Result<Value
         "ui.eletrica.atributos" | "eleatributos" => Some(abrir(Qual::Atributos)),
         "ui.eletrica.dimensionar" | "eledimensionar" => {
             let s = setup();
-            trava(&JANELAS).dimensionar = OpcoesDimensionar {
+            let mut j = trava(&JANELAS);
+            let quadro = j.dimensionar.quadro;
+            j.dimensionar = OpcoesDimensionar {
+                quadro,
                 compartilhar_pe: s.compartilhar_pe,
+                unifilar: true,
                 temperatura: s.temperatura_ambiente,
                 fca_manual: s.fca_manual.is_some(),
                 fca: s.fca_manual.unwrap_or(0.8),
+                ..OpcoesDimensionar::default()
             };
+            drop(j);
             Some(abrir(Qual::Dimensionar))
         }
         "ui.eletrica.materiais" | "elemateriais" => Some(abrir(Qual::Materiais)),
@@ -1245,8 +1259,8 @@ pub fn janelas(app: &mut CadApp, ctx: &egui::Context) {
                     ui.label(pequeno("Nenhum desenho aberto.", t.text_dim));
                 }
             }),
-            Qual::Dimensionar => janela(ctx, "Dimensionar projeto", (520.0, 170.0), (440.0, 300.0), |ui| {
-                janela_dimensionar(ui, &t, &mut dimensionar, tem_desenho, &mut acoes)
+            Qual::Dimensionar => janela(ctx, "Dimensionar projeto", (260.0, 110.0), (1120.0, 680.0), |ui| {
+                janela_dimensionar(ui, app, &t, &mut st, &s, &mut dimensionar, &mut acoes)
             }),
             Qual::Blocos => janela(ctx, "Blocos e famílias", (300.0, 130.0), (720.0, 460.0), |ui| {
                 janela_blocos(ui, &t, &st, &mut blocos, tem_desenho, &mut acoes)
@@ -1690,35 +1704,243 @@ fn ficha_de_engenharia(ui: &mut egui::Ui, t: &Tokens, s: &Setup, r: &ele::Resumo
     });
 }
 
-/// A janela do dimensionamento: as premissas e o botão que processa.
-fn janela_dimensionar(ui: &mut egui::Ui, t: &Tokens, o: &mut OpcoesDimensionar, tem_desenho: bool, acoes: &mut Vec<Acao>) {
-    ui.label(pequeno(
-        "Lançar pontos, circuitos e eletrodutos não muda o dimensionamento. O quadro de cargas, as tags e as tabelas recebem o resultado aqui.",
-        t.text_dim,
-    ));
-    ui.add_space(4.0);
-    ui.checkbox(&mut o.compartilhar_pe, "Compartilhar o condutor de proteção (PE)")
-        .on_hover_text("Circuitos no mesmo eletroduto dividem um PE, o de maior seção entre eles (NBR 5410, 6.4.3.1). Confira a seção resultante");
-    egui::Grid::new("ele-dimensionar").num_columns(2).spacing(vec2(12.0, 6.0)).show(ui, |ui| {
+/// A janela do dimensionamento: o esquema, o cabo e o grupo de DR de cada circuito, Calcular para ver os
+/// resultados sem gravar nada, e Aplicar ao Quadro para gravá-los.
+fn janela_dimensionar(ui: &mut egui::Ui, app: &CadApp, t: &Tokens, st: &mut Estado, s: &Setup, o: &mut OpcoesDimensionar, acoes: &mut Vec<Acao>) {
+    if st.chave.is_none() {
+        ui.label(pequeno("Nenhum desenho aberto.", t.text_dim));
+        return;
+    }
+    let analise = st.analise.clone();
+    if analise.quadros().is_empty() {
+        ui.label(pequeno("Nenhum quadro no desenho: insira um com Inserir pontos, categoria Quadros/Racks.", t.text_dim));
+        return;
+    }
+    ui.horizontal_wrapped(|ui| {
+        if seletor_quadro(ui, "ele-dimensionar", &analise, &mut o.quadro) {
+            o.calculado = false;
+            o.selecionados.clear();
+            o.grupos_novos.clear();
+        }
+        ui.separator();
         ui.label("Temperatura ambiente (FCT)");
         ui.add(campo(&mut o.temperatura, 10.0..=60.0, 1.0, 0, " °C"));
-        ui.end_row();
+        ui.separator();
         ui.checkbox(&mut o.fca_manual, "FCA fixo").on_hover_text("Sem marcar, vale o FCA real de cada trecho (tabela 42)");
         if o.fca_manual {
             ui.add(campo(&mut o.fca, 0.1..=1.0, 0.01, 2, ""));
-        } else {
-            ui.label(pequeno("real, por trecho", t.text_dim));
         }
-        ui.end_row();
     });
-    ui.add_space(6.0);
-    if ui.add_enabled(tem_desenho, egui::Button::new(RichText::new("Processar cálculo").strong()).min_size(vec2(200.0, 28.0))).clicked() {
-        acoes.push(Acao::RodarComStatus(
-            "eletrica.dimensionar",
-            json!({ "compartilharPe": o.compartilhar_pe, "temperaturaAmbiente": o.temperatura, "fcaManual": if o.fca_manual { json!(o.fca) } else { Value::Null } }),
-            |v| format!("Projeto dimensionado: {} circuito(s), {} aviso(s)", v["circuitos"], v["avisos"]),
-        ));
+    ui.horizontal_wrapped(|ui| {
+        ui.checkbox(&mut o.compartilhar_pe, "Compartilhar condutor de proteção (Terra / PE)").on_hover_text(
+            "Circuitos no mesmo eletroduto dividem um PE, o de maior seção entre eles (NBR 5410, 6.4.3.1). Confira a seção resultante",
+        );
+        ui.checkbox(&mut o.unifilar, "Gerar / Atualizar Diagrama Unifilar")
+            .on_hover_text("Ao aplicar, desenha o diagrama ao lado do quadro; depois ele fica onde você o puser");
+    });
+    let Some(q) = o.quadro else { return };
+    let previa = Setup {
+        compartilhar_pe: o.compartilhar_pe,
+        temperatura_ambiente: o.temperatura,
+        fca_manual: if o.fca_manual { Some(o.fca) } else { None },
+        ..s.clone()
+    };
+    let Some(resumo) = st.resumo(app, &previa, q) else { return };
+    let r = match resumo.as_ref() {
+        Ok(r) => r,
+        Err(e) => {
+            ui.label(pequeno(e.as_str(), COR_AVISO));
+            return;
+        }
+    };
+    ui.separator();
+    ui.label(RichText::new("Circuitos").strong());
+    if r.linhas.is_empty() {
+        ui.label(pequeno("Nenhum circuito com pontos neste quadro: use Criar circuito.", t.text_dim));
     }
+    egui::ScrollArea::both().id_salt("ele-dimensionar-circuitos").max_height(250.0).auto_shrink([false, true]).show(ui, |ui| {
+        let mut colunas: Vec<Coluna> = vec![
+            ("Circ.", 34.0, false),
+            ("Descrição", 150.0, false),
+            ("Potência (VA)", 80.0, true),
+            ("Esquema", 80.0, false),
+            ("Tipo de cabo", 240.0, false),
+        ];
+        if o.calculado {
+            colunas.extend_from_slice(&[
+                ("Ib (A)", 52.0, true),
+                ("Cabo (mm²)", 92.0, false),
+                ("Disjuntor (A)", 92.0, false),
+                ("Curva", 50.0, false),
+                ("Queda (%)", 62.0, true),
+                ("Situação", 74.0, false),
+            ]);
+        }
+        egui::Grid::new("ele-dimensionar-tabela").num_columns(colunas.len()).striped(true).spacing(vec2(8.0, 2.0)).show(ui, |ui| {
+            cabecalho(ui, t, &colunas);
+            for l in &r.linhas {
+                let id = &l.circuito.id;
+                celula(ui, 34.0, id.as_str(), false);
+                celula(ui, 150.0, l.descricao.as_str(), false);
+                celula(ui, 80.0, numero(fixo(l.circuito.potencia, 0)), true);
+                na_celula(ui, 80.0, |ui| {
+                    egui::ComboBox::from_id_salt(("ele-dim-esquema", id.as_str())).selected_text(l.esquema.codigo()).width(72.0).show_ui(ui, |ui| {
+                        if ui.selectable_label(false, "Automático").clicked() {
+                            acoes.push(Acao::Rodar("eletrica.circuito.definir", json!({ "quadro": q.hex(), "circuito": id, "esquema": null })));
+                        }
+                        for e in Esquema::TODOS {
+                            if ui.selectable_label(l.esquema == e, e.codigo()).clicked() {
+                                acoes.push(Acao::Rodar(
+                                    "eletrica.circuito.definir",
+                                    json!({ "quadro": q.hex(), "circuito": id, "esquema": e.codigo() }),
+                                ));
+                            }
+                        }
+                    });
+                });
+                na_celula(ui, 240.0, |ui| escolher_cabo(ui, s, q, id, l, 232.0, true, acoes));
+                if o.calculado {
+                    celula(ui, 52.0, numero(fixo(l.escolha.ib, 2)), true);
+                    escolher_secao_e_disjuntor(ui, q, id, l, (92.0, 92.0), acoes);
+                    na_celula(ui, 50.0, |ui| {
+                        egui::ComboBox::from_id_salt(("ele-dim-curva", id.as_str())).selected_text(l.curva.codigo()).width(42.0).show_ui(ui, |ui| {
+                            if ui.selectable_label(!l.curva_propria, "Sugerida").clicked() {
+                                acoes.push(Acao::Rodar("eletrica.circuito.definir", json!({ "quadro": q.hex(), "circuito": id, "curva": null })));
+                            }
+                            for c in ele::nbr5410::Curva::TODAS {
+                                if ui.selectable_label(l.curva_propria && l.curva == c, c.codigo()).clicked() {
+                                    acoes.push(Acao::Rodar(
+                                        "eletrica.circuito.definir",
+                                        json!({ "quadro": q.hex(), "circuito": id, "curva": c.codigo() }),
+                                    ));
+                                }
+                            }
+                        });
+                    });
+                    celula(ui, 62.0, numero(l.escolha.queda.map_or("-".to_string(), |v| fixo(v, 2))), true);
+                    let avisos: Vec<&str> = l.escolha.avisos.iter().map(String::as_str).collect();
+                    if avisos.is_empty() {
+                        celula(ui, 74.0, "OK", false);
+                    } else {
+                        celula(ui, 74.0, RichText::new(format!("{} aviso(s)", avisos.len())).color(COR_AVISO), false)
+                            .on_hover_text(avisos.join("\n"));
+                    }
+                }
+                ui.end_row();
+            }
+        });
+    });
+    ui.separator();
+    grupos_de_dr(ui, t, r, q, o, acoes);
+    ui.separator();
+    ui.horizontal_wrapped(|ui| {
+        if ui
+            .add(egui::Button::new(RichText::new("Calcular Dimensionamento").strong()).min_size(vec2(200.0, 28.0)))
+            .on_hover_text("Mostra os cabos e os disjuntores por circuito, sem gravar o cálculo")
+            .clicked()
+        {
+            o.calculado = true;
+        }
+        let aplicar = egui::Button::new(RichText::new("Aplicar ao Quadro").strong().color(Color32::WHITE)).fill(t.accent).min_size(vec2(170.0, 28.0));
+        let dica = "Grava o cálculo no quadro e atualiza as tags, as tabelas e o diagrama. Ctrl+Z desfaz";
+        if ui.add_enabled(o.calculado, aplicar).on_hover_text(dica).on_disabled_hover_text("Calcule antes de aplicar").clicked() {
+            acoes.push(Acao::RodarComStatus(
+                "eletrica.dimensionar",
+                json!({
+                    "quadro": q.hex(),
+                    "compartilharPe": o.compartilhar_pe,
+                    "temperaturaAmbiente": o.temperatura,
+                    "fcaManual": if o.fca_manual { json!(o.fca) } else { Value::Null },
+                    "unifilar": o.unifilar,
+                }),
+                |v| format!("Quadro dimensionado: {} circuito(s), {} aviso(s)", v["circuitos"], v["avisos"]),
+            ));
+        }
+        if !o.calculado {
+            ui.label(pequeno("Lançar pontos, circuitos e eletrodutos não muda o dimensionamento: revise aqui e aplique ao quadro.", t.text_dim));
+        }
+    });
+    lista_avisos(ui, "ele-dimensionar-avisos", &r.avisos);
+}
+
+/// As duas colunas do DR: à esquerda os circuitos sem DR; à direita, quantos grupos o projeto pedir.
+fn grupos_de_dr(ui: &mut egui::Ui, t: &Tokens, r: &ele::ResumoQuadro, q: Handle, o: &mut OpcoesDimensionar, acoes: &mut Vec<Acao>) {
+    let rotulo = |l: &ele::quadro::Linha| {
+        if l.descricao.is_empty() { format!("Circuito {}", l.circuito.id) } else { format!("{}  {}", l.circuito.id, l.descricao) }
+    };
+    let marcar = |ui: &mut egui::Ui, l: &ele::quadro::Linha, o: &mut OpcoesDimensionar| {
+        let id = &l.circuito.id;
+        let marcado = o.selecionados.contains(id);
+        if ui.selectable_label(marcado, rotulo(l)).clicked() {
+            if marcado {
+                o.selecionados.retain(|c| c != id);
+            } else {
+                o.selecionados.push(id.clone());
+            }
+        }
+    };
+    let grupos = r.grupos_dr();
+    o.grupos_novos.retain(|n| !grupos.iter().any(|g| g.nome.eq_ignore_ascii_case(n)));
+    // Duas colunas de altura fixa: um separador esticado faria a janela crescer a cada quadro.
+    ui.columns(2, |colunas| {
+        let [esquerda, direita] = colunas else { return };
+        esquerda.label(RichText::new("Circuitos sem DR").strong());
+        esquerda.label(pequeno("Clique para marcar; depois mova para um grupo.", t.text_dim));
+        egui::ScrollArea::vertical().id_salt("ele-dr-livres").max_height(130.0).auto_shrink([false, true]).show(esquerda, |ui| {
+            for l in r.linhas.iter().filter(|l| l.grupo_dr.is_none()) {
+                marcar(ui, l, o);
+            }
+        });
+        direita.horizontal(|ui| {
+            ui.label(RichText::new("Grupos DR").strong());
+            if ui.button("+ Novo Grupo DR").clicked() {
+                let mut nomes: Vec<String> = grupos.iter().map(|g| g.nome.clone()).collect();
+                nomes.extend(o.grupos_novos.iter().cloned());
+                o.grupos_novos.push(ele::quadro::proximo_grupo_dr(&nomes));
+            }
+        });
+        let mover = |g: &str, o: &mut OpcoesDimensionar, acoes: &mut Vec<Acao>| {
+            for id in o.selecionados.drain(..) {
+                acoes.push(Acao::Rodar("eletrica.circuito.definir", json!({ "quadro": q.hex(), "circuito": id, "grupoDr": g })));
+            }
+        };
+        egui::ScrollArea::vertical().id_salt("ele-dr-grupos").max_height(150.0).auto_shrink([false, true]).show(direita, |ui| {
+            for g in &grupos {
+                ui.horizontal(|ui| {
+                    let corrente = g.dr.map_or("corrente acima da tabela".to_string(), |d| format!("{} A / 30 mA", br(d)));
+                    ui.label(RichText::new(format!("{} · {corrente}", g.nome)).strong())
+                        .on_hover_text("Sugestão a conferir: a menor corrente nominal acima da soma de Ib dos circuitos");
+                    if ui.add_enabled(!o.selecionados.is_empty(), egui::Button::new("Mover selecionados").small()).clicked() {
+                        mover(&g.nome, o, acoes);
+                    }
+                });
+                for l in r.linhas.iter().filter(|l| g.circuitos.contains(&l.circuito.id)) {
+                    ui.horizontal(|ui| {
+                        ui.add_space(12.0);
+                        marcar(ui, l, o);
+                        if ui.small_button("Tirar do DR").clicked() {
+                            acoes.push(Acao::Rodar(
+                                "eletrica.circuito.definir",
+                                json!({ "quadro": q.hex(), "circuito": l.circuito.id, "grupoDr": null }),
+                            ));
+                        }
+                    });
+                }
+            }
+            let novos = o.grupos_novos.clone();
+            for n in &novos {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(n.as_str()).strong());
+                    if ui.add_enabled(!o.selecionados.is_empty(), egui::Button::new("Mover selecionados").small()).clicked() {
+                        mover(n, o, acoes);
+                    }
+                    if ui.small_button("Excluir").clicked() {
+                        o.grupos_novos.retain(|x| x != n);
+                    }
+                });
+            }
+        });
+    });
 }
 
 /// A janela de blocos: criar um novo e editar os do desenho.
@@ -2091,7 +2313,11 @@ fn quadro_de_cargas(
                 format!("Fases equilibradas: desequilíbrio de {} %", fixo(v["desequilibrio"].as_f64().unwrap_or(0.0), 1))
             }));
         }
-        if ui.button("Dimensionar projeto...").on_hover_text("Premissas do cálculo e Processar cálculo (ELEDIMENSIONAR)").clicked() {
+        if ui
+            .button("Dimensionar projeto...")
+            .on_hover_text("Esquemas, cabos e grupos DR por circuito; calcule, revise e aplique (ELEDIMENSIONAR)")
+            .clicked()
+        {
             acoes.push(Acao::Rodar("ui.eletrica.dimensionar", Value::Null));
         }
         ui.separator();
@@ -2180,24 +2406,16 @@ fn quadro_de_cargas(
                     },
                 );
             });
-            // Grupo de DR.
-            na_celula(ui, largura(fim + 1), |ui| {
-                let atual = l.grupo_dr.as_deref().unwrap_or("-");
-                egui::ComboBox::from_id_salt(("ele-dr", id.as_str())).selected_text(atual).width(largura(fim + 1) - 4.0).show_ui(ui, |ui| {
-                    if ui.selectable_label(l.grupo_dr.is_none(), "-").clicked() {
-                        acoes.push(Acao::Rodar("eletrica.circuito.definir", json!({ "quadro": q.hex(), "circuito": id, "grupoDr": null })));
-                    }
-                    for g in ["IDR1", "IDR2", "IDR3", "IDR4", "IDR5", "IDR6"] {
-                        if ui.selectable_label(atual == g, g).clicked() {
-                            acoes.push(Acao::Rodar("eletrica.circuito.definir", json!({ "quadro": q.hex(), "circuito": id, "grupoDr": g })));
-                        }
-                    }
-                });
-            });
+            // O grupo de DR se escolhe em Dimensionar projeto.
+            celula(ui, largura(fim + 1), l.grupo_dr.as_deref().unwrap_or("-"), false);
             // O que o último cálculo gravou.
-            let resumo = l
-                .calculado
-                .map_or("-".to_string(), |d| format!("#{} · {} A", d.secao.map_or("?".to_string(), br), d.disjuntor.map_or("?".to_string(), br)));
+            let resumo = l.calculado.map_or("-".to_string(), |d| {
+                format!(
+                    "#{} · {} A",
+                    d.secao.map_or("?".to_string(), br),
+                    d.disjuntor.map_or("?".to_string(), |x| format!("{}/{}", br(x), l.curva.codigo()))
+                )
+            });
             celula(ui, largura(fim + 2), numero(resumo), false);
             let mut avisos = l.escolha.avisos.clone();
             avisos.extend(k.avisos.iter().cloned());
@@ -2319,7 +2537,7 @@ fn detalhes_do_circuito(ui: &mut egui::Ui, s: &Setup, q: Handle, l: &ele::quadro
     let estimado = l.fora_da_rede > 0;
     let til = if estimado { "~" } else { "" };
     if l.estado_calculo() != ele::quadro::EstadoCalculo::EmDia {
-        ui.label(RichText::new("Prévia: o quadro, as tags e as tabelas mudam ao processar o cálculo.").color(COR_AVISO));
+        ui.label(RichText::new("Prévia: o quadro, as tags e as tabelas mudam ao aplicar o cálculo.").color(COR_AVISO));
     }
     let secoes = |ui: &mut egui::Ui, nome: &str, valor: String| {
         ui.label(nome);

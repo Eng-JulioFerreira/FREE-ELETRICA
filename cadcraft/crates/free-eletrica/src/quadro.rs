@@ -34,6 +34,8 @@ pub const CHAVE_ISOLACAO_CIRCUITO: &str = "ISOL.";
 pub const CHAVE_CABO: &str = "CABO.";
 /// O nome do cabo no catálogo: `CABONOME.<circuito>`. A classe que vale no cálculo fica em `CABO.`.
 pub const CHAVE_CABO_NOME: &str = "CABONOME.";
+/// A curva do disjuntor de um circuito: `CURVA.<circuito>` (`B`, `C`, `D`).
+pub const CHAVE_CURVA: &str = "CURVA.";
 /// Grupo de DR de um circuito: `DR.<circuito>`.
 pub const CHAVE_DR: &str = "DR.";
 /// O último dimensionamento de um circuito: `DIM.<circuito>` = `seção;disjuntor;FCA;queda`.
@@ -174,6 +176,7 @@ pub struct Propriedades {
     pub cabo: Option<nbr5410::TipoCabo>,
     /// O nome do cabo no catálogo.
     pub cabo_nome: Option<String>,
+    pub curva: Option<nbr5410::Curva>,
     pub grupo_dr: Option<String>,
     pub calculado: Option<Calculado>,
     pub esquema: Option<nbr5410::Esquema>,
@@ -246,6 +249,8 @@ pub fn propriedades(quadro: &PontoEletrico) -> HashMap<String, Propriedades> {
             m.entry(c.to_string()).or_default().cabo = nbr5410::TipoCabo::de_codigo(v);
         } else if let Some(c) = k.strip_prefix(CHAVE_CABO_NOME) {
             m.entry(c.to_string()).or_default().cabo_nome = Some(v.trim().to_string()).filter(|n| !n.is_empty());
+        } else if let Some(c) = k.strip_prefix(CHAVE_CURVA) {
+            m.entry(c.to_string()).or_default().curva = nbr5410::Curva::de_codigo(v);
         } else if let Some(c) = k.strip_prefix(CHAVE_ESQUEMA) {
             m.entry(c.to_string()).or_default().esquema = nbr5410::Esquema::de_codigo(v);
         } else if let Some(c) = k.strip_prefix(CHAVE_TENSAO) {
@@ -283,6 +288,29 @@ pub fn isolacao_do_quadro(quadro: &PontoEletrico, setup: &Setup) -> nbr5410::Iso
 /// em desenhos anteriores ou o padrão do programa.
 pub fn cabo_do_quadro(quadro: &PontoEletrico, setup: &Setup) -> nbr5410::TipoCabo {
     config_do_quadro(quadro).cabo.unwrap_or_else(|| isolacao_gravada(quadro).map_or(setup.cabo_padrao, nbr5410::TipoCabo::de_isolacao))
+}
+
+/// A curva sugerida: B em cargas só resistivas, sem corrente de partida; C nas outras. É o ponto de
+/// partida do projetista, que escolhe a curva de cada circuito.
+pub fn curva_sugerida(tipos: &[TipoCarga]) -> nbr5410::Curva {
+    if !tipos.is_empty() && tipos.iter().all(|t| *t == TipoCarga::Aquecimento) { nbr5410::Curva::B } else { nbr5410::Curva::C }
+}
+
+/// Um grupo de DR de um quadro.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GrupoDr {
+    pub nome: String,
+    pub circuitos: Vec<String>,
+    /// Soma das correntes de projeto dos circuitos (A).
+    pub ib: f64,
+    /// Corrente nominal sugerida para o DR (A), a conferir. `None`: a soma passa da tabela.
+    pub dr: Option<f64>,
+}
+
+/// O próximo nome livre de grupo de DR.
+pub fn proximo_grupo_dr(existentes: &[String]) -> String {
+    (1..).map(|n| format!("IDR{n}")).find(|g| !existentes.iter().any(|e| e.eq_ignore_ascii_case(g))).unwrap_or_default()
 }
 
 /// O que "Processar cálculo" fez num quadro.
@@ -395,6 +423,10 @@ pub struct Linha {
     pub tipo_cabo: nbr5410::TipoCabo,
     /// O nome do cabo no catálogo.
     pub nome_cabo: String,
+    /// A curva do disjuntor: a escolhida ou a sugerida.
+    pub curva: nbr5410::Curva,
+    /// A curva foi escolhida para este circuito.
+    pub curva_propria: bool,
     /// O grupo de DR do circuito.
     pub grupo_dr: Option<String>,
     /// O que o último "Processar cálculo" gravou.
@@ -498,6 +530,28 @@ pub struct ResumoQuadro {
 }
 
 impl ResumoQuadro {
+    /// Os grupos de DR do quadro, por nome, com os circuitos de cada um.
+    pub fn grupos_dr(&self) -> Vec<GrupoDr> {
+        let mut grupos: Vec<GrupoDr> = Vec::new();
+        for l in &self.linhas {
+            let Some(nome) = &l.grupo_dr else { continue };
+            let i = match grupos.iter().position(|g| g.nome.eq_ignore_ascii_case(nome)) {
+                Some(i) => i,
+                None => {
+                    grupos.push(GrupoDr { nome: nome.clone(), circuitos: Vec::new(), ib: 0.0, dr: None });
+                    grupos.len() - 1
+                }
+            };
+            if let Some(g) = grupos.get_mut(i) {
+                g.circuitos.push(l.circuito.id.clone());
+                g.ib += l.escolha.ib;
+                g.dr = CORRENTES_DR.iter().copied().find(|c| *c >= g.ib);
+            }
+        }
+        grupos.sort_by(|a, b| crate::circuito::ordem_natural(&a.nome, &b.nome));
+        grupos
+    }
+
     /// A alimentação do quadro em texto: "220/127 V bifásico".
     pub fn alimentacao(&self) -> String {
         match self.fases_quadro {
@@ -684,6 +738,7 @@ pub fn rotear(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle) -
                 fct: isolacao_circuito.fct(setup.temperatura_ambiente),
                 isolacao: isolacao_circuito,
                 queda_admissivel: if c.natureza == crate::circuito::Natureza::Iluminacao { setup.queda_iluminacao } else { setup.queda_admissivel },
+                carregados: Some(esquema_de(c).carregados()),
                 ..cfg_base.clone()
             };
             let automatico = nbr5410::dimensionar_com(c, &cfg, r.momento);
@@ -713,6 +768,8 @@ pub fn rotear(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle) -
                 isolacao: isolacao_circuito,
                 tipo_cabo: p.cabo.unwrap_or(cabo_padrao),
                 nome_cabo: p.cabo_nome.clone().unwrap_or_else(|| setup.nome_do_cabo(p.cabo.unwrap_or(cabo_padrao))),
+                curva: p.curva.unwrap_or_else(|| curva_sugerida(&tipos_carga)),
+                curva_propria: p.curva.is_some(),
                 grupo_dr: p.grupo_dr.clone(),
                 calculado: p.calculado,
                 isolacao_propria: p.isolacao.is_some(),

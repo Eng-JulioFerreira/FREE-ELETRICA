@@ -606,6 +606,7 @@ impl Setup {
             fases_padrao: self.sistema.fases(),
             queda_admissivel: self.queda_admissivel,
             isolacao,
+            carregados: None,
         }
     }
 

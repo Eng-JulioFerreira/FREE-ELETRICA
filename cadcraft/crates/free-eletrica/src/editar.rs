@@ -8,9 +8,9 @@ use cadcraft_doc::{Drawing, EntityKind, Handle};
 use crate::nbr5410::{Esquema, Isolacao, TipoCabo};
 use crate::ponto::{CHAVE_ALTURA, TAGS_ALTURA, TAGS_CIRCUITO, TAGS_COMANDO, TAGS_QUADRO, ler_ponto};
 use crate::quadro::{
-    CHAVE_ALIMENTADO_POR, CHAVE_CABO, CHAVE_CABO_NOME, CHAVE_CABO_QUADRO, CHAVE_DESCRICAO, CHAVE_DIM, CHAVE_DISJUNTOR, CHAVE_DR, CHAVE_ESQUEMA,
-    CHAVE_FASE, CHAVE_ISOLACAO, CHAVE_ISOLACAO_CIRCUITO, CHAVE_SECAO, CHAVE_SISTEMA_QUADRO, CHAVE_TENSAO, CHAVE_TENSAO_NOMINAL, CONCESSIONARIA,
-    NOMES_FASES, fases_de_texto,
+    CHAVE_ALIMENTADO_POR, CHAVE_CABO, CHAVE_CABO_NOME, CHAVE_CABO_QUADRO, CHAVE_CURVA, CHAVE_DESCRICAO, CHAVE_DIM, CHAVE_DISJUNTOR, CHAVE_DR,
+    CHAVE_ESQUEMA, CHAVE_FASE, CHAVE_ISOLACAO, CHAVE_ISOLACAO_CIRCUITO, CHAVE_SECAO, CHAVE_SISTEMA_QUADRO, CHAVE_TENSAO, CHAVE_TENSAO_NOMINAL,
+    CONCESSIONARIA, NOMES_FASES, fases_de_texto,
 };
 use crate::xdata;
 
@@ -45,6 +45,7 @@ fn esquecer_circuito(doc: &mut Drawing, quadro: Handle, circuito: &str) -> Resul
         CHAVE_ISOLACAO_CIRCUITO,
         CHAVE_CABO,
         CHAVE_CABO_NOME,
+        CHAVE_CURVA,
         CHAVE_ESQUEMA,
         CHAVE_TENSAO,
         CHAVE_FASE,
@@ -222,6 +223,11 @@ pub fn liberar_fases(doc: &mut Drawing, quadro: Handle) -> Result<usize, String>
 /// Isolação dos condutores do quadro; `None` volta à das configurações.
 pub fn definir_isolacao(doc: &mut Drawing, quadro: Handle, isolacao: Option<Isolacao>) -> Result<(), String> {
     gravar_xdata(doc, quadro, CHAVE_ISOLACAO, isolacao.map(Isolacao::codigo))
+}
+
+/// A curva do disjuntor de um circuito; `None` volta à sugerida.
+pub fn definir_curva(doc: &mut Drawing, quadro: Handle, circuito: &str, curva: Option<crate::nbr5410::Curva>) -> Result<(), String> {
+    gravar_xdata(doc, quadro, &chave_do_circuito(CHAVE_CURVA, circuito)?, curva.map(crate::nbr5410::Curva::codigo))
 }
 
 /// O nome do cabo de um circuito no catálogo; `None` volta ao nome da classe.

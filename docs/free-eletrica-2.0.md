@@ -226,3 +226,37 @@ Limites:
 - **Grupo DR:** organiza os circuitos e entra na lista de materiais, sem dimensionar o DR de cada grupo.
 - **Método de instalação:** segue fixo em B1.
 - **Pacote:** o executável não é assinado, e o Windows pode avisar na primeira vez.
+
+## Paleta nativa, decisões por quadro e janela de dimensionamento
+
+- **Paleta:** abas **Elétrica** e **Telecom**, seções recolhíveis (o estado fica junto das Tool Sets) e ferramentas planas com
+  ícones desenhados. As janelas não têm barra de título: o cabeçalho é interno, e fecham no X dele ou com Esc.
+- **Demanda:** classe e fator na família (`demand_class`, `demand_factor`) e no ponto (`TIPO_CARGA`, `FATOR_DEMANDA`). Um ponto
+  com fator próprio sai da contagem da tabela. As formas com hachura saíram do editor de famílias.
+- **Quadro:** sistema, tensão nominal, cabo padrão e alimentação na inserção do quadro. A tensão nominal escolhida vale sobre a
+  dos pontos. A folga de cabos foi para a lista de materiais.
+- **Tabelas de demanda:** presets da Equatorial, da CEMIG (ND-5.1) e da Enel Goiás (NTC-04 rev. 4), com as faixas sobre o total
+  que as duas últimas usam, e um editor de tabelas próprias.
+- **Cabos e eletrodutos:** catálogos com editar e excluir, inclusive os de fábrica. Perfis de eletroduto com tipo de linha, cor,
+  caminhamento e diâmetros. O traçado em 45° substituiu o ortogonal.
+- **Dimensionar projeto:** esquema, incluindo `2F+N+T` e `3F+T`, cabo e curva por circuito, grupos de DR à vontade em duas colunas,
+  **Calcular Dimensionamento** sem gravar e **Aplicar ao Quadro**. O diagrama unifilar entra como bloco e acompanha o ELEREGEN.
+
+Limites:
+
+- **Presets:** CPFL, Neoenergia, Copel, Celesc e Enel SP/RJ/CE não têm preset. As normas públicas encontradas não trouxeram tabelas
+  de fatores que pudessem ser conferidas, e nenhum número foi estimado. O editor de tabelas cobre esses casos.
+- **Colunas escolhidas nos presets:** a Enel Goiás separa o aquecimento por aparelho; o preset usa a coluna de torneira e aquecedor
+  de passagem, e no ar condicionado a comercial, as mais conservadoras. A CEMIG tem uma tabela própria para fornos e fogões (12),
+  ainda não separada: o aquecimento usa a 13. Sem tabela de motores nos presets, motores entram com 100 %.
+- **Alimentado por:** é gravado, validado contra ciclos e mostrado no unifilar. A demanda de um quadro ainda não soma a dos quadros
+  que ele alimenta.
+- **Telecom:** a aba insere pontos, racks e eletrodutos e edita o catálogo de cabos. Ainda não há roteamento de cabos de telecom nem
+  ocupação de eletroduto por eles.
+- **Curva:** a sugestão (B em carga só resistiva, C nas outras) é prática de projeto, não regra da NBR 5410. Fica a critério do projetista.
+- **DR:** a corrente de cada grupo é uma sugestão pela soma de Ib, sem aplicar demanda.
+- **Perfis:** mudar a linha ou a cor de um perfil vale para os próximos trechos; os desenhados guardam as suas. A tabela de diâmetros
+  vale para todos os trechos do perfil no próximo cálculo.
+- **Diagrama unifilar:** é um esquema simples do quadro, sem barras por fase e sem DPS desenhado.
+- **Padrões internos:** `sistema` e `caboPadrao` continuam no Setup, só por comando, para os quadros sem escolha e os desenhos antigos.
+- **`.AppImage`:** a regra de empacotar para Linux está em `CLAUDE.md`, mas o empacotamento ainda não existe.

@@ -23,9 +23,9 @@ Os pontos de registro no código do CADCraft estão em [arquitetura.md](arquitet
 | `circuito`, `editar` | Agrupamento em circuitos e todas as escritas no desenho, incluindo `processar_calculo` |
 | `rota` | O grafo estrito 3D, `TipoEletroduto`, Dijkstra e a estimativa por Manhattan 3D |
 | `eletroduto` | Traçados, caixa de passagem ao dividir um trecho, modelo do ELEELETRODUTO |
-| `nbr5410`, `quadro`, `demanda` | Dimensionamento, `TipoCabo`, resumo do quadro, alimentador e demanda |
-| `fiacao`, `tabela`, `materiais`, `inspecao` | Tags, tabela no desenho, lista de materiais e inspeção visual |
-| `setup` | As configurações, nas preferências do programa |
+| `nbr5410`, `quadro`, `demanda` | Dimensionamento, `TipoCabo`, `Esquema`, `Curva`, configuração de cada quadro, grupos de DR, alimentador, presets e tabelas de demanda |
+| `fiacao`, `tabela`, `unifilar`, `materiais`, `inspecao` | Tags, tabela e diagrama unifilar no desenho, lista de materiais e inspeção visual |
+| `setup` | As configurações, nas preferências do programa: catálogos de cabos, perfis de eletroduto e tabelas de demanda próprias |
 
 ## O grafo de eletrodutos
 
@@ -40,7 +40,7 @@ Os pontos de registro no código do CADCraft estão em [arquitetura.md](arquitet
 ## Separação de etapas
 
 Lançar pontos, circuitos e eletrodutos só grava os dados do projeto. `eletrica.dimensionar` roteia, dimensiona, grava o
-resultado de cada circuito em `DIM.<circuito>` e atualiza tags e tabelas. Depois disso, um circuito cujo cálculo atual difere
+resultado de cada circuito em `DIM.<circuito>` e atualiza tags, tabelas e diagramas. Depois disso, um circuito cujo cálculo atual difere
 do gravado aparece como desatualizado. A ficha e a inspeção mostram o cálculo atual como prévia, só com a janela ou a
 inspeção abertas.
 
@@ -51,13 +51,17 @@ continuam sendo lidos.
 
 | Onde | Chaves |
 | :--- | :--- |
-| `BLOCK_RECORD` | `schema_ver`, `domain`, `category`, `height_ref`, `fixed_elevation_m`, `physical_box`, `power_va`, `power_factor`, `keys` |
-| Ponto (`INSERT`) | Atributos do bloco; `elevation_m` fora da legenda; `target_handles.<letra>` no interruptor |
-| Quadro (`INSERT`) | `DESC.`, `SECAO.`, `DISJ.`, `CABO.`, `ESQUEMA.`, `TENSAO.`, `FASE.`, `DR.`, `DIM.` + circuito |
-| Eletroduto | `schema_ver`, `from_handle`, `to_handle`, `install_elevation`, `conduit_type`, `nominal_diameter_mm`, `manual_diameter_lock`, `passing_wires.<n>`, `tag_handle` |
+| `BLOCK_RECORD` | `schema_ver`, `domain`, `category`, `height_ref`, `fixed_elevation_m`, `physical_box`, `power_va`, `power_factor`, `keys`, `demand_class`, `demand_factor` |
+| Ponto (`INSERT`) | Atributos do bloco, incluindo `TIPO_CARGA` e `FATOR_DEMANDA`; `elevation_m` fora da legenda; `target_handles.<letra>` no interruptor |
+| Quadro (`INSERT`) | `SISTEMA_QUADRO`, `TENSAO_NOMINAL`, `CABO_PADRAO_QUADRO`, `ALIMENTADO_POR`; `DESC.`, `SECAO.`, `DISJ.`, `CURVA.`, `CABO.`, `CABONOME.`, `ESQUEMA.`, `TENSAO.`, `FASE.`, `DR.`, `DIM.` + circuito |
+| Eletroduto | `schema_ver`, `from_handle`, `to_handle`, `install_elevation`, `conduit_type`, `conduit_profile`, `nominal_diameter_mm`, `manual_diameter_lock`, `passing_wires.<n>`, `tag_handle` |
 | Tag de fiação | `schema_ver`, `parent_conduit_handle`, `anchor_x`, `anchor_y`, `user_offset_x`, `user_offset_y` |
 
-As configurações do Setup, incluindo PE compartilhado e FCA fixo, ficam nas preferências do programa, não no DXF.
+O tipo de linha e a cor do perfil ficam na própria entidade do eletroduto. O diagrama unifilar é o bloco
+`UNIFILAR_<handle do quadro>`, e a tabela, `QUADRO_TABELA_<handle do quadro>`.
+
+As configurações do Setup, incluindo PE compartilhado, FCA fixo, catálogos, perfis e tabelas de demanda próprias, ficam nas
+preferências do programa, não no DXF.
 
 ## Comandos
 
@@ -66,13 +70,13 @@ próprio `CommandSpec`.
 
 | Grupo | Comandos |
 | :--- | :--- |
-| Pontos | `eleponto`, `eletrica.ponto.modelo`, `eletrica.ponto.altura`, `eletrica.ponto.excluir`, `eletrica.blocos`, `eletrica.bootstrap` |
+| Pontos | `eleponto`, `eletrica.ponto.modelo`, `eletrica.ponto.altura`, `eletrica.ponto.demanda`, `eletrica.ponto.excluir`, `eletrica.blocos`, `eletrica.bootstrap` |
 | Famílias | `eletrica.familia.ler`, `.definir`, `.geometria`, `.atributos`, `elefamilia_conector` |
 | Atributos | `eletrica.atributos`, `eletrica.atributo.definir` |
 | Circuitos | `elecircuito`, `eleremoverponto`, `elecomando`, `eletrica.circuito.criar`, `.definir`, `.descrever`, `.juntar`, `.excluir`, `.alvo` |
 | Eletrodutos | `eleeletroduto`, `eletrica.eletroduto.modelo`, `.dividir`, `.definir`, `eletrica.eletrodutos` |
-| Cálculo | `eletrica.dimensionar`, `eletrica.rotear`, `eletrica.sobrescrever`, `eletrica.quadro`, `eletrica.quadro.equilibrar`, `eletrica.cargas`, `eletrica.demanda.tabelas`, `eletrica.setup` |
-| Documentação | `elefiacao`, `eleregen`, `elequadro_tabela`, `eletrica.materiais`, `eletrica.inspecionar`, `eletrica.analisar` |
+| Cálculo | `eletrica.dimensionar`, `eletrica.rotear`, `eletrica.sobrescrever`, `eletrica.quadro`, `eletrica.quadro.equilibrar`, `eletrica.cargas`, `eletrica.demanda.tabelas`, `.salvar`, `.excluir`, `eletrica.setup` |
+| Documentação | `elefiacao`, `eleregen`, `elequadro_tabela`, `eletrica.unifilar`, `eletrica.materiais`, `eletrica.inspecionar`, `eletrica.analisar` |
 
 Comandos que só existem na interface, porque abrem janelas: `ELETRICA`, `ELECONFIG`, `ELEPONTOS`, `ELEBLOCOS`, `ELEATRIBUTOS`,
 `ELECARGAS`, `ELEROTEAR`, `ELEDIMENSIONAR`, `ELEMATERIAIS`, `ELECONFERIR`, `ELEINSPECAO`.

@@ -181,18 +181,49 @@ pub enum Esquema {
     Fnt,
     /// Duas fases e proteção.
     Fft,
+    /// Duas fases, neutro e proteção.
+    Ffnt,
+    /// Três fases e proteção.
+    Ffft,
     /// Três fases, neutro e proteção.
     Fffnt,
 }
 
+/// A curva de disparo de um disjuntor (ABNT NBR NM 60898).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Curva {
+    B,
+    #[default]
+    C,
+    D,
+}
+
+impl Curva {
+    pub const TODAS: [Curva; 3] = [Self::B, Self::C, Self::D];
+
+    pub fn codigo(self) -> &'static str {
+        match self {
+            Self::B => "B",
+            Self::C => "C",
+            Self::D => "D",
+        }
+    }
+
+    pub fn de_codigo(t: &str) -> Option<Self> {
+        Self::TODAS.into_iter().find(|c| c.codigo().eq_ignore_ascii_case(t.trim()))
+    }
+}
+
 impl Esquema {
-    pub const TODOS: [Esquema; 4] = [Self::Fn, Self::Fnt, Self::Fft, Self::Fffnt];
+    pub const TODOS: [Esquema; 6] = [Self::Fn, Self::Fnt, Self::Fft, Self::Ffnt, Self::Ffft, Self::Fffnt];
 
     pub fn codigo(self) -> &'static str {
         match self {
             Self::Fn => "F+N",
             Self::Fnt => "F+N+T",
             Self::Fft => "2F+T",
+            Self::Ffnt => "2F+N+T",
+            Self::Ffft => "3F+T",
             Self::Fffnt => "3F+N+T",
         }
     }
@@ -214,13 +245,21 @@ impl Esquema {
     pub fn fases(self) -> u8 {
         match self {
             Self::Fn | Self::Fnt => 1,
-            Self::Fft => 2,
-            Self::Fffnt => 3,
+            Self::Fft | Self::Ffnt => 2,
+            Self::Ffft | Self::Fffnt => 3,
         }
     }
 
     pub fn neutro(self) -> bool {
-        self != Self::Fft
+        !matches!(self, Self::Fft | Self::Ffft)
+    }
+
+    /// Condutores carregados (NBR 5410, tabela 46): duas fases com neutro são três.
+    pub fn carregados(self) -> u8 {
+        match self {
+            Self::Fn | Self::Fnt | Self::Fft => 2,
+            Self::Ffnt | Self::Ffft | Self::Fffnt => 3,
+        }
     }
 
     pub fn protecao(self) -> bool {
@@ -254,11 +293,22 @@ pub struct Config {
     pub queda_admissivel: f64,
     /// Isolação dos condutores: escolhe a tabela de capacidade e a resistividade.
     pub isolacao: Isolacao,
+    /// Condutores carregados pelo esquema escolhido. `None`: pelo número de fases.
+    pub carregados: Option<u8>,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Config { tensao_fn: 127.0, tensao_ff: 220.0, fct: 1.0, fca: 1.0, fases_padrao: 2, queda_admissivel: 4.0, isolacao: Isolacao::Pvc }
+        Config {
+            tensao_fn: 127.0,
+            tensao_ff: 220.0,
+            fct: 1.0,
+            fca: 1.0,
+            fases_padrao: 2,
+            queda_admissivel: 4.0,
+            isolacao: Isolacao::Pvc,
+            carregados: None,
+        }
     }
 }
 
@@ -378,7 +428,7 @@ pub fn dimensionar_com(c: &Circuito, cfg: &Config, momento: Option<f64>) -> Dime
         avisos.push(format!("circuito sem tensão nos pontos: usando {tensao} V do sistema"));
     }
     let ib = corrente_projeto(c.potencia, tensao, c.fases);
-    let carregados = condutores_carregados(c.fases);
+    let carregados = cfg.carregados.unwrap_or_else(|| condutores_carregados(c.fases));
     let fator = cfg.fct * cfg.fca;
     let minima = secao_minima(c.natureza);
     for (i, secao) in SECOES.iter().copied().enumerate().filter(|(_, s)| *s >= minima) {
@@ -413,7 +463,9 @@ pub fn verificar(c: &Circuito, cfg: &Config, momento: Option<f64>, secao: f64, d
     let mut avisos = Vec::new();
     let (tensao, _) = tensao_circuito(c, cfg);
     let ib = corrente_projeto(c.potencia, tensao, c.fases);
-    let iz = indice_secao(secao).and_then(|i| capacidade(i, condutores_carregados(c.fases), cfg.isolacao)).map(|v| v * cfg.fct * cfg.fca);
+    let iz = indice_secao(secao)
+        .and_then(|i| capacidade(i, cfg.carregados.unwrap_or_else(|| condutores_carregados(c.fases)), cfg.isolacao))
+        .map(|v| v * cfg.fct * cfg.fca);
     let queda = momento.map(|m| queda_percentual(m, secao, tensao, c.fases, cfg.isolacao));
     if secao < secao_minima(c.natureza) {
         avisos.push(format!("seção abaixo da mínima da tabela 47 ({} mm²)", secao_minima(c.natureza)));

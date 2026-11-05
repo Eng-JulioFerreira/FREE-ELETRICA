@@ -32,9 +32,11 @@ divulgado para engenheiros e usuários finais: código em teste ou incompleto n�
    Free Elétrica é `VERSAO`, em `cadcraft/xtask/src/dist.rs`, e o `Cargo.toml` de `crates/free-eletrica`; a versão do workspace
    é a do CADCraft e não muda.
 3. Criar o commit de release local e a tag (`v0.2.0`, `v0.3.0`...).
-4. Rodar `scripts\package_release.ps1`: gera `dist/FreeEletrica/` (executável, `templates/`, manuais e licenças, sem `.bat`) e
-   `dist/FreeEletrica-vX.Y.Z-win64.zip`.
-5. Fazer o `git push` para a branch principal do GitHub (`free-eletrica`) e publicar a Release com o `.zip` (`gh release create`).
+4. Gerar os pacotes da versão: o `.zip` para Windows e o `.AppImage` para Linux. `scripts\package_release.ps1` gera
+   `dist/FreeEletrica/` (executável, `templates/`, manuais e licenças, sem `.bat`) e `dist/FreeEletrica-vX.Y.Z-win64.zip`.
+   O empacotamento do `.AppImage` ainda não existe no projeto: precisa ser criado e testado em Linux antes da primeira
+   Release que o inclua. **Os dois pacotes só são gerados quando o usuário autorizar uma release com o gatilho acima.**
+5. Fazer o `git push` para a branch principal do GitHub (`free-eletrica`) e publicar a Release com os pacotes (`gh release create`).
 
 ## Arquitetura do Free Elétrica 2.0
 
@@ -45,8 +47,12 @@ divulgado para engenheiros e usuários finais: código em teste ou incompleto n�
 - **Grafo 3D estrito de eletrodutos:** nós são só blocos elétricos, e cada eletroduto liga exatamente dois deles.
   Cruzamento sem caixa não conecta. Comprimento = traçado + desníveis até os blocos.
 - **Etapas separadas:** lançar não dimensiona. O cálculo, as tags e as tabelas só mudam com `ELEDIMENSIONAR` e `ELEREGEN`.
-- **Interface em janelas `egui` independentes, sem painel inferior fixo:** paleta Elétrica com as ferramentas, mini-barra só
-  enquanto um comando espera cliques, janelas abertas sob demanda (X ou Esc) e sobreposição de inspeção.
+- **Interface em janelas `egui` independentes, sem painel inferior fixo:** paleta no padrão das Tool Sets (abas Elétrica e
+  Telecom, seções recolhíveis, ferramentas planas com ícone), mini-barra só enquanto um comando espera cliques, janelas sem
+  barra de título abertas sob demanda (X do cabeçalho interno ou Esc) e sobreposição de inspeção.
+- **Decisões por quadro e por circuito:** sistema, tensão nominal, cabo padrão e alimentação ficam em cada quadro; esquema,
+  cabo, curva e grupo DR em cada circuito; classe e fator de demanda na família e no ponto. As Configurações guardam o que vale
+  para o projeto todo: critérios, catálogos de cabos, perfis de eletroduto e tabelas de demanda.
 
 Os detalhes estão em `docs/SPECIFICATION.md`.
 
@@ -87,7 +93,7 @@ nessa lista e precisa ser pequena.
 4. **Interface fina.** A paleta, a mini-barra e as janelas leem o estado e agem por `app.run(id, params)` /
    `app.start(id)`. Comandos só de interface (abrir paleta e janelas) ficam em `route()` de
    `ui-egui/src/eletrica.rs`. A paleta só tem ferramentas; dados aparecem em janelas independentes,
-   abertas só quando pedidas, que fecham no X ou com Esc. Inserir fica na mini-barra.
+   abertas só quando pedidas, que fecham no X do cabeçalho interno ou com Esc. Inserir fica na mini-barra.
 5. **Nunca travar** (padrão do CADCraft): sem `unwrap`/`expect`/`panic!`/`todo!` fora de testes
    (`#![deny]` na raiz de `ele`), erros por `Result`, entrada do desenho e de parâmetros JSON é
    hostil (`get()`, nada de índice vindo de fora, NaN e infinitos tratados).
@@ -97,6 +103,8 @@ nessa lista e precisa ser pequena.
 7. **Clean-room.** Programas de referência (OFE Elétrico, PRO-Elétrica, Lumine, AutoCAD) podem
    ser **observados** em uso; nunca descompilados, nunca copiados (código, símbolos, tabelas
    próprias, textos). Regras de cálculo vêm da NBR 5410 e são citadas no código (tabela, item).
+   Fatores de demanda só entram como preset depois de lidos na norma pública da concessionária, com a
+   fonte em `fonte`; o que não puder ser conferido não vira número no código, e o editor de tabelas cobre.
 8. **Licença.** O código do Free Elétrica é GPL-3.0-only: todo arquivo novo nosso começa com
    `// SPDX-License-Identifier: GPL-3.0-only`. Os arquivos do CADCraft continuam MIT OR
    Apache-2.0; não mude a licença deles nem cole código GPL dentro deles além das linhas de

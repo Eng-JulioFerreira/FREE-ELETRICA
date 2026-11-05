@@ -73,7 +73,7 @@ fn linhas_da_tabela(r: &ResumoQuadro) -> Vec<Vec<String>> {
     v
 }
 
-fn texto(valor: &str, em: [f64; 2], altura: f64, halign: HAlign) -> EntityKind {
+pub(crate) fn texto(valor: &str, em: [f64; 2], altura: f64, halign: HAlign) -> EntityKind {
     let p = Vec3::new(em[0], em[1], 0.0);
     EntityKind::Text(Text {
         insert: p,
@@ -89,7 +89,7 @@ fn texto(valor: &str, em: [f64; 2], altura: f64, halign: HAlign) -> EntityKind {
     })
 }
 
-fn linha(a: [f64; 2], b: [f64; 2]) -> EntityKind {
+pub(crate) fn linha(a: [f64; 2], b: [f64; 2]) -> EntityKind {
     EntityKind::Line(Line { a: Vec3::new(a[0], a[1], 0.0), b: Vec3::new(b[0], b[1], 0.0) })
 }
 

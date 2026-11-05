@@ -32,7 +32,7 @@ use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, St
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         CommandSpec::new("elecircuito", "Electrical Circuit", run_circuito)
-            .params("{quadro: hex, circuito?: string (default: the next free number), pontos: [hex], descricao?, esquema?: \"F+N\" | \"F+N+T\" | \"2F+T\" | \"3F+N+T\", tensao?: V} → {circuito, pontos}")
+            .params("{quadro: hex, circuito?: string (default: the next free number), pontos: [hex], descricao?, esquema?: \"F+N\" | \"F+N+T\" | \"2F+T\" | \"2F+N+T\" | \"3F+T\" | \"3F+N+T\", tensao?: V} → {circuito, pontos}")
             .interactive(|_| Ok(Box::new(CircuitoM::default()))),
         CommandSpec::new("eleremoverponto", "Remove Points from Circuit", run_remover).params("{pontos: [hex]} → {removidos}").interactive(|_| Ok(Box::new(RemoverM::default()))),
         CommandSpec::new("elecomando", "Switches and Lamps", run_comando)
@@ -74,7 +74,9 @@ pub fn specs() -> Vec<CommandSpec> {
             .params("{} → {cabos: [{secao, tipo, metros}], eletrodutos: [{tipo, diametro, metros}], caixas, pontos, disjuntores, pontosSemCaixa, eletrodutosSoltos, avisos}")
             .noundo(),
         CommandSpec::new("eletrica.dimensionar", "Size Board", run_dimensionar)
-            .params("{quadro?: hex | TAG (default: every board), compartilharPe?: bool, temperaturaAmbiente?: °C, fcaManual?: number | null} → applies the options, sizes the circuits, stores the result on the boards and updates tags and tables: {quadros: [{tag, circuitos, avisos}], circuitos, avisos}"),
+            .params("{quadro?: hex | TAG (default: every board), compartilharPe?: bool, temperaturaAmbiente?: °C, fcaManual?: number | null, unifilar?: bool (also generates or updates the single-line diagram)} → applies the options, sizes the circuits, stores the result on the boards and updates tags, tables and diagrams: {quadros: [{tag, circuitos, avisos}], circuitos, avisos, unifilares}"),
+        CommandSpec::new("eletrica.unifilar", "Single-Line Diagram", run_unifilar)
+            .params("{quadro?: hex | TAG, ponto?: [x, y]} → generates or updates the board's single-line diagram; an existing one only moves when `ponto` is given: {unifilar}"),
         CommandSpec::new("eletrica.quadro.equilibrar", "Balance Phases", run_equilibrar)
             .params("{quadro?: hex | TAG} → unlocks the phases of every circuit, so the balancing applies to all: {destravados, desequilibrio}"),
         CommandSpec::new("eletrica.atributos", "Block Attributes", run_atributos)
@@ -119,7 +121,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("eletrica.circuito.juntar", "Merge Circuits", run_juntar)
             .params("{quadro?: hex | TAG, de, para} (the points of `de` go to `para`) → {quadro, de, para, pontos}"),
         CommandSpec::new("eletrica.circuito.definir", "Circuit Properties", run_definir).params(
-            "{quadro?: hex | TAG, circuito, grupoDr?: text | null, cabo?: FLEX_PVC_70 | UNI_PVC_70 | HEPR_XLPE_90 | LSZH_70 | LSZH_HEPR_90 | null, caboNome?: catalog name | null, isolacao?: \"PVC\" | \"EPR\" | \"XLPE\" | null, esquema?: \"F+N\" | \"F+N+T\" | \"2F+T\" | \"3F+N+T\" | null, tensao?: V | null, fases?: \"R\" | \"RS\" ... | null (a value locks the phases), descricao?} (null: back to automatic) → {quadro, circuito}. Load type and power factor come from the block attributes TIPO_CARGA and FP.",
+            "{quadro?: hex | TAG, circuito, grupoDr?: text | null, cabo?: FLEX_PVC_70 | UNI_PVC_70 | HEPR_XLPE_90 | LSZH_70 | LSZH_HEPR_90 | null, caboNome?: catalog name | null, curva?: B | C | D | null, isolacao?: \"PVC\" | \"EPR\" | \"XLPE\" | null, esquema?: \"F+N\" | \"F+N+T\" | \"2F+T\" | \"2F+N+T\" | \"3F+T\" | \"3F+N+T\" | null, tensao?: V | null, fases?: \"R\" | \"RS\" ... | null (a value locks the phases), descricao?} (null: back to automatic) → {quadro, circuito}. Load type and power factor come from the block attributes TIPO_CARGA and FP.",
         ),
         CommandSpec::new("eletrica.demanda.tabelas", "Demand Tables", run_tabelas_demanda)
             .params("{} → the factory and custom demand tables (id, nome, fonte, edificacoes, aparelhos, aquecimento, arCondicionado, bombas, motores, propria)")
@@ -354,6 +356,7 @@ struct Propriedades {
     isolacao: Option<Option<ele::nbr5410::Isolacao>>,
     cabo: Option<Option<ele::nbr5410::TipoCabo>>,
     cabo_nome: Option<Option<String>>,
+    curva: Option<Option<ele::nbr5410::Curva>>,
     grupo_dr: Option<Option<String>>,
     esquema: Option<Option<ele::nbr5410::Esquema>>,
     tensao: Option<Option<f64>>,
@@ -390,6 +393,12 @@ impl Propriedades {
                 v => Some(v.as_str().ok_or_else(|| bad(cmd, "`caboNome` must be text or null"))?.to_string()),
             });
         }
+        if let Some(v) = p.get("curva") {
+            d.curva = Some(match v {
+                Value::Null => None,
+                v => Some(v.as_str().and_then(ele::nbr5410::Curva::de_codigo).ok_or_else(|| bad(cmd, "`curva` must be B, C or D"))?),
+            });
+        }
         if let Some(v) = p.get("grupoDr") {
             d.grupo_dr = Some(match v {
                 Value::Null => None,
@@ -402,7 +411,7 @@ impl Propriedades {
                 v => Some(
                     v.as_str()
                         .and_then(ele::nbr5410::Esquema::de_codigo)
-                        .ok_or_else(|| bad(cmd, "`esquema` must be \"F+N\", \"F+N+T\", \"2F+T\" or \"3F+N+T\""))?,
+                        .ok_or_else(|| bad(cmd, "`esquema` must be \"F+N\", \"F+N+T\", \"2F+T\", \"2F+N+T\", \"3F+T\" or \"3F+N+T\""))?,
                 ),
             });
         }
@@ -430,6 +439,7 @@ impl Propriedades {
         self.isolacao.is_none()
             && self.cabo.is_none()
             && self.cabo_nome.is_none()
+            && self.curva.is_none()
             && self.grupo_dr.is_none()
             && self.esquema.is_none()
             && self.tensao.is_none()
@@ -451,6 +461,9 @@ impl Propriedades {
         }
         if let Some(n) = &self.cabo_nome {
             ele::editar::definir_nome_cabo(doc, q, id, n.as_deref()).map_err(erro)?;
+        }
+        if let Some(c) = self.curva {
+            ele::editar::definir_curva(doc, q, id, c).map_err(erro)?;
         }
         if let Some(g) = &self.grupo_dr {
             ele::editar::definir_grupo_dr(doc, q, id, g.as_deref()).map_err(erro)?;
@@ -481,7 +494,7 @@ fn run_definir(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let d = Propriedades::ler(CMD, p)?;
     if d.vazio() {
-        return Err(bad(CMD, "give `cabo`, `grupoDr`, `isolacao`, `esquema`, `tensao`, `fases` or `descricao`"));
+        return Err(bad(CMD, "give `cabo`, `caboNome`, `curva`, `grupoDr`, `isolacao`, `esquema`, `tensao`, `fases` or `descricao`"));
     }
     d.gravar(s, q, &id)?;
     Ok(json!({ "quadro": q.hex(), "circuito": id }))
@@ -511,10 +524,32 @@ fn run_dimensionar(s: &mut Session, p: &Value) -> Result<Value> {
     if !opcoes.is_empty() {
         ele::setup::json(&Value::Object(opcoes)).map_err(|e| bad(CMD, e))?;
     }
-    let feitos = ele::editar::processar_calculo(s.doc_mut()?, &ele::setup::atual(), quadro).map_err(erro)?;
+    let setup = ele::setup::atual();
+    let feitos = ele::editar::processar_calculo(s.doc_mut()?, &setup, quadro).map_err(erro)?;
     let circuitos: usize = feitos.iter().map(|f| f.circuitos).sum();
     let avisos: usize = feitos.iter().map(|f| f.avisos.len()).sum();
-    Ok(json!({ "quadros": json_de(&feitos)?, "circuitos": circuitos, "avisos": avisos }))
+    let mut unifilares = 0;
+    if p.get("unifilar").and_then(Value::as_bool).unwrap_or(false) {
+        let alvos: Vec<Handle> = quadro.map_or_else(|| a.quadros().iter().map(|q| q.handle).collect(), |q| vec![q]);
+        let a = analise(s)?;
+        for q in alvos {
+            ele::unifilar::gerar(s.doc_mut()?, &a, &setup, q, None).map_err(erro)?;
+            unifilares += 1;
+        }
+    }
+    Ok(json!({ "quadros": json_de(&feitos)?, "circuitos": circuitos, "avisos": avisos, "unifilares": unifilares }))
+}
+
+fn run_unifilar(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "eletrica.unifilar";
+    let a = analise(s)?;
+    let q = achar_quadro(&a, p.get("quadro"))?;
+    let pos = match p.get("ponto").filter(|v| !v.is_null()) {
+        None => None,
+        Some(v) => Some(ponto_de(v).ok_or_else(|| bad(CMD, "`ponto` must be [x, y]"))?),
+    };
+    let h = ele::unifilar::gerar(s.doc_mut()?, &a, &ele::setup::atual(), q, pos).map_err(erro)?;
+    Ok(json!({ "unifilar": h.hex() }))
 }
 
 fn run_atributos(s: &mut Session, p: &Value) -> Result<Value> {

@@ -383,7 +383,7 @@ fn paleta_ferramentas_e_fluxo_completo() {
     ] {
         assert!(h.query_all_by_label(campo).count() >= 1, "{campo}");
     }
-    h.get_by_label("Prévia: o quadro, as tags e as tabelas mudam ao processar o cálculo.");
+    h.get_by_label("Prévia: o quadro, as tags e as tabelas mudam ao aplicar o cálculo.");
     // A lista troca de circuito.
     h.get_by_label("Circuito 3").click();
     h.run_steps(3);
@@ -404,21 +404,54 @@ fn paleta_ferramentas_e_fluxo_completo() {
     h.run_steps(3);
     assert!(h.query_by_label("PAINEL: QD-01").is_none());
 
-    // Dimensionar projeto: as premissas, e só Processar cálculo grava.
+    // Dimensionar projeto: esquema, cabo e DR por circuito; Calcular mostra, e só Aplicar grava.
     assert!(h.state_mut().cmdline("ELEDIMENSIONAR").is_none());
     h.run_steps(3);
-    h.get_by_label("Compartilhar o condutor de proteção (PE)").click();
+    h.get_by_label("Compartilhar condutor de proteção (Terra / PE)").click();
     h.run_steps(3);
+    h.get_by_label("Gerar / Atualizar Diagrama Unifilar");
     h.get_by_label("Temperatura ambiente (FCT)");
     h.get_by_label("FCA fixo");
+    for coluna in ["Circ.", "Esquema", "Tipo de cabo"] {
+        assert!(h.query_all_by_label(coluna).count() >= 1, "{coluna}");
+    }
+    assert!(h.query_by_label("Cabo (mm²)").is_none(), "os resultados só aparecem ao calcular");
     let r = h.state_mut().run("eletrica.setup", json!({})).unwrap();
-    assert_eq!(r["compartilharPe"], false, "as premissas só valem ao processar");
-    h.get_by_label("Processar cálculo").click();
+    assert_eq!(r["compartilharPe"], false, "as premissas só valem ao aplicar");
+    // Grupos de DR à vontade: um grupo novo, com o circuito marcado à esquerda.
+    h.get_by_label("Circuitos sem DR");
+    h.get_by_label("Circuito 1").click();
+    h.run_steps(3);
+    h.get_by_label("+ Novo Grupo DR").click();
+    h.run_steps(3);
+    h.get_by_label("IDR1");
+    if let Ok(saida) = std::env::var("FREE_ELETRICA_PNG_DR") {
+        h.render().unwrap().save(saida).unwrap();
+    }
+    h.get_by_label("Mover selecionados").click();
+    h.run_steps(3);
+    let r = h.state_mut().run("eletrica.rotear", json!({})).unwrap();
+    assert_eq!(r["linhas"][0]["grupoDr"], "IDR1", "{r}");
+    h.get_by_label("Tirar do DR");
+    // Calcular não grava; aparece o resultado, editável, e Aplicar grava.
+    h.get_by_label("Calcular Dimensionamento").click();
+    h.run_steps(3);
+    for coluna in ["Cabo (mm²)", "Disjuntor (A)", "Curva", "Queda (%)"] {
+        h.get_by_label(coluna);
+    }
+    let r = h.state_mut().run("eletrica.rotear", json!({})).unwrap();
+    assert!(r["linhas"].as_array().unwrap().iter().all(|l| l["calculado"].is_null()), "{r}");
+    // Imagem da janela, quando pedida.
+    if let Ok(saida) = std::env::var("FREE_ELETRICA_PNG_DIMENSIONAR") {
+        h.render().unwrap().save(saida).unwrap();
+    }
+    h.get_by_label("Aplicar ao Quadro").click();
     h.run_steps(3);
     let st = h.state_mut().run("eletrica.setup", json!({})).unwrap();
     assert_eq!(st["compartilharPe"], true);
     let r = h.state_mut().run("eletrica.rotear", json!({})).unwrap();
     assert!(r["linhas"].as_array().unwrap().iter().all(|l| l["calculado"]["secao"].is_number()), "{r}");
+    assert_eq!(free_eletrica::unifilar::unifilares(h.state().session.doc().unwrap()).len(), 1, "o diagrama nasce ao aplicar");
     h.state_mut().run("eletrica.setup", json!({ "compartilharPe": false })).unwrap();
     h.key_press(egui::Key::Escape);
     h.run_steps(3);

@@ -19,16 +19,18 @@ primeira vez, o Windows pode avisar que o aplicativo é desconhecido: clique em 
 
 - **Dimensionamento pela NBR 5410:** corrente de projeto, FCT, FCA real por trecho, capacidade de condução,
   queda de tensão em 3D, seção e disjuntor, com travas para o que você escolher à mão.
-- **Eletrodutos que seguem a obra:** retos, ortogonais ou em arco, com desvios e cotas de teto, piso e parede.
-  Cruzamento sem caixa não conecta, como na instalação real.
-- **Cabo e eletroduto por tipo:** PVC, HEPR/XLPE e LSZH por circuito; corrugado, rígido, PEAD e galvanizado por trecho,
-  com a ocupação de cada um.
-- **Blocos como famílias:** categoria, altura padrão, caixa e potência no próprio bloco. A altura fora da legenda
-  aparece sozinha na planta, como `h=1,45m`.
-- **Documentação que não se desfaz:** tags de fiação que guardam a posição que você deu, tabela do quadro no desenho e lista
-  de materiais.
+- **Eletrodutos que seguem a obra:** retos, a 45° ou em arco, com desvios e perfis que trazem o tipo de linha, a cor, o
+  caminhamento e os diâmetros. Cruzamento sem caixa não conecta, como na instalação real.
+- **Cada quadro com o seu sistema:** sistema, tensão nominal, cabo padrão e quem o alimenta ficam no próprio quadro.
+- **Dimensionamento revisável:** esquema, cabo, curva e grupos de DR por circuito, com o resultado à vista antes de aplicar.
+- **Catálogos editáveis:** cabos elétricos e de telecom e perfis de eletroduto, com editar e excluir.
+- **Blocos como famílias:** categoria, altura padrão, caixa, potência e classe de demanda no próprio bloco. A altura fora
+  da legenda aparece sozinha na planta, como `h=1,45m`.
+- **Documentação que não se desfaz:** tags de fiação que guardam a posição que você deu, tabela do quadro e diagrama unifilar
+  no desenho e lista de materiais.
 - **Tudo dentro do DXF:** circuitos, famílias e resultados viajam com o arquivo.
-- **Demanda da concessionária:** tabelas da Equatorial.
+- **Demanda da concessionária:** tabelas da Equatorial, da CEMIG e da Enel Goiás, e um editor para cadastrar a sua. Cada
+  ponto ou família pode ter fator próprio.
 - **Pronto para automação:** todo o motor responde por comandos JSON, sem interface.
 
 Os símbolos dos blocos base seguem as formas usuais da NBR 5444, com medidas proporcionais do projeto.
@@ -37,11 +39,11 @@ Os símbolos dos blocos base seguem as formas usuais da NBR 5444, com medidas pr
 
 | Etapa | Ferramenta | O que você faz |
 | :--- | :--- | :--- |
-| 1. Setup | Configurações | Sistema, temperatura, cabo padrão, limites de queda e alturas. Camadas e blocos entram sozinhos. |
+| 1. Setup | Configurações | Temperatura, limites de queda, alturas, cabos, perfis de eletroduto e demanda. Camadas e blocos entram sozinhos. |
 | 2. Blocos e pontos | Blocos e famílias, Inserir pontos | Crie seus símbolos ou use os prontos. Na mini-barra, escolha bloco, potência e altura, e clique na planta. |
 | 3. Circuitos e comandos | Criar circuito, Comandos e luminárias | Agrupe os pontos e ligue interruptores às luminárias. A inspeção visual aponta o que falta. |
-| 4. Eletrodutos | Inserir eletroduto | Ligue os blocos em traçado reto, ortogonal ou em arco. Clique no meio de um trecho para pôr uma caixa. |
-| 5. Dimensionamento | Dimensionar projeto | Ajuste as premissas, como PE compartilhado e FCA, e processe o cálculo. |
+| 4. Eletrodutos | Inserir eletroduto | Escolha o perfil e ligue os blocos em traçado reto, a 45° ou em arco. Clique no meio de um trecho para pôr uma caixa. |
+| 5. Dimensionamento | Dimensionar projeto | Escolha esquema, cabo e grupos de DR, calcule, revise e aplique ao quadro. |
 | 6. Quadro e tags | Quadro de cargas, Tags de fiação, Lista de materiais | Confira o resumo e a ficha de cada circuito e documente na planta. |
 
 O passo a passo completo está em [Primeiros passos](docs/GETTING_STARTED.md).

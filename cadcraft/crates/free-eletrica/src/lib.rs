@@ -23,6 +23,7 @@ pub mod quadro;
 pub mod rota;
 pub mod setup;
 pub mod tabela;
+pub mod unifilar;
 pub mod xdata;
 
 #[cfg(test)]
