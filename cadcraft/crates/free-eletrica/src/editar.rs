@@ -8,8 +8,9 @@ use cadcraft_doc::{Drawing, EntityKind, Handle};
 use crate::nbr5410::{Esquema, Isolacao, TipoCabo};
 use crate::ponto::{CHAVE_ALTURA, TAGS_ALTURA, TAGS_CIRCUITO, TAGS_COMANDO, TAGS_QUADRO, ler_ponto};
 use crate::quadro::{
-    CHAVE_CABO, CHAVE_DESCRICAO, CHAVE_DIM, CHAVE_DISJUNTOR, CHAVE_DR, CHAVE_ESQUEMA, CHAVE_FASE, CHAVE_ISOLACAO, CHAVE_ISOLACAO_CIRCUITO,
-    CHAVE_SECAO, CHAVE_TENSAO, NOMES_FASES, fases_de_texto,
+    CHAVE_ALIMENTADO_POR, CHAVE_CABO, CHAVE_CABO_QUADRO, CHAVE_DESCRICAO, CHAVE_DIM, CHAVE_DISJUNTOR, CHAVE_DR, CHAVE_ESQUEMA, CHAVE_FASE,
+    CHAVE_ISOLACAO, CHAVE_ISOLACAO_CIRCUITO, CHAVE_SECAO, CHAVE_SISTEMA_QUADRO, CHAVE_TENSAO, CHAVE_TENSAO_NOMINAL, CONCESSIONARIA, NOMES_FASES,
+    fases_de_texto,
 };
 use crate::xdata;
 
@@ -220,6 +221,59 @@ pub fn liberar_fases(doc: &mut Drawing, quadro: Handle) -> Result<usize, String>
 /// Isolação dos condutores do quadro; `None` volta à das configurações.
 pub fn definir_isolacao(doc: &mut Drawing, quadro: Handle, isolacao: Option<Isolacao>) -> Result<(), String> {
     gravar_xdata(doc, quadro, CHAVE_ISOLACAO, isolacao.map(Isolacao::codigo))
+}
+
+/// O sistema do quadro; o número de fases vai junto para o bloco. `None` volta ao que o bloco diz.
+pub fn definir_sistema_quadro(doc: &mut Drawing, quadro: Handle, sistema: Option<crate::quadro::SistemaQuadro>) -> Result<(), String> {
+    if let Some(s) = sistema {
+        definir(doc, quadro, crate::ponto::TAGS_FASES, Some(&s.fases().to_string()))?;
+    }
+    gravar_xdata(doc, quadro, CHAVE_SISTEMA_QUADRO, sistema.map(crate::quadro::SistemaQuadro::codigo))
+}
+
+/// A tensão nominal do quadro; a tensão vai junto para o bloco. `None` volta ao que o bloco diz.
+pub fn definir_tensao_nominal(doc: &mut Drawing, quadro: Handle, tensao: Option<crate::quadro::TensaoNominal>) -> Result<(), String> {
+    if let Some(t) = tensao {
+        definir(doc, quadro, crate::ponto::TAGS_TENSAO, Some(&format!("{}V", t.codigo())))?;
+    }
+    gravar_xdata(doc, quadro, CHAVE_TENSAO_NOMINAL, tensao.map(crate::quadro::TensaoNominal::codigo))
+}
+
+/// O tipo de cabo padrão do quadro; `None` volta ao padrão do programa.
+pub fn definir_cabo_quadro(doc: &mut Drawing, quadro: Handle, cabo: Option<TipoCabo>) -> Result<(), String> {
+    gravar_xdata(doc, quadro, CHAVE_ISOLACAO, None)?;
+    gravar_xdata(doc, quadro, CHAVE_CABO_QUADRO, cabo.map(TipoCabo::codigo))
+}
+
+/// Quem alimenta o quadro: a concessionária ou outro quadro do desenho, sem formar ciclo.
+pub fn definir_alimentacao(doc: &mut Drawing, quadro: Handle, alimentador: Option<&str>) -> Result<(), String> {
+    let valor = match alimentador.map(str::trim).filter(|t| !t.is_empty()) {
+        None => None,
+        Some(t) if t.eq_ignore_ascii_case(CONCESSIONARIA) => Some(CONCESSIONARIA.to_string()),
+        Some(t) => {
+            let analise = crate::analisar(doc);
+            let achado = analise
+                .quadros()
+                .into_iter()
+                .find(|q| Handle::parse_hex(t) == Some(q.handle) || q.tag.as_deref().is_some_and(|tag| tag.eq_ignore_ascii_case(t)))
+                .ok_or_else(|| format!("\"{t}\" não é a concessionária nem um quadro do desenho"))?;
+            // Subindo a partir do novo alimentador, não pode chegar neste quadro.
+            let mut atual = Some(achado.handle);
+            let mut passos = 0;
+            while let Some(h) = atual {
+                if h == quadro {
+                    return Err("um quadro não pode alimentar a si mesmo, nem por outro quadro".into());
+                }
+                passos += 1;
+                if passos > analise.pontos.len() {
+                    break;
+                }
+                atual = analise.ponto(h).and_then(crate::quadro::quadro_que_alimenta);
+            }
+            Some(achado.handle.hex())
+        }
+    };
+    gravar_xdata(doc, quadro, CHAVE_ALIMENTADO_POR, valor.as_deref())
 }
 
 /// Esquema de condutores de um circuito; `None` volta ao que os pontos dizem.

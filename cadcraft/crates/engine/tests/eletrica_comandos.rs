@@ -1045,3 +1045,37 @@ fn tabelas_de_demanda_por_comando() {
     assert_eq!(s.execute("eletrica.demanda.excluir", &json!({ "id": id })).unwrap()["excluida"], false);
     assert!(!ids(&mut s).contains(&id));
 }
+
+#[test]
+fn configuracao_de_cada_quadro_por_comando() {
+    let (d, [qd, luz, ..]) = planta();
+    let mut s = Session::default();
+    s.open_drawing(d, "Quadro", None);
+    s.execute("elecircuito", &json!({ "quadro": qd.hex(), "pontos": [luz.hex()] })).unwrap();
+    // Valor ruim não grava nada.
+    for ruim in [
+        json!({ "sistema": "4F" }),
+        json!({ "tensaoNominal": "13800" }),
+        json!({ "cabo": "OURO" }),
+        json!({ "alimentadoPor": "QX" }),
+        json!({ "alimentadoPor": "QDG" }),
+    ] {
+        assert!(s.execute("eletrica.quadro", &ruim).is_err(), "{ruim}");
+    }
+    let c = s.execute("eletrica.quadro", &json!({})).unwrap();
+    assert!(c["config"]["sistema"].is_null());
+    s.execute("eletrica.quadro", &json!({ "sistema": "F+N+T", "tensaoNominal": "127/220", "cabo": "LSZH_70", "alimentadoPor": "CONCESSIONARIA" }))
+        .unwrap();
+    let r = s.execute("eletrica.rotear", &json!({})).unwrap();
+    assert_eq!((r["fasesQuadro"].as_u64(), r["tensaoFn"].as_f64(), r["caboPadrao"].as_str()), (Some(1), Some(127.0), Some("lszh70")), "{r}");
+    assert_eq!(r["config"]["alimentadoPor"], "CONCESSIONARIA");
+    assert_eq!(r["linhas"][0]["tensao"], 127.0);
+    // Um campo não mexe nos outros; null volta ao que o bloco diz; um passo de desfazer.
+    s.execute("eletrica.quadro", &json!({ "tensaoNominal": "220/380" })).unwrap();
+    let r = s.execute("eletrica.rotear", &json!({})).unwrap();
+    assert_eq!((r["tensaoFn"].as_f64(), r["caboPadrao"].as_str()), (Some(220.0), Some("lszh70")));
+    s.undo().unwrap();
+    assert_eq!(s.execute("eletrica.rotear", &json!({})).unwrap()["tensaoFn"], 127.0);
+    s.execute("eletrica.quadro", &json!({ "cabo": null })).unwrap();
+    assert!(s.execute("eletrica.rotear", &json!({})).unwrap()["config"]["cabo"].is_null());
+}

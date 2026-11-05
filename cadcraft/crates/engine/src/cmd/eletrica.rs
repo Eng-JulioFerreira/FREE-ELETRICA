@@ -107,7 +107,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("eletrica.sobrescrever", "Override Circuit", run_sobrescrever)
             .params("{quadro?: hex | TAG, circuito, secao?: mm², disjuntor?: A} (no value: back to the automatic choice) → {quadro, circuito}"),
         CommandSpec::new("eletrica.quadro", "Board Settings", run_quadro)
-            .params("{quadro?: hex | TAG, isolacao?: \"PVC\" | \"EPR\" | \"XLPE\" | null (null: back to the settings' default)} → {quadro, isolacao}"),
+            .params("{quadro?: hex | TAG, sistema?: \"F+N+T\" | \"2F+N+T\" | \"2F+T\" | \"3F+N+T\" | null, tensaoNominal?: \"127/220\" | \"220/380\" | null, cabo?: FLEX_PVC_70 | UNI_PVC_70 | HEPR_XLPE_90 | LSZH_70 | LSZH_HEPR_90 | null, alimentadoPor?: \"CONCESSIONARIA\" | hex | TAG | null, isolacao?: \"PVC\" | \"EPR\" | \"XLPE\" | null (from drawings before the board's cable)} (null: back to what the block says) → {quadro, isolacao, config}"),
         CommandSpec::new("eletrica.cargas", "Load Schedule", run_cargas)
             .params("{quadro?: hex | TAG} → [{id, descricao, circuito}] (circuits with points and the ones created empty)")
             .noundo(),
@@ -266,17 +266,41 @@ fn run_sobrescrever(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn run_quadro(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "eletrica.quadro";
     let q = achar_quadro(&analise(s)?, p.get("quadro"))?;
     let isolacao = match p.get("isolacao") {
         None | Some(Value::Null) => None,
-        Some(v) => Some(
-            v.as_str()
-                .and_then(ele::nbr5410::Isolacao::de_codigo)
-                .ok_or_else(|| bad("eletrica.quadro", "`isolacao` must be \"PVC\", \"EPR\" or \"XLPE\""))?,
-        ),
+        Some(v) => {
+            Some(v.as_str().and_then(ele::nbr5410::Isolacao::de_codigo).ok_or_else(|| bad(CMD, "`isolacao` must be \"PVC\", \"EPR\" or \"XLPE\""))?)
+        }
     };
-    ele::editar::definir_isolacao(s.doc_mut()?, q, isolacao).map_err(erro)?;
-    Ok(json!({ "quadro": q.hex(), "isolacao": isolacao.map(|i| i.codigo()) }))
+    // Tudo é conferido antes de gravar qualquer coisa. `None` não mexe, `Some(None)` volta ao do bloco.
+    let sistema = p.get("sistema").map(|_| codigo_de(CMD, p, "sistema", ele::quadro::SistemaQuadro::de_codigo)).transpose()?;
+    let tensao = p.get("tensaoNominal").map(|_| codigo_de(CMD, p, "tensaoNominal", ele::quadro::TensaoNominal::de_codigo)).transpose()?;
+    let cabo = p.get("cabo").map(|_| codigo_de(CMD, p, "cabo", ele::nbr5410::TipoCabo::de_codigo)).transpose()?;
+    let alimentado = match p.get("alimentadoPor") {
+        None => None,
+        Some(Value::Null) => Some(None),
+        Some(v) => Some(Some(v.as_str().ok_or_else(|| bad(CMD, "`alimentadoPor` must be text or null"))?.to_string())),
+    };
+    let doc = s.doc_mut()?;
+    if let Some(a) = &alimentado {
+        ele::editar::definir_alimentacao(doc, q, a.as_deref()).map_err(|e| bad(CMD, e))?;
+    }
+    if let Some(v) = sistema {
+        ele::editar::definir_sistema_quadro(doc, q, v).map_err(erro)?;
+    }
+    if let Some(v) = tensao {
+        ele::editar::definir_tensao_nominal(doc, q, v).map_err(erro)?;
+    }
+    if let Some(v) = cabo {
+        ele::editar::definir_cabo_quadro(doc, q, v).map_err(erro)?;
+    }
+    if p.get("isolacao").is_some() || (sistema.is_none() && tensao.is_none() && cabo.is_none() && alimentado.is_none()) {
+        ele::editar::definir_isolacao(doc, q, isolacao).map_err(erro)?;
+    }
+    let config = ele::ponto::ler_ponto(s.doc()?, q).map(|x| ele::quadro::config_do_quadro(&x)).unwrap_or_default();
+    Ok(json!({ "quadro": q.hex(), "isolacao": isolacao.map(|i| i.codigo()), "config": json_de(&config)? }))
 }
 
 fn run_cargas(s: &mut Session, p: &Value) -> Result<Value> {

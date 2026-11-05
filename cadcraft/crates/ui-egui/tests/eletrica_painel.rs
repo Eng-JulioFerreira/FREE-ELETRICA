@@ -241,10 +241,11 @@ fn paleta_ferramentas_e_fluxo_completo() {
     // com o diâmetro do cabo novo.
     h.get_by_label("Configurações...").click();
     h.run_steps(3);
-    h.get_by_label("Sistema de distribuição");
-    h.get_by_label("Tipo de cabo padrão");
+    // O sistema, o cabo padrão e a folga não ficam mais nas configurações.
+    for fora in ["Sistema de distribuição", "Tipo de cabo padrão", "Folga de cabos", "Folga de Cabos (%)"] {
+        assert!(h.query_by_label(fora).is_none(), "{fora}");
+    }
     h.get_by_label("Queda de tensão: iluminação");
-    h.get_by_label("Folga de cabos");
     h.get_by_label("Alturas").click();
     h.run_steps(3);
     h.get_by_label("Pé-direito (teto)");
@@ -286,6 +287,10 @@ fn paleta_ferramentas_e_fluxo_completo() {
     h.run_steps(3);
     assert!(!h.state().ui.docking.layout.contains(&Panel::QuadroCargas));
     h.get_by_label("PAINEL: QD-01");
+    // O sistema, a tensão, o cabo padrão e quem alimenta ficam em cada quadro.
+    for campo in ["Sistema do Quadro", "Tensão Nominal", "Tipo de Cabo Padrão do Quadro", "Alimentado por"] {
+        h.get_by_label(campo);
+    }
     for coluna in ["Descrição", "Esquema", "Pontos", "Potência (VA)", "Ib (A)", "Fase R (VA)", "Fases", "Grupo DR", "Cabo / disjuntor", "Situação"]
     {
         assert!(h.query_all_by_label(coluna).count() >= 1, "coluna {coluna}");
@@ -430,6 +435,8 @@ fn paleta_ferramentas_e_fluxo_completo() {
     h.run_steps(3);
     h.get_by_label("TAG");
     h.get_by_label("NUMERO_FASES");
+    h.get_by_label("Sistema do Quadro");
+    h.get_by_label("Alimentado por");
     // Imagem do inspetor, quando pedida.
     if let Ok(saida) = std::env::var("FREE_ELETRICA_PNG_INSPETOR") {
         h.render().unwrap().save(saida).unwrap();
@@ -453,6 +460,7 @@ fn paleta_ferramentas_e_fluxo_completo() {
     h.get_by_label("Lista de materiais...").click();
     h.run_steps(3);
     h.get_by_label("Cabos, com a folga do projeto");
+    h.get_by_label("Folga de Cabos (%)");
     assert!(h.query_all_by_label("Eletrodutos").count() >= 2, "a seção da paleta e o título na lista");
     h.get_by_label("Disjuntores");
     assert!(h.query_all_by_label("Cabo flexível PVC 70 °C (450/750 V)").count() >= 1);

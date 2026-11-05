@@ -42,6 +42,127 @@ pub const CHAVE_ESQUEMA: &str = "ESQUEMA.";
 pub const CHAVE_TENSAO: &str = "TENSAO.";
 /// Fases travadas à mão de um circuito: `FASE.<circuito>` (`R`, `S`, `T`, `RS`, `RST`...).
 pub const CHAVE_FASE: &str = "FASE.";
+/// Sistema do quadro, na inserção dele: `F+N+T`, `2F+N+T`, `2F+T`, `3F+N+T`.
+pub const CHAVE_SISTEMA_QUADRO: &str = "SISTEMA_QUADRO";
+/// Tensão nominal do quadro: `127/220` ou `220/380`.
+pub const CHAVE_TENSAO_NOMINAL: &str = "TENSAO_NOMINAL";
+/// Tipo de cabo padrão do quadro: o dos circuitos que não escolheram o seu.
+pub const CHAVE_CABO_QUADRO: &str = "CABO_PADRAO_QUADRO";
+/// Quem alimenta o quadro: [`CONCESSIONARIA`] ou o handle de outro quadro.
+pub const CHAVE_ALIMENTADO_POR: &str = "ALIMENTADO_POR";
+pub const CONCESSIONARIA: &str = "CONCESSIONARIA";
+
+/// O sistema de um quadro.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SistemaQuadro {
+    Monofasico,
+    BifasicoComNeutro,
+    BifasicoSemNeutro,
+    Trifasico,
+}
+
+impl SistemaQuadro {
+    pub const TODOS: [SistemaQuadro; 4] = [Self::Monofasico, Self::BifasicoComNeutro, Self::BifasicoSemNeutro, Self::Trifasico];
+
+    pub fn codigo(self) -> &'static str {
+        match self {
+            Self::Monofasico => "F+N+T",
+            Self::BifasicoComNeutro => "2F+N+T",
+            Self::BifasicoSemNeutro => "2F+T",
+            Self::Trifasico => "3F+N+T",
+        }
+    }
+
+    pub fn nome(self) -> &'static str {
+        match self {
+            Self::Monofasico => "Monofásico (F+N+T)",
+            Self::BifasicoComNeutro => "Bifásico (2F+N+T)",
+            Self::BifasicoSemNeutro => "Bifásico (2F+T)",
+            Self::Trifasico => "Trifásico (3F+N+T)",
+        }
+    }
+
+    pub fn de_codigo(t: &str) -> Option<Self> {
+        Self::TODOS.into_iter().find(|s| s.codigo().eq_ignore_ascii_case(t.trim()))
+    }
+
+    pub fn fases(self) -> u8 {
+        match self {
+            Self::Monofasico => 1,
+            Self::BifasicoComNeutro | Self::BifasicoSemNeutro => 2,
+            Self::Trifasico => 3,
+        }
+    }
+}
+
+/// A tensão nominal de um quadro: fase-neutro / fase-fase.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TensaoNominal {
+    V127x220,
+    V220x380,
+}
+
+impl TensaoNominal {
+    pub const TODAS: [TensaoNominal; 2] = [Self::V127x220, Self::V220x380];
+
+    pub fn codigo(self) -> &'static str {
+        match self {
+            Self::V127x220 => "127/220",
+            Self::V220x380 => "220/380",
+        }
+    }
+
+    pub fn nome(self) -> &'static str {
+        match self {
+            Self::V127x220 => "127/220 V",
+            Self::V220x380 => "220/380 V",
+        }
+    }
+
+    pub fn de_codigo(t: &str) -> Option<Self> {
+        let t = t.trim().trim_end_matches(['V', 'v']).trim();
+        Self::TODAS.into_iter().find(|s| s.codigo() == t)
+    }
+
+    /// (fase-neutro, fase-fase), em V.
+    pub fn tensoes(self) -> (f64, f64) {
+        match self {
+            Self::V127x220 => (127.0, 220.0),
+            Self::V220x380 => (220.0, 380.0),
+        }
+    }
+}
+
+/// O que está gravado na inserção de um quadro. `None`: não escolhido, valem os atributos do bloco e
+/// os padrões do programa.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigQuadro {
+    pub sistema: Option<SistemaQuadro>,
+    pub tensao: Option<TensaoNominal>,
+    pub cabo: Option<nbr5410::TipoCabo>,
+    /// [`CONCESSIONARIA`] ou o handle de outro quadro.
+    pub alimentado_por: Option<String>,
+}
+
+/// A configuração gravada num quadro.
+pub fn config_do_quadro(q: &PontoEletrico) -> ConfigQuadro {
+    let valor = |k: &str| q.extras.iter().find(|(c, _)| c.eq_ignore_ascii_case(k)).map(|(_, v)| v.as_str());
+    ConfigQuadro {
+        sistema: valor(CHAVE_SISTEMA_QUADRO).and_then(SistemaQuadro::de_codigo),
+        tensao: valor(CHAVE_TENSAO_NOMINAL).and_then(TensaoNominal::de_codigo),
+        cabo: valor(CHAVE_CABO_QUADRO).and_then(nbr5410::TipoCabo::de_codigo),
+        alimentado_por: valor(CHAVE_ALIMENTADO_POR).map(str::trim).filter(|v| !v.is_empty()).map(str::to_string),
+    }
+}
+
+/// O quadro que alimenta este, quando é outro quadro.
+pub fn quadro_que_alimenta(q: &PontoEletrico) -> Option<Handle> {
+    config_do_quadro(q).alimentado_por.as_deref().and_then(Handle::parse_hex)
+}
+
 /// O que o projetista definiu para um circuito no quadro de cargas (o tipo de carga e o FP
 /// vêm dos blocos: atributos TIPO_CARGA e FP).
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
@@ -143,15 +264,19 @@ fn isolacao_gravada(quadro: &PontoEletrico) -> Option<nbr5410::Isolacao> {
     quadro.extras.iter().find(|(k, _)| k.eq_ignore_ascii_case(CHAVE_ISOLACAO)).and_then(|(_, v)| nbr5410::Isolacao::de_codigo(v))
 }
 
-/// A isolação do quadro: a gravada nele ou a do cabo padrão das configurações.
+/// A isolação do quadro: a do cabo padrão dele, a gravada em desenhos anteriores ou a do padrão do programa.
 pub fn isolacao_do_quadro(quadro: &PontoEletrico, setup: &Setup) -> nbr5410::Isolacao {
-    isolacao_gravada(quadro).unwrap_or_else(|| setup.cabo_padrao.isolacao())
+    config_do_quadro(quadro)
+        .cabo
+        .map(nbr5410::TipoCabo::isolacao)
+        .or_else(|| isolacao_gravada(quadro))
+        .unwrap_or_else(|| setup.cabo_padrao.isolacao())
 }
 
-/// O cabo dos circuitos do quadro que não escolheram o seu: o equivalente ao gravado no quadro ou o
-/// padrão das configurações.
+/// O cabo dos circuitos do quadro que não escolheram o seu: o padrão do quadro, o equivalente ao gravado
+/// em desenhos anteriores ou o padrão do programa.
 pub fn cabo_do_quadro(quadro: &PontoEletrico, setup: &Setup) -> nbr5410::TipoCabo {
-    isolacao_gravada(quadro).map_or(setup.cabo_padrao, nbr5410::TipoCabo::de_isolacao)
+    config_do_quadro(quadro).cabo.unwrap_or_else(|| isolacao_gravada(quadro).map_or(setup.cabo_padrao, nbr5410::TipoCabo::de_isolacao))
 }
 
 /// O que "Processar cálculo" fez num quadro.
@@ -357,7 +482,22 @@ pub struct ResumoQuadro {
     pub corrente_demandada: f64,
     /// O alimentador do quadro, pela demanda.
     pub alimentador: Alimentador,
+    /// O que está gravado no quadro: sistema, tensão nominal, cabo padrão e quem o alimenta.
+    pub config: ConfigQuadro,
+    /// O cabo dos circuitos que não escolheram o seu.
+    pub cabo_padrao: nbr5410::TipoCabo,
     pub avisos: Vec<String>,
+}
+
+impl ResumoQuadro {
+    /// A alimentação do quadro em texto: "220/127 V bifásico".
+    pub fn alimentacao(&self) -> String {
+        match self.fases_quadro {
+            1 => format!("{} V monofásico", br(self.tensao_fn)),
+            2 => format!("{}/{} V bifásico", br(self.tensao_ff), br(self.tensao_fn)),
+            _ => format!("{}/{} V trifásico", br(self.tensao_ff), br(self.tensao_fn)),
+        }
+    }
 }
 
 /// O alimentador do quadro, pela corrente demandada. DR e DPS são sugestões a conferir no projeto.
@@ -443,9 +583,13 @@ pub fn rotear(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle) -
     let isolacao = isolacao_do_quadro(q, setup);
     let cabo_padrao = cabo_do_quadro(q, setup);
     let mut cfg_base = setup.config_com(isolacao);
-    (cfg_base.tensao_fn, cfg_base.tensao_ff) = tensoes_do_quadro(q, (cfg_base.tensao_fn, cfg_base.tensao_ff));
+    let config = config_do_quadro(q);
+    (cfg_base.tensao_fn, cfg_base.tensao_ff) = match config.tensao {
+        Some(n) => n.tensoes(),
+        None => tensoes_do_quadro(q, (cfg_base.tensao_fn, cfg_base.tensao_ff)),
+    };
     let descr = descricoes(q);
-    let fases_quadro = q.fases.unwrap_or(cfg_base.fases_padrao).clamp(1, 3);
+    let fases_quadro = config.sistema.map(SistemaQuadro::fases).or(q.fases).unwrap_or(cfg_base.fases_padrao).clamp(1, 3);
     let props = propriedades(q);
     // Os circuitos do quadro com o que foi escolhido para eles (esquema e tensão).
     let esquema_de = |c: &Circuito| props.get(&c.id.to_uppercase()).and_then(|p| p.esquema).unwrap_or_else(|| nbr5410::Esquema::padrao(c.fases));
@@ -459,7 +603,9 @@ pub fn rotear(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle) -
             if p.and_then(|p| p.esquema).is_some() {
                 c.fases = esquema_de(&c).fases();
             }
-            if let Some(t) = p.and_then(|p| p.tensao) {
+            // A tensão escolhida para o circuito vale sobre tudo; a nominal do quadro, sobre a dos pontos.
+            let da_nominal = config.tensao.map(|n| if c.fases >= 2 { n.tensoes().1 } else { n.tensoes().0 });
+            if let Some(t) = p.and_then(|p| p.tensao).or(da_nominal) {
                 c.tensao = Some(t);
             }
             c
@@ -485,7 +631,7 @@ pub fn rotear(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle) -
             let membros: Vec<&PontoEletrico> = analise.pontos.iter().filter(|p| c.pontos.contains(&p.handle)).collect();
             let (tensao, _) = nbr5410::tensao_circuito(c, &cfg_base);
             // A tensão escolhida para o circuito vale sobre a de cada ponto.
-            let forcada = props.get(&c.id.to_uppercase()).and_then(|p| p.tensao);
+            let forcada = props.get(&c.id.to_uppercase()).and_then(|p| p.tensao).or(if config.tensao.is_some() { c.tensao } else { None });
             let corrente = |p: &PontoEletrico| {
                 if p.tipo.e_carga() {
                     nbr5410::corrente_projeto(p.potencia.unwrap_or(0.0), forcada.or(p.tensao).unwrap_or(tensao), c.fases)
@@ -613,6 +759,11 @@ pub fn rotear(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle) -
         escolhidas.sort_unstable();
         linhas[i].fases = escolhidas;
     }
+    if config.sistema == Some(SistemaQuadro::BifasicoSemNeutro) {
+        for l in linhas.iter().filter(|l| l.esquema.neutro()) {
+            avisos.push(format!("circuito {} usa neutro ({}) e o quadro é 2F+T, sem neutro", l.circuito.id, l.esquema.codigo()));
+        }
+    }
     let usadas = &carga[..usize::from(fases_quadro)];
     let maior = usadas.iter().copied().fold(0.0, f64::max);
     let menor = usadas.iter().copied().fold(f64::INFINITY, f64::min);
@@ -652,6 +803,8 @@ pub fn rotear(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle) -
         corrente_instalada: corrente_quadro(demanda.instalada, fases_quadro, tensao_fn, tensao_ff),
         corrente_demandada,
         alimentador: alimentador(corrente_demandada, fases_quadro, tensao_fn, &cfg_base),
+        config,
+        cabo_padrao,
         demanda,
         tensao_fn,
         tensao_ff,
@@ -668,8 +821,7 @@ pub fn rotear(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle) -
 
 /// O resumo técnico em texto, uma linha por circuito.
 pub fn texto(r: &ResumoQuadro, setup: &Setup) -> String {
-    let mut s =
-        format!("RESUMO DA FIAÇÃO - {}\n{} · {} °C (FCT {})\n\n", r.tag, setup.sistema.nome(), br(setup.temperatura_ambiente), br(setup.fct()));
+    let mut s = format!("RESUMO DA FIAÇÃO - {}\n{} · {} °C (FCT {})\n\n", r.tag, r.alimentacao(), br(setup.temperatura_ambiente), br(setup.fct()));
     s.push_str("Circ.  Fases  VA      Ib(A)  FCA   L(m)   dV(%)  Fiação              Disj.\n");
     for l in &r.linhas {
         let e = &l.escolha;

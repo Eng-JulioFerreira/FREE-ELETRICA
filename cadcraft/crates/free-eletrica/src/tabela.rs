@@ -107,11 +107,7 @@ fn pecas_da_tabela(r: &ResumoQuadro, m: f64) -> Vec<EntityKind> {
         .collect();
     let largura_total: f64 = larguras.iter().sum();
     // Título e alimentação.
-    let alimentacao = match r.fases_quadro {
-        1 => format!("{} V monofásico", fixo(r.tensao_fn, 0)),
-        2 => format!("{}/{} V bifásico", fixo(r.tensao_ff, 0), fixo(r.tensao_fn, 0)),
-        _ => format!("{}/{} V trifásico", fixo(r.tensao_ff, 0), fixo(r.tensao_fn, 0)),
-    };
+    let alimentacao = r.alimentacao();
     p.push(texto(&format!("PAINEL: {}", r.tag), [0.0, u(-LINHA / 2.0)], u(ALTURA * 1.5), HAlign::Left));
     p.push(texto(&format!("ALIMENTAÇÃO: {alimentacao}"), [0.0, u(-LINHA * 1.5)], u(ALTURA), HAlign::Left));
     let topo = -LINHA * 2.0;

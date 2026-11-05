@@ -31,7 +31,7 @@ use free_eletrica::nbr5410::{DISJUNTORES, Esquema, SECOES, TipoCabo};
 use free_eletrica::ponto::br;
 use free_eletrica::rota::{Instalacao, TipoEletroduto};
 use free_eletrica::setup::{DiametroCondutor, TamanhoEletroduto, diametros_padrao, eletrodutos_padrao};
-use free_eletrica::{self as ele, CaboTelecom, CategoriaTelecom, CorCabo, PontoEletrico, Setup, Sistema, TipoPonto, Unidade};
+use free_eletrica::{self as ele, CaboTelecom, CategoriaTelecom, CorCabo, PontoEletrico, Setup, TipoPonto, Unidade};
 use serde_json::{Value, json};
 
 use crate::CadApp;
@@ -1261,6 +1261,18 @@ pub fn janelas(app: &mut CadApp, ctx: &egui::Context) {
             }),
             Qual::Materiais => janela(ctx, "Lista de materiais", (420.0, 120.0), (620.0, 520.0), |ui| {
                 let m = st.materiais(app, &s);
+                let mut folga = (s.fator_materiais - 1.0) * 100.0;
+                ui.horizontal(|ui| {
+                    ui.label("Folga de Cabos (%)");
+                    if ui
+                        .add(campo(&mut folga, 0.0..=100.0, 1.0, 0, " %"))
+                        .on_hover_text("Soma aos comprimentos de cabo no levantamento (perdas, emendas, sobras)")
+                        .changed()
+                    {
+                        acoes.push(Acao::Rodar("eletrica.setup", json!({ "fatorMateriais": 1.0 + folga / 100.0 })));
+                    }
+                });
+                ui.separator();
                 egui::ScrollArea::vertical().auto_shrink([false, true]).show(ui, |ui| lista_de_materiais(ui, &t, &m));
             }),
         };
@@ -1805,6 +1817,67 @@ fn janela_blocos(ui: &mut egui::Ui, t: &Tokens, st: &Estado, b: &mut Blocos, tem
     });
 }
 
+/// O sistema, a tensão nominal, o cabo padrão e quem alimenta um quadro: ficam na inserção dele.
+fn campos_do_quadro(ui: &mut egui::Ui, q: &PontoEletrico, analise: &ele::Analise, s: &Setup, acoes: &mut Vec<Acao>) {
+    use ele::quadro::{CONCESSIONARIA, SistemaQuadro, TensaoNominal, config_do_quadro};
+    let c = config_do_quadro(q);
+    let h = q.handle.hex();
+    let enviar = |acoes: &mut Vec<Acao>, campo: &str, valor: Value| {
+        let mut p = serde_json::Map::new();
+        p.insert("quadro".into(), json!(h));
+        p.insert(campo.into(), valor);
+        acoes.push(Acao::Rodar("eletrica.quadro", Value::Object(p)));
+    };
+    ui.label("Sistema do Quadro");
+    egui::ComboBox::from_id_salt(("ele-quadro-sistema", q.handle))
+        .selected_text(c.sistema.map_or("Do bloco", SistemaQuadro::nome))
+        .width(140.0)
+        .show_ui(ui, |ui| {
+            for v in SistemaQuadro::TODOS {
+                if ui.selectable_label(c.sistema == Some(v), v.nome()).clicked() {
+                    enviar(acoes, "sistema", json!(v.codigo()));
+                }
+            }
+        });
+    ui.label("Tensão Nominal");
+    egui::ComboBox::from_id_salt(("ele-quadro-tensao", q.handle))
+        .selected_text(c.tensao.map_or("Do bloco", TensaoNominal::nome))
+        .width(90.0)
+        .show_ui(ui, |ui| {
+            for v in TensaoNominal::TODAS {
+                if ui.selectable_label(c.tensao == Some(v), v.nome()).clicked() {
+                    enviar(acoes, "tensaoNominal", json!(v.codigo()));
+                }
+            }
+        });
+    ui.label("Tipo de Cabo Padrão do Quadro");
+    let cabo = ele::quadro::cabo_do_quadro(q, s);
+    egui::ComboBox::from_id_salt(("ele-quadro-cabo", q.handle)).selected_text(cabo.nome()).width(240.0).show_ui(ui, |ui| {
+        for v in TipoCabo::TODOS {
+            if ui.selectable_label(cabo == v, v.nome()).clicked() {
+                enviar(acoes, "cabo", json!(v.codigo()));
+            }
+        }
+    });
+    ui.label("Alimentado por");
+    let quadros = analise.quadros();
+    let atual = match c.alimentado_por.as_deref() {
+        None => "Não definido".to_string(),
+        Some(CONCESSIONARIA) => "Concessionária".to_string(),
+        Some(t) => quadros.iter().find(|o| Handle::parse_hex(t) == Some(o.handle)).map_or_else(|| "Quadro removido".to_string(), |o| o.rotulo()),
+    };
+    egui::ComboBox::from_id_salt(("ele-quadro-alimentado", q.handle)).selected_text(atual).width(120.0).show_ui(ui, |ui| {
+        if ui.selectable_label(c.alimentado_por.as_deref() == Some(CONCESSIONARIA), "Concessionária").clicked() {
+            enviar(acoes, "alimentadoPor", json!(CONCESSIONARIA));
+        }
+        for o in quadros.iter().filter(|o| o.handle != q.handle) {
+            if ui.selectable_label(c.alimentado_por.as_deref().and_then(Handle::parse_hex) == Some(o.handle), o.rotulo()).clicked() {
+                enviar(acoes, "alimentadoPor", json!(o.handle.hex()));
+            }
+        }
+    });
+}
+
 /// A classe e o fator de demanda de um ponto de carga, no inspetor de atributos.
 fn campos_de_demanda(ui: &mut egui::Ui, p: &PontoEletrico, acoes: &mut Vec<Acao>) {
     let h = p.handle.hex();
@@ -1856,9 +1929,19 @@ fn janela_atributos(ui: &mut egui::Ui, app: &CadApp, t: &Tokens, acoes: &mut Vec
         _ => String::new(),
     };
     ui.label(RichText::new(format!("{nome} #{}", h.hex())).strong());
-    if let Some(p) = ele::ponto::ler_ponto(doc, h).filter(|p| p.tipo.e_carga()) {
-        campos_de_demanda(ui, &p, acoes);
-        ui.separator();
+    if let Some(p) = ele::ponto::ler_ponto(doc, h) {
+        if p.tipo.e_carga() {
+            campos_de_demanda(ui, &p, acoes);
+            ui.separator();
+        }
+        if p.tipo == TipoPonto::Quadro {
+            let analise = ele::analisar(doc);
+            let s = setup();
+            if let Some(q) = analise.ponto(h) {
+                ui.horizontal_wrapped(|ui| campos_do_quadro(ui, q, &analise, &s, acoes));
+                ui.separator();
+            }
+        }
     }
     if lista.is_empty() {
         ui.label(pequeno("Este bloco não tem atributos.", t.text_dim));
@@ -1939,7 +2022,7 @@ fn escolher_cabo(ui: &mut egui::Ui, q: Handle, id: &str, l: &ele::quadro::Linha,
     let nome = if completo { l.tipo_cabo.nome() } else { l.tipo_cabo.abreviado() };
     let texto = if l.isolacao_propria { RichText::new(nome).strong() } else { RichText::new(nome) };
     egui::ComboBox::from_id_salt(("ele-cabo", id, completo)).selected_text(texto).width(largura).show_ui(ui, |ui| {
-        if ui.selectable_label(!l.isolacao_propria, "Padrão do projeto").clicked() && l.isolacao_propria {
+        if ui.selectable_label(!l.isolacao_propria, "Padrão do quadro").clicked() && l.isolacao_propria {
             acoes.push(Acao::Rodar("eletrica.circuito.definir", json!({ "quadro": q.hex(), "circuito": id, "cabo": null })));
         }
         for c in TipoCabo::TODOS {
@@ -1999,16 +2082,14 @@ fn quadro_de_cargas(
     acoes: &mut Vec<Acao>,
 ) {
     let q = r.quadro;
-    let alimentacao = match r.fases_quadro {
-        1 => format!("{} V monofásico", fixo(r.tensao_fn, 0)),
-        2 => format!("{}/{} V bifásico", fixo(r.tensao_ff, 0), fixo(r.tensao_fn, 0)),
-        _ => format!("{}/{} V trifásico", fixo(r.tensao_ff, 0), fixo(r.tensao_fn, 0)),
-    };
     ui.horizontal(|ui| {
         ui.label(RichText::new(format!("PAINEL: {}", r.tag)).strong().size(16.0));
         ui.add_space(12.0);
-        ui.label(format!("Alimentação: {alimentacao}"));
+        ui.label(format!("Alimentação: {}", r.alimentacao()));
     });
+    if let Some(p) = analise.ponto(q) {
+        ui.horizontal_wrapped(|ui| campos_do_quadro(ui, p, analise, s, acoes));
+    }
     ui.add_space(2.0);
     ui.horizontal(|ui| {
         let proximo = ele::circuito::proximo_circuito(&analise.pontos, q);
@@ -2920,29 +3001,11 @@ fn janela_setup(ctx: &egui::Context, t: &Tokens, tem_desenho: bool, acoes: &mut 
 /// Critérios elétricos do projeto.
 fn aba_criterios(ui: &mut egui::Ui, t: &Tokens, s: &mut Setup) {
     egui::Grid::new("ele-setup-criterios").num_columns(2).spacing(vec2(12.0, 6.0)).show(ui, |ui| {
-        ui.label("Sistema de distribuição");
-        egui::ComboBox::from_id_salt("ele-sistema").selected_text(s.sistema.nome()).width(230.0).show_ui(ui, |ui| {
-            for sistema in Sistema::TODOS {
-                ui.selectable_value(&mut s.sistema, sistema, sistema.nome());
-            }
-        });
-        ui.end_row();
-        ui.label("Tensões");
-        let ff = s.sistema.tensao_ff().map_or_else(|| "-".to_string(), |v| format!("{} V", br(v)));
-        ui.label(format!("F-N {} V · F-F {ff} · {} fase(s)", br(s.sistema.tensao_fn()), s.sistema.fases()));
-        ui.end_row();
         ui.label("Temperatura ambiente");
         ui.add(campo(&mut s.temperatura_ambiente, 10.0..=60.0, 1.0, 0, " °C"));
         ui.end_row();
         ui.label("FCT (tabela 40)");
         ui.label(fixo(s.fct(), 2));
-        ui.end_row();
-        ui.label("Tipo de cabo padrão");
-        egui::ComboBox::from_id_salt("ele-cabo-padrao").selected_text(s.cabo_padrao.nome()).width(280.0).show_ui(ui, |ui| {
-            for c in TipoCabo::TODOS {
-                ui.selectable_value(&mut s.cabo_padrao, c, c.nome());
-            }
-        });
         ui.end_row();
         ui.label("Queda de tensão: iluminação");
         ui.add(campo(&mut s.queda_iluminacao, 0.5..=10.0, 0.1, 1, " %"));
@@ -2953,19 +3016,9 @@ fn aba_criterios(ui: &mut egui::Ui, t: &Tokens, s: &mut Setup) {
         ui.label("Queda de tensão: alimentador");
         ui.add(campo(&mut s.queda_alimentador, 0.1..=10.0, 0.1, 1, " %"));
         ui.end_row();
-        ui.label("Folga de cabos");
-        let mut folga = (s.fator_materiais - 1.0) * 100.0;
-        if ui
-            .add(campo(&mut folga, 0.0..=100.0, 1.0, 0, " %"))
-            .on_hover_text("Soma aos comprimentos de cabo no levantamento (perdas, emendas, sobras)")
-            .changed()
-        {
-            s.fator_materiais = 1.0 + folga / 100.0;
-        }
-        ui.end_row();
     });
     ui.label(pequeno(
-        "O cabo padrão vale para os circuitos que não escolheram o seu, no Quadro de cargas. Tensões e fases valem quando o bloco não informa TENSAO ou o quadro não informa NUMERO_FASES. A queda do alimentador ainda não entra no cálculo: chega na etapa de dimensionamento.",
+        "O sistema, a tensão nominal e o cabo padrão ficam em cada quadro: no Quadro de cargas ou no Inspetor de atributos do quadro. A folga de cabos fica na Lista de materiais. A queda do alimentador ainda não entra no cálculo.",
         t.text_dim,
     ));
 }

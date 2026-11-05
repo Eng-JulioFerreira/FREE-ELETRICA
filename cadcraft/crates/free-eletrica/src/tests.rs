@@ -933,6 +933,65 @@ fn tabela_de_demanda_propria() {
 }
 
 #[test]
+fn sistema_tensao_cabo_e_alimentacao_por_quadro() {
+    use nbr5410::TipoCabo as C;
+    use quadro::{SistemaQuadro as S, TensaoNominal as V};
+    let setup = Setup::default();
+    let mut d = metros();
+    let q = inserir(&mut d, "QD", 0.0, 0.0, &[("TIPO_PONTO", "QUADRO"), ("TAG", "QD-01")]);
+    let q2 = inserir(&mut d, "QD", 5.0, 0.0, &[("TIPO_PONTO", "QUADRO"), ("TAG", "QD-02")]);
+    let q3 = inserir(&mut d, "QD", 9.0, 0.0, &[("TIPO_PONTO", "QUADRO"), ("TAG", "QD-03")]);
+    // O ponto diz 220 V, do padrão de fábrica.
+    let t = inserir(&mut d, "TUG", 2.0, 0.0, &[("TIPO_PONTO", "TUG"), ("POTENCIA", "1270VA"), ("TENSAO", "220V")]);
+    editar::atribuir_circuito(&mut d, t, q, "1").unwrap();
+    let rotear = |d: &Drawing| quadro::rotear(d, &analisar(d), &setup, q).unwrap();
+    // Sem escolha: os padrões do programa continuam valendo para desenhos antigos.
+    let r = rotear(&d);
+    assert_eq!((r.fases_quadro, r.tensao_fn, r.tensao_ff, r.cabo_padrao), (3, 220.0, 380.0, setup.cabo_padrao));
+    assert_eq!(r.linhas[0].tensao, 220.0);
+    // O quadro manda: monofásico 127/220 V, e o circuito fica em 127 V.
+    editar::definir_sistema_quadro(&mut d, q, Some(S::Monofasico)).unwrap();
+    editar::definir_tensao_nominal(&mut d, q, Some(V::V127x220)).unwrap();
+    editar::definir_cabo_quadro(&mut d, q, Some(C::Lszh70)).unwrap();
+    let r = rotear(&d);
+    assert_eq!((r.fases_quadro, r.tensao_fn, r.tensao_ff, r.cabo_padrao), (1, 127.0, 220.0, C::Lszh70));
+    assert_eq!((r.linhas[0].tensao, r.linhas[0].tipo_cabo), (127.0, C::Lszh70));
+    assert!(perto(r.linhas[0].escolha.ib, 10.0, 1e-9), "{}", r.linhas[0].escolha.ib);
+    assert_eq!(r.alimentacao(), "127 V monofásico");
+    assert_eq!(r.config.sistema, Some(S::Monofasico));
+    // A tensão do circuito vale sobre a do quadro; o cabo do circuito, sobre o padrão do quadro.
+    editar::definir_tensao_circuito(&mut d, q, "1", Some(220.0)).unwrap();
+    editar::definir_cabo_circuito(&mut d, q, "1", Some(C::HeprXlpe90)).unwrap();
+    let r = rotear(&d);
+    assert_eq!((r.linhas[0].tensao, r.linhas[0].tipo_cabo), (220.0, C::HeprXlpe90));
+    editar::definir_tensao_circuito(&mut d, q, "1", None).unwrap();
+    editar::definir_cabo_circuito(&mut d, q, "1", None).unwrap();
+    // 2F+T não tem neutro: o circuito com neutro é avisado.
+    editar::definir_sistema_quadro(&mut d, q, Some(S::BifasicoSemNeutro)).unwrap();
+    let r = rotear(&d);
+    assert_eq!(r.fases_quadro, 2);
+    assert!(r.avisos.iter().any(|a| a.contains("sem neutro")), "{:?}", r.avisos);
+    // Voltar ao que o bloco diz.
+    editar::definir_tensao_nominal(&mut d, q, None).unwrap();
+    assert!(quadro::config_do_quadro(&ponto::ler_ponto(&d, q).unwrap()).tensao.is_none());
+    // Alimentado por: a concessionária ou outro quadro, sem ciclo.
+    editar::definir_alimentacao(&mut d, q, Some("concessionaria")).unwrap();
+    assert_eq!(rotear(&d).config.alimentado_por.as_deref(), Some(quadro::CONCESSIONARIA));
+    editar::definir_alimentacao(&mut d, q2, Some("QD-01")).unwrap();
+    editar::definir_alimentacao(&mut d, q3, Some(&q2.hex())).unwrap();
+    assert_eq!(quadro::quadro_que_alimenta(&ponto::ler_ponto(&d, q3).unwrap()), Some(q2));
+    assert!(editar::definir_alimentacao(&mut d, q, Some("QD-01")).is_err(), "a si mesmo");
+    assert!(editar::definir_alimentacao(&mut d, q, Some("QD-03")).is_err(), "ciclo");
+    assert!(editar::definir_alimentacao(&mut d, q, Some("não existe")).is_err());
+    editar::definir_alimentacao(&mut d, q3, None).unwrap();
+    assert_eq!(quadro::quadro_que_alimenta(&ponto::ler_ponto(&d, q3).unwrap()), None);
+    // O código da tensão aceita o V no fim; lixo não vira nada.
+    assert_eq!(V::de_codigo(" 220/380V "), Some(V::V220x380));
+    assert_eq!(V::de_codigo("13800"), None);
+    assert_eq!(S::de_codigo("3f+n+t"), Some(S::Trifasico));
+}
+
+#[test]
 fn tipo_de_carga_e_fp_vem_dos_atributos() {
     use demanda::TipoCarga;
     use ponto::fator_potencia;
