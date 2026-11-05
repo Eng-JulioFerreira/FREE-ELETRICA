@@ -27,6 +27,9 @@ pub const TAGS_FP: &[&str] = &["FP", "FATOR_POTENCIA", "FATOR_DE_POTENCIA", "COS
 pub const TAGS_CARGA: &[&str] = &["TIPO_CARGA", "CARGA"];
 /// Fator de demanda próprio do ponto, de 0 a 1: "0,70", "0.7" ou "70%". Vale no lugar da tabela.
 pub const TAGS_FATOR_DEMANDA: &[&str] = &["FATOR_DEMANDA", "FD"];
+/// O ponto base da caixa onde este está empilhado, no XDATA: ele não é nó do grafo, e os eletrodutos da
+/// caixa base o atendem.
+pub const CHAVE_HOST: &str = "host_point_handle";
 /// A altura exata (m) de uma inserção que foge da legenda, no XDATA: é a que vale para o cálculo.
 pub const CHAVE_ALTURA: &str = "elevation_m";
 /// Tipo de interruptor: 1S, 2S, 3S, PARALELO, PARALELO-2S, PARALELO-3S, INTERMEDIARIO, INTERMEDIARIO-2S e
@@ -257,6 +260,9 @@ pub struct PontoEletrico {
     pub fator_demanda: Option<f64>,
     /// Tipo de interruptor (atributo TIPO_INTERRUPTOR). `None`: um simples de uma tecla.
     pub tipo_interruptor: Option<TipoInterruptor>,
+    /// O ponto base da caixa, quando este está empilhado nela.
+    #[serde(serialize_with = "handle_hex_opcional")]
+    pub host: Option<Handle>,
     /// O nome na Legenda de Símbolos: o do ponto ou o da família. `None`: nenhum dos dois.
     pub legenda: Option<String>,
     /// A descrição na Lista de Materiais: a do ponto ou a da família. `None`: nenhuma das duas.
@@ -368,6 +374,7 @@ impl PontoEletrico {
                     _ => None,
                 })
             }),
+            host: extras.iter().find(|(k, _)| k.eq_ignore_ascii_case(CHAVE_HOST)).and_then(|(_, v)| Handle::parse_hex(v)),
             legenda: texto(TAGS_LEGENDA).or_else(|| familia.as_ref().map(|f| f.legenda.trim().to_string()).filter(|t| !t.is_empty())),
             desc_material: texto(TAGS_DESC_MATERIAL)
                 .or_else(|| familia.as_ref().map(|f| f.desc_material.trim().to_string()).filter(|t| !t.is_empty())),

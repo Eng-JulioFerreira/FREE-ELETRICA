@@ -43,13 +43,17 @@ Na primeira ferramenta usada num desenho, entram sem perguntar as camadas e os b
 
 | Blocos | Símbolo | Altura |
 | :--- | :--- | :--- |
-| `TOM-SIM-BAIXA`, `TOM-DUP-BAIXA` | Um ou dois triângulos empilhados, sem hachura | 0,30 m |
-| `TOM-SIM-MEDIA`, `TOM-DUP-MEDIA` | Meia hachura | 1,20 m |
-| `TOM-SIM-ALTA`, `TOM-DUP-ALTA` | Hachura cheia | 2,10 m |
-| `INT-SIM`, `INT-2S`, `INT-3S` | Interruptor simples: 1, 2 ou 3 círculos vazados, tangentes | Ponto médio, 1,20 m |
-| `INT-PAR`, `INT-PAR-2S`, `INT-PAR-3S` | Paralelo (three-way): círculos cheios | Ponto médio |
-| `INT-INT`, `INT-INT-2S`, `INT-INT-3S` | Intermediário (four-way): círculos com meia hachura | Ponto médio |
-| Os nove interruptores com `-ALTO` no fim | Os mesmos | Ponto alto, 2,10 m |
+| `TOM-SIM-BAIXA` | Triângulo sem hachura | 0,30 m |
+| `TOM-SIM-MEDIA` | Meia hachura | 1,20 m |
+| `TOM-SIM-ALTA` | Hachura cheia | 2,10 m |
+| `INT-SIM` | Interruptor simples: círculo vazado | Ponto médio, 1,20 m |
+| `INT-PAR` | Paralelo (three-way): círculo cheio | Ponto médio |
+| `INT-INT` | Intermediário (four-way): meia hachura | Ponto médio |
+| `INT-SIM-ALTO`, `INT-PAR-ALTO`, `INT-INT-ALTO` | Os mesmos | Ponto alto, 2,10 m |
+
+Cada bloco é um módulo, com o seu `CIRCUITO` e o seu `COMANDO`. Tomada dupla ou interruptor de duas teclas são dois módulos
+empilhados: o segundo, inserido no mesmo ponto (a até 10 cm) ou com `eletrica.ponto.empilhar`, usa o bloco `<nome>$EMP`, sem
+a caixa 4x2 (as peças da caixa têm o XDATA `wall_box`), encosta no topo do último símbolo e grava `host_point_handle`.
 
 Também entram `TOM-TUE`, `ILU-OCT`, `QDG`, `QDC`, `RJ45`, `RACK` e `CX-PASSAGEM`. Um bloco com o mesmo nome já no desenho
 fica como está: é assim que se usa outro símbolo. Só o desenho padrão de uma versão anterior é trocado. Excluído na janela

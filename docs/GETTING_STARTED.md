@@ -48,6 +48,9 @@ Na aba **Telecom** da paleta, **Inserir ponto de dados** e **Inserir rack** já 
 Ligue **Inspecionar projeto** para ver os halos: vermelho falta circuito ou comando, laranja sem caminho até o
 quadro, amarelo acima do limite e verde válido.
 
+Duas tomadas no mesmo ponto, ou duas teclas: insira um módulo sobre o outro. Cada um tem o seu circuito e o seu
+comando; a planta mostra uma caixa 4x2 só, com os símbolos empilhados, e o eletroduto da caixa atende todos.
+
 ## 4. Lance os eletrodutos
 
 Clique em **Inserir eletroduto** e depois nos blocos, em sequência. Na mini-barra, escolha o perfil, que traz o tipo de
@@ -59,6 +62,7 @@ Para mudar a curvatura ou o lado do arco, digite `Flecha` ou `Inverter` na linha
 - Um clique no meio de um eletroduto insere uma caixa de passagem.
 - Um clique num bloco que está no caminho de um eletroduto divide o trecho nele: o próprio bloco já é a caixa.
 - Cruzamentos sem bloco **não conectam**: cada eletroduto liga exatamente dois blocos.
+- Cada trecho é uma linha, um arco ou uma polilinha a 45°. Um trecho novo nunca mexe nos que já existem.
 - A cor vem do material e o tipo de linha vem do caminhamento: contínua no teto, tracejada ou pontilhada na parede, traço e ponto no piso.
 
 ## 5. Dimensione

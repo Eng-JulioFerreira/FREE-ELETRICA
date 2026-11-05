@@ -8,7 +8,6 @@
 
 use std::sync::Arc;
 
-use cadcraft_doc::color::Color;
 use cadcraft_doc::geom::Vec3;
 use cadcraft_doc::{Arc as Arco, Block, Circle, Common, Drawing, Entity, EntityKind, HAlign, Handle, Insert, Space};
 
@@ -37,10 +36,6 @@ const DADOS_X: f64 = MARCAS_X + 0.60;
 const CAIXA_X: f64 = DADOS_X + 1.40;
 /// A distância padrão entre o quadro e o diagrama (m).
 const AFASTAMENTO: f64 = 3.0;
-/// Fase vermelha, neutro azul e terra verde.
-const COR_FASE: u8 = 1;
-const COR_NEUTRO: u8 = 5;
-const COR_TERRA: u8 = 3;
 
 fn nome_do_bloco(quadro: Handle) -> String {
     format!("{PREFIXO}{}", quadro.hex())
@@ -57,9 +52,10 @@ pub fn unifilares(doc: &Drawing) -> Vec<(Handle, Handle)> {
         .collect()
 }
 
-/// Uma peça do bloco, em metros até a conversão, com a cor própria quando tem.
+/// As peças do bloco, em metros até a conversão, com a camada própria quando têm (as marcas de fiação vão
+/// na camada das tags da prancha).
 struct Pecas {
-    lista: Vec<(EntityKind, Option<u8>)>,
+    lista: Vec<(EntityKind, Option<&'static str>)>,
     m: f64,
 }
 
@@ -68,9 +64,9 @@ impl Pecas {
         v / self.m
     }
 
-    fn linha(&mut self, a: [f64; 2], b: [f64; 2], cor: Option<u8>) {
+    fn linha(&mut self, a: [f64; 2], b: [f64; 2]) {
         let k = linha([self.u(a[0]), self.u(a[1])], [self.u(b[0]), self.u(b[1])]);
-        self.lista.push((k, cor));
+        self.lista.push((k, None));
     }
 
     fn texto(&mut self, t: &str, em: [f64; 2], altura: f64, alinhar: HAlign) {
@@ -80,15 +76,24 @@ impl Pecas {
 
     fn retangulo(&mut self, x0: f64, y0: f64, x1: f64, y1: f64) {
         for (a, b) in [([x0, y0], [x1, y0]), ([x1, y0], [x1, y1]), ([x1, y1], [x0, y1]), ([x0, y1], [x0, y0])] {
-            self.linha(a, b, None);
+            self.linha(a, b);
         }
     }
 
-    /// O símbolo curvo do disjuntor, de `x` a `x + largura`, com um arco no lugar da linha.
+    /// O disjuntor termomagnético: os dois terminais na linha, o arco da abertura entre eles e, no topo do
+    /// arco, o traço em T do disparo. De `x` a `x + largura`.
     fn disjuntor(&mut self, x: f64, y: f64, largura: f64) {
-        let c = Vec3::new(self.u(x + largura / 2.0), self.u(y), 0.0);
-        let k = EntityKind::Arc(Arco { center: c, radius: self.u(largura / 2.0), start: 0.0, end: std::f64::consts::PI });
+        let r = largura / 2.0;
+        let c = Vec3::new(self.u(x + r), self.u(y), 0.0);
+        let k = EntityKind::Arc(Arco { center: c, radius: self.u(r), start: 0.0, end: std::f64::consts::PI });
         self.lista.push((k, None));
+        for t in [x, x + largura] {
+            let k = EntityKind::Circle(Circle { center: Vec3::new(self.u(t), self.u(y), 0.0), radius: self.u(0.018) });
+            self.lista.push((k, None));
+        }
+        let topo = y + r;
+        self.linha([x + r, topo], [x + r, topo + 0.04]);
+        self.linha([x + r - 0.025, topo + 0.04], [x + r + 0.025, topo + 0.04]);
     }
 
     /// Um nó circular na barra.
@@ -98,19 +103,31 @@ impl Pecas {
         self.lista.push((crate::biblioteca::disco(cx, cy, r), None));
     }
 
-    /// Os traços de fiação na linha, centrados em `x`: fases em vermelho, neutro em azul e terra em verde.
+    /// As marcas de fiação na linha, centradas em `x`: os mesmos blocos e a mesma camada das tags da prancha.
     fn marcas(&mut self, x: f64, y: f64, fases: u8, neutro: bool, terra: bool) {
-        let mut cores: Vec<u8> = vec![COR_FASE; usize::from(fases)];
+        use crate::fiacao::TipoCondutor as T;
+        let mut tipos: Vec<T> = vec![T::Fase; usize::from(fases)];
         if neutro {
-            cores.push(COR_NEUTRO);
+            tipos.push(T::Neutro);
         }
         if terra {
-            cores.push(COR_TERRA);
+            tipos.push(T::Protecao);
         }
-        let inicio = x - 0.03 * cores.len().saturating_sub(1) as f64;
-        for (i, cor) in cores.iter().enumerate() {
-            let xi = inicio + 0.06 * i as f64;
-            self.linha([xi - 0.02, y - 0.07], [xi + 0.02, y + 0.07], Some(*cor));
+        let passo = 0.04;
+        let inicio = x - passo * tipos.len().saturating_sub(1) as f64 / 2.0;
+        for (i, tipo) in tipos.iter().enumerate() {
+            let k = EntityKind::Insert(Insert {
+                block: tipo.bloco().into(),
+                insert: Vec3::new(self.u(inicio + passo * i as f64), self.u(y), 0.0),
+                scale: Vec3::new(1.0, 1.0, 1.0),
+                rotation: 0.0,
+                attribs: Vec::new(),
+                cols: 1,
+                rows: 1,
+                col_spacing: 0.0,
+                row_spacing: 0.0,
+            });
+            self.lista.push((k, Some(crate::fiacao::CAMADA)));
         }
     }
 }
@@ -130,10 +147,10 @@ struct Ramal<'a> {
 
 fn desenhar_ramal(p: &mut Pecas, ramal: &Ramal, inicio: f64, largura_caixa: f64) {
     let y = ramal.y;
-    p.linha([inicio, y], [DISJUNTOR_X, y], None);
+    p.linha([inicio, y], [DISJUNTOR_X, y]);
     p.no(inicio, y);
     p.disjuntor(DISJUNTOR_X, y, DISJUNTOR_LARGURA);
-    p.linha([DISJUNTOR_X + DISJUNTOR_LARGURA, y], [CAIXA_X, y], None);
+    p.linha([DISJUNTOR_X + DISJUNTOR_LARGURA, y], [CAIXA_X, y]);
     let meio_disjuntor = DISJUNTOR_X + DISJUNTOR_LARGURA / 2.0;
     match ramal.linha {
         Some(l) => {
@@ -154,7 +171,7 @@ fn desenhar_ramal(p: &mut Pecas, ramal: &Ramal, inicio: f64, largura_caixa: f64)
 }
 
 /// O conteúdo do bloco, com o canto superior esquerdo na origem, em unidades do desenho.
-fn pecas(r: &ResumoQuadro, alimentado_por: &str, m: f64) -> Vec<(EntityKind, Option<u8>)> {
+fn pecas(r: &ResumoQuadro, alimentado_por: &str, m: f64) -> Vec<(EntityKind, Option<&'static str>)> {
     let mut p = Pecas { lista: Vec::new(), m };
     p.texto(&format!("PAINEL: {}", r.tag), [0.0, -0.08], ALTURA * 1.5, HAlign::Left);
     p.texto(&format!("POT. INSTALADA: {} VA", br(r.demanda.instalada.round())), [0.0, -0.30], ALTURA, HAlign::Left);
@@ -196,18 +213,18 @@ fn pecas(r: &ResumoQuadro, alimentado_por: &str, m: f64) -> Vec<(EntityKind, Opt
     let topo = nos.iter().copied().fold(-1.15, f64::max);
     let fundo = nos.iter().copied().fold(-1.15, f64::min);
     let entrada = (topo + fundo) / 2.0;
-    p.linha([BARRA, topo], [BARRA, fundo], None);
+    p.linha([BARRA, topo], [BARRA, fundo]);
 
     // A entrada: o alimentador com fase, neutro e terra, e o disjuntor geral até a barra.
     let geral_x = 1.15;
     let neutro = r.config.sistema != Some(crate::quadro::SistemaQuadro::BifasicoSemNeutro);
-    p.linha([0.0, entrada], [geral_x, entrada], None);
+    p.linha([0.0, entrada], [geral_x, entrada]);
     p.marcas(0.45, entrada, r.fases_quadro.clamp(1, 3), neutro, true);
     let a = &r.alimentador;
     p.texto(&a.secao.map_or("#-".to_string(), |s| format!("#{}", br(s))), [0.45, entrada - 0.18], ALTURA * 0.8, HAlign::Center);
     p.disjuntor(geral_x, entrada, 0.26);
     p.texto(&format!("In: {} A", a.disjuntor.map_or("-".to_string(), br)), [geral_x + 0.13, entrada + 0.24], ALTURA * 0.8, HAlign::Center);
-    p.linha([geral_x + 0.26, entrada], [BARRA, entrada], None);
+    p.linha([geral_x + 0.26, entrada], [BARRA, entrada]);
     p.no(BARRA, entrada);
 
     // Os grupos de DR: o módulo e a sub-barra de onde saem os circuitos dele.
@@ -215,14 +232,14 @@ fn pecas(r: &ResumoQuadro, alimentado_por: &str, m: f64) -> Vec<(EntityKind, Opt
         let Some(g) = grupos.get(*i) else { continue };
         let meio = (y0 + y1) / 2.0;
         p.no(BARRA, meio);
-        p.linha([BARRA, meio], [DR_X, meio], None);
+        p.linha([BARRA, meio], [DR_X, meio]);
         p.retangulo(DR_X, meio - 0.12, DR_X + DR_LARGURA, meio + 0.12);
         p.texto("DR", [DR_X + DR_LARGURA / 2.0, meio], ALTURA, HAlign::Center);
-        p.linha([DR_X + DR_LARGURA, meio], [SUB_BARRA, meio], None);
+        p.linha([DR_X + DR_LARGURA, meio], [SUB_BARRA, meio]);
         let corrente = g.dr.map_or("-".to_string(), br);
         p.texto(&format!("IN: {corrente}A / 30mA"), [DR_X + DR_LARGURA / 2.0, meio + 0.20], ALTURA * 0.7, HAlign::Center);
         p.texto(&g.nome, [DR_X + DR_LARGURA / 2.0, meio - 0.20], ALTURA * 0.7, HAlign::Center);
-        p.linha([SUB_BARRA, *y0], [SUB_BARRA, *y1], None);
+        p.linha([SUB_BARRA, *y0], [SUB_BARRA, *y1]);
         p.no(SUB_BARRA, meio);
     }
     for ramal in &ramais_grupo {
@@ -247,10 +264,11 @@ fn gravar_bloco(doc: &mut Drawing, r: &ResumoQuadro, analise: &Analise) {
     let m = if r.metros_por_unidade > 0.0 { r.metros_por_unidade } else { 1.0 };
     let nome = nome_do_bloco(r.quadro);
     let mut b = Block::new(&nome);
-    for (k, cor) in pecas(r, &quem_alimenta(r, analise), m) {
+    crate::fiacao::garantir_blocos(doc, m);
+    for (k, camada) in pecas(r, &quem_alimenta(r, analise), m) {
         let mut e = Entity::new(doc.new_handle(), k);
-        if let Some(c) = cor {
-            e.common.color = Color::Index(c);
+        if let Some(c) = camada {
+            e.common.layer = c.into();
         }
         b.entities.push(e);
     }

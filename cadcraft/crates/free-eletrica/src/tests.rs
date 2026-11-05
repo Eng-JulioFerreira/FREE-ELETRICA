@@ -1098,7 +1098,7 @@ fn eletroduto_em_arco_entra_no_roteamento_e_na_fiacao() {
     let qd = inserir(&mut d, "QD", 0.0, 0.0, &[("TIPO_PONTO", "QUADRO"), ("ALTURA", "1,50")]);
     let tug = inserir(&mut d, "TUG", 4.0, 0.0, &[("TIPO_PONTO", "TUG"), ("POTENCIA", "600VA"), ("CIRCUITO", "1"), ("ALTURA", "0,30")]);
     let h = eletroduto::inserir(&mut d, qd, tug, rota::Instalacao::Teto, 0.15).unwrap();
-    assert!(matches!(&d.model.get(h).unwrap().kind, EntityKind::Spline(_)));
+    assert!(matches!(&d.model.get(h).unwrap().kind, EntityKind::Arc(_)), "arco é ARC, nunca SPLINE");
     assert_eq!(d.model.get(h).unwrap().common.layer, eletroduto::CAMADA_TETO);
     // Comprimento: o arco (2φR = 4,237 m) mais a descida do quadro (1,30) e da tomada (2,50).
     let r = rotear_quadro(&d, &analisar(&d), &Setup::default(), qd).unwrap();
@@ -1111,7 +1111,8 @@ fn eletroduto_em_arco_entra_no_roteamento_e_na_fiacao() {
     let f = fiacao::calcular(&d, &analisar(&d), &Setup::default(), qd).unwrap();
     assert_eq!(f.trechos.len(), 1, "{:?}", f.trechos);
     let t = &f.trechos[0];
-    assert!(perto(t.meio[0], 2.0, 0.01) && perto(t.meio[1], 0.6, 0.01) && perto(t.angulo, 0.0, 0.05), "{t:?}");
+    // O ARC corre no sentido anti-horário: o ângulo no meio é o da corda, num sentido ou no outro.
+    assert!(perto(t.meio[0], 2.0, 0.01) && perto(t.meio[1], 0.6, 0.01) && perto(t.angulo.sin(), 0.0, 0.05), "{t:?}");
     // Com flecha zero o eletroduto é uma linha.
     let mut d2 = metros();
     let a = inserir(&mut d2, "QD", 0.0, 0.0, &[("TIPO_PONTO", "QUADRO")]);
@@ -1370,9 +1371,8 @@ fn bootstrap_poe_camadas_e_blocos_uma_vez_e_respeita_os_do_projetista() {
     assert_eq!(tipo("CX-PASSAGEM"), Some(TipoPonto::Caixa));
     assert_eq!(tipo("QDC"), Some(TipoPonto::Quadro));
     for (n, esperado) in [
+        // Cada interruptor de fábrica é um módulo: duas teclas são dois blocos empilhados.
         ("INT-SIM", ponto::TipoInterruptor::Simples1),
-        ("INT-2S", ponto::TipoInterruptor::Simples2),
-        ("INT-3S", ponto::TipoInterruptor::Simples3),
         ("INT-PAR", ponto::TipoInterruptor::Paralelo),
         ("INT-INT", ponto::TipoInterruptor::Intermediario),
     ] {
@@ -2395,14 +2395,14 @@ fn tracados_de_eletroduto_e_comprimento_real() {
     }
     // Arco: mais comprido que a corda.
     let (h, l2d, _) = inserir(&mut d, Percurso { tracado: T::Arco, flecha: 0.2, ..Percurso::default() });
-    assert!(matches!(d.model.get(h).unwrap().kind, EntityKind::Spline(_)));
+    assert!(!matches!(d.model.get(h).unwrap().kind, EntityKind::Spline(_)), "nunca SPLINE");
     assert!(l2d > 5.0, "{l2d}");
     // Desvios: passa por eles em qualquer traçado, sem perder as pontas.
     let desvios = vec![[2.0, 2.0]];
     let (_, l2d, _) = inserir(&mut d, Percurso { tracado: T::Reto, desvios: desvios.clone(), ..Percurso::default() });
     assert!(perto(l2d, 8.0_f64.sqrt() + 5.0_f64.sqrt(), 1e-9), "{l2d}");
     let (h, _, _) = inserir(&mut d, Percurso { tracado: T::Arco, desvios: desvios.clone(), ..Percurso::default() });
-    assert!(matches!(d.model.get(h).unwrap().kind, EntityKind::Spline(_)));
+    assert!(!matches!(d.model.get(h).unwrap().kind, EntityKind::Spline(_)), "nunca SPLINE");
     let (_, l2d, _) = inserir(&mut d, Percurso { tracado: T::Angulo45, desvios, ..Percurso::default() });
     assert!(perto(l2d, 1.0 + 3.0 * 2.0_f64.sqrt(), 1e-9), "{l2d}");
     assert!(rede_de(&d).soltos.is_empty(), "todos ligam os dois blocos");
@@ -2719,48 +2719,25 @@ fn familias_de_fabrica_de_tomadas_e_interruptores() {
     let setup = Setup::default();
     let mut d = metros();
     assert!(biblioteca::garantir_base(&mut d, &setup, 1.0));
-    let geometria = |d: &Drawing, n: &str| -> (usize, usize, usize, usize) {
-        let e = &d.blocks[n].entities;
-        let conta = |f: &dyn Fn(&EntityKind) -> bool| e.iter().filter(|x| f(&x.kind)).count();
-        (
-            conta(&|k| matches!(k, EntityKind::Circle(_))),
-            conta(&|k| matches!(k, EntityKind::Hatch(_))),
-            conta(&|k| matches!(k, EntityKind::Solid(_))),
-            conta(&|k| matches!(k, EntityKind::Line(_))),
-        )
-    };
-    // Interruptores: 3 funções em 1, 2 e 3 seções, no ponto médio e no ponto alto.
-    let mut alturas = Vec::new();
-    for (corpo, funcao) in [("SIM", FuncaoTecla::Simples), ("PAR", FuncaoTecla::Paralelo), ("INT", FuncaoTecla::Intermediario)] {
-        for secoes in 1u8..=3 {
-            let nome = match (corpo, secoes) {
-                ("SIM", 1) => "INT-SIM".to_string(),
-                ("SIM", n) => format!("INT-{n}S"),
-                (c, 1) => format!("INT-{c}"),
-                (c, n) => format!("INT-{c}-{n}S"),
-            };
-            for (nome, alto) in [(nome.clone(), false), (format!("{nome}-ALTO"), true)] {
-                assert!(BLOCOS_BASE.contains(&nome.as_str()), "{nome}");
-                assert_eq!(interruptor_base(&nome), Some(biblioteca::InterruptorBase { funcao, secoes, alto }));
-                let (circulos, hachuras, _, _) = geometria(&d, &nome);
-                assert_eq!(circulos, usize::from(secoes), "{nome}");
-                assert_eq!(hachuras, if funcao == FuncaoTecla::Simples { 0 } else { usize::from(secoes) }, "{nome}");
-                let h = biblioteca::inserir_ponto(&mut d, &nome, [0.0, 0.0], 0.0, &[], &setup).unwrap();
-                let p = ponto::ler_ponto(&d, h).unwrap();
-                assert_eq!(p.tipo_interruptor.unwrap().teclas(), usize::from(secoes), "{nome}");
-                alturas.push(rota::altura(&p, &setup));
-            }
-        }
+    let contar = |d: &Drawing, n: &str, f: &dyn Fn(&EntityKind) -> bool| d.blocks[n].entities.iter().filter(|x| f(&x.kind)).count();
+    // Interruptores de um módulo: vazio é simples, cheio é paralelo, meio cheio é intermediário; médio e alto.
+    for (nome, funcao, h) in [
+        ("INT-SIM", FuncaoTecla::Simples, 1.20),
+        ("INT-PAR", FuncaoTecla::Paralelo, 1.20),
+        ("INT-INT", FuncaoTecla::Intermediario, 1.20),
+        ("INT-SIM-ALTO", FuncaoTecla::Simples, 2.10),
+        ("INT-PAR-ALTO", FuncaoTecla::Paralelo, 2.10),
+        ("INT-INT-ALTO", FuncaoTecla::Intermediario, 2.10),
+    ] {
+        assert!(BLOCOS_BASE.contains(&nome));
+        assert_eq!(interruptor_base(nome).unwrap().funcao, funcao);
+        assert_eq!(contar(&d, nome, &|k| matches!(k, EntityKind::Circle(_))), 1, "{nome}");
+        assert_eq!(contar(&d, nome, &|k| matches!(k, EntityKind::Hatch(_))), usize::from(funcao != FuncaoTecla::Simples), "{nome}");
+        let i = biblioteca::inserir_ponto(&mut d, nome, [0.0, 0.0], 0.0, &[], &setup).unwrap();
+        let p = ponto::ler_ponto(&d, i).unwrap();
+        assert_eq!(p.tipo_interruptor.unwrap().teclas(), 1, "{nome}");
+        assert!(perto(rota::altura(&p, &setup), h, 1e-9), "{nome}");
     }
-    assert_eq!(alturas.iter().filter(|a| perto(**a, 1.20, 1e-9)).count(), 9);
-    assert_eq!(alturas.iter().filter(|a| perto(**a, 2.10, 1e-9)).count(), 9);
-    // Círculos tangentes, empilhados na direção da haste.
-    let centros: Vec<(f64, f64)> = d.blocks["INT-3S"]
-        .entities
-        .iter()
-        .filter_map(|e| if let EntityKind::Circle(c) = &e.kind { Some((c.center.y, c.radius)) } else { None })
-        .collect();
-    assert!(perto(centros[1].0 - centros[0].0, 2.0 * centros[0].1, 1e-9) && perto(centros[2].0 - centros[1].0, 2.0 * centros[0].1, 1e-9));
     // Meia hachura: a metade esquerda do círculo; hachura cheia: o círculo todo.
     let laco = |d: &Drawing, n: &str| -> Vec<(f64, f64, f64)> {
         d.blocks[n]
@@ -2772,40 +2749,29 @@ fn familias_de_fabrica_de_tomadas_e_interruptores() {
             .unwrap()
     };
     let meio = laco(&d, "INT-INT");
-    assert_eq!(meio.len(), 2);
-    assert!(perto(meio[0].0, 0.0, 1e-9) && perto(meio[1].0, 0.0, 1e-9) && meio[0].2 == -1.0 && meio[1].2 == 0.0, "{meio:?}");
-    let cheio = laco(&d, "INT-PAR");
-    assert!(cheio[0].2 == 1.0 && cheio[1].2 == 1.0, "{cheio:?}");
-    // Tomadas: simples e dupla em 3 alturas, sem hachura, com meia e com ela cheia.
-    for (nome, dupla, nivel, h) in [
-        ("TOM-SIM-BAIXA", false, Nivel::Baixo, 0.30),
-        ("TOM-DUP-BAIXA", true, Nivel::Baixo, 0.30),
-        ("TOM-SIM-MEDIA", false, Nivel::Medio, 1.20),
-        ("TOM-DUP-MEDIA", true, Nivel::Medio, 1.20),
-        ("TOM-SIM-ALTA", false, Nivel::Alto, 2.10),
-        ("TOM-DUP-ALTA", true, Nivel::Alto, 2.10),
-    ] {
-        assert_eq!(tomada_base(nome), Some((dupla, nivel)));
-        let triangulos = if dupla { 2 } else { 1 };
-        let (_, _, cheios, linhas) = geometria(&d, nome);
-        assert_eq!(cheios, if nivel == Nivel::Baixo { 0 } else { triangulos }, "{nome}");
-        assert_eq!(linhas, 5 + 3 * triangulos, "{nome}");
+    assert!(meio.len() == 2 && perto(meio[0].0, 0.0, 1e-9) && meio[0].2 == -1.0 && meio[1].2 == 0.0, "{meio:?}");
+    assert!(laco(&d, "INT-PAR").iter().all(|v| v.2 == 1.0));
+    // Tomadas de um módulo em 3 alturas: sem hachura, meia e cheia.
+    for (nome, nivel, h) in [("TOM-SIM-BAIXA", Nivel::Baixo, 0.30), ("TOM-SIM-MEDIA", Nivel::Medio, 1.20), ("TOM-SIM-ALTA", Nivel::Alto, 2.10)] {
+        assert_eq!(tomada_base(nome), Some((false, nivel)));
+        assert_eq!(contar(&d, nome, &|k| matches!(k, EntityKind::Solid(_))), usize::from(nivel != Nivel::Baixo), "{nome}");
         let i = biblioteca::inserir_ponto(&mut d, nome, [1.0, 1.0], 0.0, &[], &setup).unwrap();
-        let p = ponto::ler_ponto(&d, i).unwrap();
-        assert_eq!(p.tipo, TipoPonto::Tomada);
-        assert!(perto(rota::altura(&p, &setup), h, 1e-9), "{nome}");
+        assert!(perto(rota::altura(&ponto::ler_ponto(&d, i).unwrap(), &setup), h, 1e-9), "{nome}");
     }
-    // A meia hachura do triângulo é a metade: a área vale metade do triângulo cheio.
     let solido = |n: &str| d.blocks[n].entities.iter().find_map(|e| if let EntityKind::Solid(s) = &e.kind { Some(s.corners) } else { None }).unwrap();
     let area = |c: [Vec3; 4]| ((c[1].x - c[0].x) * (c[2].y - c[0].y) - (c[2].x - c[0].x) * (c[1].y - c[0].y)).abs() / 2.0;
     assert!(perto(area(solido("TOM-SIM-MEDIA")) * 2.0, area(solido("TOM-SIM-ALTA")), 1e-9));
-    // Toda família de fábrica tem os dois textos.
+    // Nenhum bloco de fábrica é monolítico: duplas e várias teclas saem da lista.
+    assert!(!BLOCOS_BASE.iter().any(|n| n.contains("DUP") || n.contains("-2S") || n.contains("-3S")));
+    // A caixa 4x2 e a haste vêm marcadas nos pontos de parede.
+    let marcadas =
+        |n: &str| d.blocks[n].entities.iter().filter(|e| xdata::ler(&e.common.xdata).iter().any(|(k, _)| k == biblioteca::CHAVE_CAIXA_2D)).count();
+    assert_eq!((marcadas("TOM-SIM-BAIXA"), marcadas("INT-PAR"), marcadas("RJ45"), marcadas("ILU-OCT")), (5, 5, 5, 0));
     for n in BLOCOS_BASE {
         let f = familia::ler(&d, n).unwrap();
         assert!(!f.legenda.is_empty() && !f.desc_material.is_empty(), "{n}");
     }
     assert_eq!(familia::ler(&d, "TOM-SIM-BAIXA").unwrap().legenda, "Tomada baixa 2P+T 10A - h=0,30m");
-    assert_eq!(familia::ler(&d, "TOM-SIM-BAIXA").unwrap().desc_material, "Conjunto 1 Tomada 2P+T 10A + Placa 4x2 + Caixa 4x2");
     assert!(!biblioteca::falta_base(&d));
 }
 
@@ -2838,7 +2804,7 @@ fn bloco_base_antigo_e_trocado_e_o_redesenhado_fica() {
     let circulo = EntityKind::Circle(cadcraft_doc::Circle { center: Vec3::new(0.0, 0.0, 0.0), radius: 0.3 });
     meu.entities.push(cadcraft_doc::Entity::new(Handle(910_000), circulo));
     d.blocks.insert("INT-SIM".into(), std::sync::Arc::new(meu));
-    d.blocks.remove("TOM-DUP-ALTA");
+    d.blocks.remove("TOM-SIM-ALTA");
     // Uma família antiga, sem os textos, os ganha; a escrita à mão fica.
     let mut f = familia::ler(&d, "QDC").unwrap();
     f.legenda.clear();
@@ -2850,7 +2816,7 @@ fn bloco_base_antigo_e_trocado_e_o_redesenhado_fica() {
     assert!(biblioteca::garantir_base(&mut d, &setup, 1.0));
     assert!(d.blocks["INT-PAR"].entities.iter().any(|e| matches!(e.kind, EntityKind::Hatch(_))), "o antigo vira o novo");
     assert_eq!(d.blocks["INT-SIM"].entities.len(), 1, "o redesenhado fica");
-    assert!(d.blocks.contains_key("TOM-DUP-ALTA"));
+    assert!(d.blocks.contains_key("TOM-SIM-ALTA"));
     assert!(!familia::ler(&d, "QDC").unwrap().legenda.is_empty());
     assert_eq!(familia::ler(&d, "QDG").unwrap().legenda, "Meu QDG");
 }
@@ -2912,21 +2878,21 @@ fn excluir_blocos_eletrodutos_e_tabelas_de_fabrica() {
     let setup = Setup::default();
     let mut d = metros();
     biblioteca::garantir_base(&mut d, &setup, 1.0);
-    let a = biblioteca::inserir_ponto(&mut d, "TOM-DUP-ALTA", [0.0, 0.0], 0.0, &[], &setup).unwrap();
+    let a = biblioteca::inserir_ponto(&mut d, "TOM-SIM-ALTA", [0.0, 0.0], 0.0, &[], &setup).unwrap();
     // Com inserção, só pedindo; o de fábrica não volta sozinho.
-    assert!(biblioteca::excluir_bloco(&mut d, "TOM-DUP-ALTA", false).is_err());
+    assert!(biblioteca::excluir_bloco(&mut d, "TOM-SIM-ALTA", false).is_err());
     assert!(d.model.get(a).is_some());
-    assert_eq!(biblioteca::excluir_bloco(&mut d, "TOM-DUP-ALTA", true).unwrap(), 1);
-    assert!(d.model.get(a).is_none() && !d.blocks.contains_key("TOM-DUP-ALTA"));
-    assert!(familia::ler(&d, "TOM-DUP-ALTA").is_none());
+    assert_eq!(biblioteca::excluir_bloco(&mut d, "TOM-SIM-ALTA", true).unwrap(), 1);
+    assert!(d.model.get(a).is_none() && !d.blocks.contains_key("TOM-SIM-ALTA"));
+    assert!(familia::ler(&d, "TOM-SIM-ALTA").is_none());
     assert!(!biblioteca::falta_base(&d), "excluído não conta como faltando");
     biblioteca::garantir_base(&mut d, &setup, 1.0);
-    assert!(!d.blocks.contains_key("TOM-DUP-ALTA"));
+    assert!(!d.blocks.contains_key("TOM-SIM-ALTA"));
     assert!(biblioteca::excluir_bloco(&mut d, "NADA", true).is_err());
     biblioteca::restaurar_base(&mut d);
     assert!(biblioteca::falta_base(&d));
     biblioteca::garantir_base(&mut d, &setup, 1.0);
-    assert!(d.blocks.contains_key("TOM-DUP-ALTA"));
+    assert!(d.blocks.contains_key("TOM-SIM-ALTA"));
     // Sem a caixa de fábrica, dividir um trecho a traz de volta.
     biblioteca::excluir_bloco(&mut d, biblioteca::BLOCO_CAIXA, true).unwrap();
     let q = biblioteca::inserir_ponto(&mut d, "QDG", [0.0, 0.0], 0.0, &[], &setup).unwrap();
@@ -3219,8 +3185,14 @@ fn diagrama_unifilar_com_entrada_barra_dr_e_reservas() {
     assert!(reservas.iter().all(|r| r.2 < secao.2), "as reservas vêm no fim");
     assert!(reservas.iter().any(|r| r.0 == "4 - RESERVA"), "{reservas:?}");
     // Fase vermelha, neutro azul e terra verde, nos traços.
-    let cor = |c: u8| d.blocks[&nome].entities.iter().filter(|e| e.common.color == Color::Index(c)).count();
-    assert!(cor(1) >= 4 && cor(5) >= 1 && cor(3) >= 1, "{} {} {}", cor(1), cor(5), cor(3));
+    // As marcas são as mesmas das tags da prancha, na camada delas, sem cor avulsa.
+    let marcas: Vec<_> =
+        d.blocks[&nome].entities.iter().filter(|e| matches!(&e.kind, EntityKind::Insert(i) if i.block.starts_with("FIACAO-"))).collect();
+    assert!(marcas.len() >= 6 && marcas.iter().all(|e| e.common.layer == fiacao::CAMADA), "{}", marcas.len());
+    assert!(d.blocks[&nome].entities.iter().all(|e| e.common.color == Color::ByLayer || matches!(e.common.color, Color::ByBlock)));
+    // O disjuntor da NBR: dois terminais e o traço em T no topo, além do arco.
+    let circulos = d.blocks[&nome].entities.iter().filter(|e| matches!(e.kind, EntityKind::Circle(_))).count();
+    assert!(circulos >= 2 * (3 + 2 + 1), "{circulos}");
     // O disjuntor é curvo; a barra tem nós; a caixa fica alinhada à direita.
     let contar = |f: &dyn Fn(&EntityKind) -> bool| d.blocks[&nome].entities.iter().filter(|e| f(&e.kind)).count();
     assert_eq!(contar(&|k| matches!(k, EntityKind::Arc(_))), 3 + 2 + 1, "circuitos, reservas e o geral");
@@ -3241,4 +3213,123 @@ fn textos_do_bloco(d: &Drawing, nome: &str) -> Vec<(String, f64, f64, f64, cadcr
         .iter()
         .filter_map(|e| if let EntityKind::Text(t) = &e.kind { Some((t.value.clone(), t.insert.x, t.insert.y, t.height, t.halign)) } else { None })
         .collect()
+}
+
+#[test]
+fn eletroduto_e_line_arc_ou_lwpolyline_e_nao_mexe_nos_outros() {
+    use eletroduto::{Percurso, Tracado};
+    let setup = Setup::default();
+    let mut d = metros();
+    let q = qd(&mut d, 0.0, 0.0);
+    let a = tug(&mut d, 4.0, 0.0, "1");
+    let b = tug(&mut d, 4.0, 3.0, "1");
+    let tipo = rota::TipoEletroduto::PvcRigido;
+    let arco = eletroduto::inserir_percurso(
+        &mut d,
+        q,
+        a,
+        rota::Instalacao::Teto,
+        &Percurso { tracado: Tracado::Arco, flecha: 0.2, ..Percurso::default() },
+        tipo,
+    )
+    .unwrap();
+    let EntityKind::Arc(c) = d.model.get(arco).unwrap().kind.clone() else { panic!("ARC") };
+    // As pontas do arco caem nos blocos, e a flecha positiva curva para a esquerda (y > 0 aqui).
+    let ponta = |ang: f64| [c.center.x + c.radius * ang.cos(), c.center.y + c.radius * ang.sin()];
+    let (p0, p1) = (ponta(c.start), ponta(c.end));
+    let encosta = |p: [f64; 2], x: f64, y: f64| perto(p[0], x, 1e-9) && perto(p[1], y, 1e-9);
+    assert!((encosta(p0, 0.0, 0.0) && encosta(p1, 4.0, 0.0)) || (encosta(p1, 0.0, 0.0) && encosta(p0, 4.0, 0.0)), "{p0:?} {p1:?}");
+    let meio = ponta(c.start + (c.end - c.start).rem_euclid(std::f64::consts::TAU) / 2.0);
+    assert!(perto(meio[1], 0.8, 1e-9) && perto(meio[0], 2.0, 1e-9), "{meio:?}");
+    // Um trecho reto saindo do mesmo bloco onde o arco chega: o arco fica idêntico.
+    let antes = d.model.get(arco).unwrap().kind.clone();
+    let reto = eletroduto::inserir_percurso(&mut d, a, b, rota::Instalacao::Teto, &Percurso { tracado: Tracado::Reto, ..Percurso::default() }, tipo)
+        .unwrap();
+    assert!(matches!(d.model.get(reto).unwrap().kind, EntityKind::Line(_)));
+    assert_eq!(d.model.get(arco).unwrap().kind, antes);
+    let cota = eletroduto::encaixar(&mut d, &setup, 1.0, eletroduto::TOLERANCIA_EM_LINHA, None, None).unwrap();
+    assert_eq!(cota, 0);
+    assert_eq!(d.model.get(arco).unwrap().kind, antes);
+    let rede = rede_de(&d);
+    assert_eq!((rede.arestas.len(), rede.soltos.len()), (2, 0));
+    // 45°: só segmentos em múltiplos de 45°.
+    let p = eletroduto::inserir_percurso(&mut d, q, b, rota::Instalacao::Teto, &Percurso { tracado: Tracado::Angulo45, ..Percurso::default() }, tipo)
+        .unwrap();
+    let EntityKind::LwPolyline(pl) = d.model.get(p).unwrap().kind.clone() else { panic!("LWPOLYLINE") };
+    for w in pl.vertices.windows(2) {
+        let ang = (w[1].p.y - w[0].p.y).atan2(w[1].p.x - w[0].p.x).to_degrees();
+        assert!(perto((ang / 45.0).round() * 45.0, ang, 1e-9), "{ang}");
+    }
+    // Arco com desvios: arcos por pedaço numa LWPOLYLINE, nunca SPLINE.
+    let x = tug(&mut d, 8.0, 0.0, "1");
+    let com = Percurso { tracado: Tracado::Arco, flecha: 0.15, desvios: vec![[6.0, 1.0]], ..Percurso::default() };
+    let h = eletroduto::inserir_percurso(&mut d, a, x, rota::Instalacao::Teto, &com, tipo).unwrap();
+    let EntityKind::LwPolyline(pl) = d.model.get(h).unwrap().kind.clone() else { panic!("LWPOLYLINE") };
+    assert!(pl.vertices.len() == 3 && perto(pl.vertices[0].bulge, -0.3, 1e-9));
+    // Dividir um arco no meio deixa dois ARC no mesmo círculo.
+    eletroduto::dividir(&mut d, &setup, arco, meio, 1.0).unwrap();
+    let arcos: Vec<_> = d.model.iter().filter_map(|e| if let EntityKind::Arc(a) = &e.kind { Some(a.clone()) } else { None }).collect();
+    assert_eq!(arcos.len(), 2);
+    assert!(arcos.iter().all(|x| perto(x.radius, c.radius, 1e-9) && perto(x.center.x, c.center.x, 1e-9)));
+}
+
+#[test]
+fn modulos_empilhados_numa_caixa() {
+    let setup = Setup::default();
+    let mut d = metros();
+    biblioteca::garantir_base(&mut d, &setup, 1.0);
+    let q = biblioteca::inserir_ponto(&mut d, "QDG", [0.0, 0.0], 0.0, &[], &setup).unwrap();
+    let base = biblioteca::inserir_ponto(&mut d, "TOM-SIM-BAIXA", [3.0, 0.0], 0.0, &[("CIRCUITO".into(), "1".into())], &setup).unwrap();
+    let segunda = biblioteca::inserir_ponto(&mut d, "TOM-SIM-BAIXA", [3.02, 0.0], 0.0, &[("CIRCUITO".into(), "2".into())], &setup).unwrap();
+    // Longe, não empilha; perto, empilha na caixa da base.
+    let longe = biblioteca::inserir_ponto(&mut d, "TOM-SIM-BAIXA", [6.0, 0.0], 0.0, &[], &setup).unwrap();
+    assert_eq!(biblioteca::empilhar(&mut d, longe, None, 1.0).unwrap(), None);
+    assert_eq!(biblioteca::empilhar(&mut d, segunda, None, 1.0).unwrap(), Some(base));
+    let ins = |d: &Drawing, h: Handle| match &d.model.get(h).unwrap().kind {
+        EntityKind::Insert(i) => i.clone(),
+        _ => panic!("inserção"),
+    };
+    // Na planta: o módulo vai para o bloco sem a caixa e encosta no topo do triângulo da base.
+    let i2 = ins(&d, segunda);
+    assert_eq!(i2.block, format!("TOM-SIM-BAIXA{}", biblioteca::SUFIXO_EMPILHADO));
+    assert!(perto(i2.insert.x, 3.0, 1e-9) && perto(i2.insert.y, 0.205, 1e-9), "{:?}", i2.insert);
+    let variante = &d.blocks[&i2.block];
+    assert!(!variante.entities.iter().any(|e| xdata::ler(&e.common.xdata).iter().any(|(k, _)| k == biblioteca::CHAVE_CAIXA_2D)), "sem a caixa 4x2");
+    let ys: Vec<f64> =
+        variante.entities.iter().filter_map(|e| if let EntityKind::Line(l) = &e.kind { Some(l.a.y.min(l.b.y)) } else { None }).collect();
+    assert!(perto(ys.iter().copied().fold(f64::MAX, f64::min), 0.0, 1e-9), "a base do símbolo na origem");
+    // O circuito do módulo foi junto e continua dele.
+    let p2 = ponto::ler_ponto(&d, segunda).unwrap();
+    assert_eq!((p2.circuito.as_deref(), p2.host), (Some("2"), Some(base)));
+    let atributo = i2.attribs.iter().find(|a| a.tag == "CIRCUITO").unwrap();
+    assert!(atributo.text.insert.y > 0.205, "{:?}", atributo.text.insert);
+    // Um terceiro, interruptor médio, numa caixa girada: vai para cima dos dois.
+    let int = biblioteca::inserir_ponto(&mut d, "INT-SIM", [3.0, 0.03], 0.0, &[("CIRCUITO".into(), "1".into())], &setup).unwrap();
+    biblioteca::empilhar(&mut d, int, None, 1.0).unwrap();
+    let i3 = ins(&d, int);
+    assert!(perto(i3.insert.y, 0.205 + (0.205 - 0.0595), 1e-9), "{:?}", i3.insert);
+    // No grafo, o eletroduto da caixa base atende os empilhados.
+    eletroduto::inserir(&mut d, q, base, rota::Instalacao::Teto, 0.0).unwrap();
+    let rede = rede_de(&d);
+    assert_eq!(rede.no_de(segunda), rede.no_de(base));
+    assert_eq!(rede.nos.len(), 3, "o quadro, a base e a tomada longe");
+    let r = quadro::rotear(&d, &analisar(&d), &setup, q).unwrap();
+    assert!(
+        r.linhas.iter().all(|l| l.fora_da_rede == 0 || l.circuito.pontos.contains(&longe)),
+        "{:?}",
+        r.linhas.iter().map(|l| l.fora_da_rede).collect::<Vec<_>>()
+    );
+    // O clique no símbolo empilhado leva à caixa base.
+    assert_eq!(eletroduto::bloco_em(&d, &setup, [3.0, 0.25], 1.0), Some(base));
+    // Materiais: duas tomadas a 0,30 m são uma caixa; o interruptor a 1,20 m no mesmo lugar é outra.
+    let m = materiais::levantar(&d, &analisar(&d), &setup);
+    let caixas_4x2 = m.caixas.iter().find(|c| c.nome.starts_with("4x2")).map_or(0, |c| c.quantidade);
+    assert_eq!(caixas_4x2, 2 + 1, "a pilha (2 alturas) e a tomada longe");
+    // Legenda: o módulo empilhado conta como o bloco dele.
+    assert!(legenda::linhas(&analisar(&d)).iter().all(|(b, _)| !b.ends_with(biblioteca::SUFIXO_EMPILHADO)));
+    assert!(!biblioteca::blocos(&d).iter().any(|b| b.nome.ends_with(biblioteca::SUFIXO_EMPILHADO)));
+    // Explícito: empilhar na base; erros sem travar.
+    assert_eq!(biblioteca::empilhar(&mut d, longe, Some(segunda), 1.0).unwrap(), Some(base), "na base da pilha");
+    assert!(biblioteca::empilhar(&mut d, q, Some(q), 1.0).is_err());
+    assert!(biblioteca::empilhar(&mut d, base, Some(q), 1.0).is_err(), "a base de outros não sai");
 }

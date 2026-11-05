@@ -124,8 +124,20 @@ pub fn levantar(doc: &Drawing, analise: &Analise, setup: &Setup) -> Materiais {
 
     m.pontos = contar(analise.pontos.iter().map(|p| p.tipo.nome().to_string()));
     m.conjuntos = contar(analise.pontos.iter().filter_map(|p| p.desc_material.clone()));
-    m.caixas =
-        contar(analise.pontos.iter().filter_map(|p| p.caixa).filter(|c| *c != crate::familia::CaixaFisica::Nenhuma).map(|c| c.nome().to_string()));
+    // Pontos empilhados na mesma caixa da planta: uma caixa física por altura (uma tomada a 0,30 m e um
+    // interruptor a 1,20 m no mesmo lugar são duas caixas 4x2; duas tomadas a 0,30 m, uma só).
+    let mut caixas: Vec<String> = Vec::new();
+    let mut vistas: Vec<(cadcraft_doc::Handle, i64)> = Vec::new();
+    for p in &analise.pontos {
+        let Some(c) = p.caixa.filter(|c| *c != crate::familia::CaixaFisica::Nenhuma) else { continue };
+        let grupo = p.host.filter(|h| analise.ponto(*h).is_some()).unwrap_or(p.handle);
+        let altura = (crate::rota::altura(p, setup) * 100.0).round() as i64;
+        if !vistas.contains(&(grupo, altura)) {
+            vistas.push((grupo, altura));
+            caixas.push(c.nome().to_string());
+        }
+    }
+    m.caixas = contar(caixas.into_iter());
     m.pontos_sem_caixa = analise.pontos.iter().filter(|p| p.caixa.is_none()).count();
     m
 }

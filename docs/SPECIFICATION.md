@@ -33,8 +33,14 @@ Os pontos de registro no código do CADCraft estão em [arquitetura.md](arquitet
 - Cada ponta vale pelo handle gravado (`from_handle`, `to_handle`), se o bloco está no raio de captura; senão, pelo bloco
   mais perto no raio. Sem bloco, o eletroduto fica solto e é apontado.
 - Cruzamento em X e derivação em T sem bloco não conectam.
-- Um bloco no caminho de um eletroduto já é uma caixa: `eletroduto::encaixar` corta o trecho em `A -> bloco` e `bloco -> B`.
-  Vale a até 5 cm do traçado ao inserir, traçar, dimensionar, atualizar e ligar a inspeção; num bloco clicado, no raio de captura.
+- Cada trecho é uma entidade só: `LINE` no reto, `ARC` circular no arco (com desvios, arcos numa `LWPOLYLINE`) e `LWPOLYLINE`
+  no 45°. Nunca `SPLINE`. Inserir um trecho não divide nem altera nenhum outro.
+- Um bloco a até 5 cm do traçado de um eletroduto já é uma caixa: `eletroduto::encaixar` corta o trecho em `A -> bloco` e
+  `bloco -> B`, mantendo a geometria (um arco vira dois arcos do mesmo círculo). Vale ao inserir, traçar, dimensionar,
+  atualizar e ligar a inspeção. Clicar num bloco perto de um trecho não o corta.
+- Módulos empilhados: cada tomada e cada tecla é um bloco. Um ponto de parede inserido a até 10 cm de outro com caixa 4x2
+  (ou `eletrica.ponto.empilhar`) vai para o bloco `<nome>$EMP`, sem a caixa, encostado no topo do último símbolo, e grava
+  `host_point_handle`. No grafo ele fica na caixa base. Nos materiais, a pilha conta uma caixa por altura.
 - Comprimento da aresta = comprimento do traçado em planta + |cota - Z de A| + |cota - Z de B|. A cota é o pé-direito no
   teto, 0 no piso e o Z do bloco A na parede.
 - Sem caminho até o quadro, o comprimento é estimado por Manhattan 3D e marcado com `~`.

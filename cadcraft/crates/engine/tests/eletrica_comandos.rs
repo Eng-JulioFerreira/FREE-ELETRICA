@@ -228,7 +228,7 @@ fn eletroduto_em_arco_por_comandos() {
     // JSON: do quadro à luz, no teto; e da luz à tomada por coordenadas, no piso, reto.
     let r = s.execute("eleeletroduto", &json!({ "de": qd.hex(), "para": luz.hex() })).unwrap();
     let h = Handle::parse_hex(r["eletroduto"].as_str().unwrap()).unwrap();
-    assert!(matches!(s.doc().unwrap().model.get(h).unwrap().kind, EntityKind::Spline(_)));
+    assert!(matches!(s.doc().unwrap().model.get(h).unwrap().kind, EntityKind::Arc(_)), "arco é ARC");
     let r = s.execute("eleeletroduto", &json!({ "de": [3.0, 0.0], "para": [6.0, 0.05], "instalacao": "FLOOR", "flecha": 0 })).unwrap();
     assert_eq!((r["de"].as_str(), r["para"].as_str()), (Some(luz.hex().as_str()), Some(tug.hex().as_str())));
     // Pontas que não são blocos elétricos, ou o mesmo bloco, ou parâmetros hostis: erro.
@@ -523,7 +523,7 @@ fn tracados_dimensionamento_e_atributos_por_comandos() {
     let h = e(&mut s, json!({ "de": q, "para": a, "tracado": "ANGLE45", "diagonalPrimeiro": true }));
     assert!(matches!(tipo(&s, &h), EntityKind::LwPolyline(_)));
     let h = e(&mut s, json!({ "de": q, "para": a, "tracado": "ARC", "desvios": [[2.0, 3.0]] }));
-    assert!(matches!(tipo(&s, &h), EntityKind::Spline(_)));
+    assert!(!matches!(tipo(&s, &h), EntityKind::Spline(_)), "nunca SPLINE");
     for ruim in [json!({ "tracado": "ZIGUE" }), json!({ "tracado": 3 }), json!({ "desvios": 3 }), json!({ "desvios": [[1.0]] })] {
         let mut p = json!({ "de": q, "para": a });
         for (k, v) in ruim.as_object().unwrap() {
@@ -1208,19 +1208,23 @@ fn bloco_no_caminho_do_eletroduto_ja_e_a_caixa() {
     assert_eq!(r["trechos"].as_array().unwrap().len(), 3, "{r}");
     assert!(r["trechos"].as_array().unwrap().iter().any(|t| t["de"] == novo.as_str() || t["para"] == novo.as_str()));
     assert_eq!(s.execute("eletrica.analisar", &json!({})).unwrap()["pontos"].as_array().unwrap().len(), 4);
-    // Clicado no traçado, um bloco a 20 cm do eletroduto liga e o seguinte parte dele, sem erro.
-    let de_lado = ponto(&mut s, "TOM-SIM-BAIXA", 1.0, 0.2);
+    // Clicar num bloco a 20 cm de um eletroduto não mexe nele: cada trecho existente é imutável.
+    let de_lado = ponto(&mut s, "TOM-SIM-BAIXA", 1.0, 0.4);
     assert_eq!(trechos(&mut s)["trechos"].as_array().unwrap().len(), 3);
     let outro = ponto(&mut s, "TOM-SIM-BAIXA", 1.0, 3.0);
+    let antes: Vec<_> = s.doc().unwrap().model.iter().filter(|e| e.common.layer.starts_with("ELE-ELETRODUTO")).map(|e| (**e).clone()).collect();
     s.start("eleeletroduto").unwrap();
-    s.input(Input::Point(Vec2::new(1.0, 0.2))).unwrap();
+    s.input(Input::Point(Vec2::new(1.0, 0.4))).unwrap();
     s.input(Input::Point(Vec2::new(1.0, 3.0))).unwrap();
     s.input(Input::Enter).unwrap();
     let r = trechos(&mut s);
     let lista = r["trechos"].as_array().unwrap();
-    assert_eq!((lista.len(), r["soltos"].as_array().unwrap().len()), (5, 0), "{r}");
-    assert_eq!(lista.iter().filter(|t| t["de"] == de_lado.as_str() || t["para"] == de_lado.as_str()).count(), 3, "{r}");
+    assert_eq!((lista.len(), r["soltos"].as_array().unwrap().len()), (4, 0), "{r}");
+    assert_eq!(lista.iter().filter(|t| t["de"] == de_lado.as_str() || t["para"] == de_lado.as_str()).count(), 1, "{r}");
     assert!(lista.iter().any(|t| t["de"] == outro.as_str() || t["para"] == outro.as_str()));
+    for e in &antes {
+        assert_eq!(s.doc().unwrap().model.get(e.handle).map(|x| x.kind.clone()), Some(e.kind.clone()), "o trecho antigo não muda");
+    }
 }
 
 #[test]
@@ -1231,11 +1235,11 @@ fn documentacao_dos_pontos_e_legenda_por_comando() {
     d.header.set_i64("INSUNITS", 6);
     s.open_drawing(d, "Legenda", None);
     s.execute("eletrica.bootstrap", &json!({})).unwrap();
-    let h = s.execute("eleponto", &json!({ "bloco": "TOM-DUP-MEDIA", "pontos": [[1.0, 1.0]] })).unwrap()["pontos"][0].as_str().unwrap().to_string();
-    let f = s.execute("eletrica.familia.ler", &json!({ "bloco": "TOM-DUP-MEDIA" })).unwrap();
-    assert_eq!(f["legenda"], "Tomada média dupla 2P+T 10A - h=1,20m");
+    let h = s.execute("eleponto", &json!({ "bloco": "TOM-SIM-MEDIA", "pontos": [[1.0, 1.0]] })).unwrap()["pontos"][0].as_str().unwrap().to_string();
+    let f = s.execute("eletrica.familia.ler", &json!({ "bloco": "TOM-SIM-MEDIA" })).unwrap();
+    assert_eq!(f["legenda"], "Tomada média 2P+T 10A - h=1,20m");
     // Na família e no ponto; vazio volta à família.
-    s.execute("eletrica.familia.definir", &json!({ "bloco": "TOM-DUP-MEDIA", "legenda": "Dupla", "descMaterial": "Kit" })).unwrap();
+    s.execute("eletrica.familia.definir", &json!({ "bloco": "TOM-SIM-MEDIA", "legenda": "Dupla", "descMaterial": "Kit" })).unwrap();
     let ler = |s: &mut Session| s.execute("eletrica.analisar", &json!({})).unwrap()["pontos"][0].clone();
     assert_eq!(ler(&mut s)["legenda"], "Dupla");
     assert_eq!(ler(&mut s)["descMaterial"], "Kit");
@@ -1247,7 +1251,7 @@ fn documentacao_dos_pontos_e_legenda_por_comando() {
     assert!(s.execute("eletrica.ponto.documentacao", &json!({ "pontos": [h], "legenda": 3 })).is_err());
     assert!(s.execute("eletrica.ponto.documentacao", &json!({ "pontos": [h], "legenda": "x".repeat(201) })).is_err());
     assert!(s.execute("eletrica.ponto.documentacao", &json!({ "pontos": ["0"], "legenda": "x" })).is_err());
-    assert!(s.execute("eletrica.familia.definir", &json!({ "bloco": "TOM-DUP-MEDIA", "legenda": 3 })).is_err());
+    assert!(s.execute("eletrica.familia.definir", &json!({ "bloco": "TOM-SIM-MEDIA", "legenda": 3 })).is_err());
     // A lista de materiais conta pela descrição.
     let m = s.execute("eletrica.materiais", &json!({})).unwrap();
     assert_eq!(m["conjuntos"][0]["nome"], "Kit");
@@ -1285,17 +1289,17 @@ fn excluir_por_comandos() {
     s.undo().unwrap();
     assert!(s.doc().unwrap().model.get(Handle::parse_hex(&e).unwrap()).is_some(), "desfaz");
     // Bloco e família; com inserção só pedindo; a legenda não fica com o símbolo que saiu.
-    s.execute("eleponto", &json!({ "bloco": "TOM-DUP-BAIXA", "pontos": [[20.0, 20.0]] })).unwrap();
+    s.execute("eleponto", &json!({ "bloco": "TOM-SIM-ALTA", "pontos": [[20.0, 20.0]] })).unwrap();
     s.execute("elelegenda", &json!({ "ponto": [30.0, 30.0] })).unwrap();
-    assert!(s.execute("eletrica.familia.excluir", &json!({ "bloco": "TOM-DUP-BAIXA" })).is_err());
-    assert_eq!(s.execute("eletrica.familia.excluir", &json!({ "bloco": "TOM-DUP-BAIXA", "comInsercoes": true })).unwrap()["insercoes"], 1);
-    assert!(!s.execute("eletrica.blocos", &json!({})).unwrap().as_array().unwrap().iter().any(|b| b["nome"] == "TOM-DUP-BAIXA"));
+    assert!(s.execute("eletrica.familia.excluir", &json!({ "bloco": "TOM-SIM-ALTA" })).is_err());
+    assert_eq!(s.execute("eletrica.familia.excluir", &json!({ "bloco": "TOM-SIM-ALTA", "comInsercoes": true })).unwrap()["insercoes"], 1);
+    assert!(!s.execute("eletrica.blocos", &json!({})).unwrap().as_array().unwrap().iter().any(|b| b["nome"] == "TOM-SIM-ALTA"));
     let legenda = s.doc().unwrap().blocks.get(free_eletrica::legenda::BLOCO).unwrap().clone();
-    assert!(!legenda.entities.iter().any(|e| matches!(&e.kind, EntityKind::Insert(i) if i.block == "TOM-DUP-BAIXA")));
+    assert!(!legenda.entities.iter().any(|e| matches!(&e.kind, EntityKind::Insert(i) if i.block == "TOM-SIM-ALTA")));
     s.execute("eletrica.bootstrap", &json!({})).unwrap();
-    assert!(!s.execute("eletrica.blocos", &json!({})).unwrap().as_array().unwrap().iter().any(|b| b["nome"] == "TOM-DUP-BAIXA"));
+    assert!(!s.execute("eletrica.blocos", &json!({})).unwrap().as_array().unwrap().iter().any(|b| b["nome"] == "TOM-SIM-ALTA"));
     s.execute("eletrica.bootstrap", &json!({ "restaurar": true })).unwrap();
-    assert!(s.execute("eletrica.blocos", &json!({})).unwrap().as_array().unwrap().iter().any(|b| b["nome"] == "TOM-DUP-BAIXA"));
+    assert!(s.execute("eletrica.blocos", &json!({})).unwrap().as_array().unwrap().iter().any(|b| b["nome"] == "TOM-SIM-ALTA"));
     // Tabela de fábrica.
     let antes = s.execute("eletrica.demanda.tabelas", &json!({})).unwrap().as_array().unwrap().len();
     assert_eq!(s.execute("eletrica.demanda.excluir", &json!({ "id": "cemig-nd51" })).unwrap()["excluida"], true);
@@ -1414,4 +1418,34 @@ fn quadro_com_montagem_observacoes_e_unifilar_clicando() {
     vazio.open_drawing(Drawing::new_metric(), "Vazio", None);
     vazio.start("eleunifilar").unwrap();
     assert!(vazio.running.is_none(), "sem quadro, avisa e termina");
+}
+
+#[test]
+fn empilhar_pontos_por_comando() {
+    let _setup = trava_setup();
+    let mut s = Session::new();
+    let mut d = Drawing::new_metric();
+    d.header.set_i64("INSUNITS", 6);
+    s.open_drawing(d, "Pilha", None);
+    s.execute("eletrica.bootstrap", &json!({})).unwrap();
+    let ponto = |s: &mut Session, b: &str, x: f64, y: f64| -> String {
+        s.execute("eleponto", &json!({ "bloco": b, "pontos": [[x, y]], "rotacaoAuto": false })).unwrap()["pontos"][0].as_str().unwrap().to_string()
+    };
+    let base = ponto(&mut s, "TOM-SIM-BAIXA", 2.0, 2.0);
+    // Inserido no mesmo lugar, empilha sozinho.
+    let segunda = ponto(&mut s, "TOM-SIM-BAIXA", 2.0, 2.0);
+    let host = |s: &mut Session, h: &str| {
+        s.execute("eletrica.analisar", &json!({})).unwrap()["pontos"].as_array().unwrap().iter().find(|p| p["handle"] == h).unwrap()["host"].clone()
+    };
+    assert_eq!(host(&mut s, &segunda), base.as_str());
+    // Explícito, por comando, e um passo de desfazer.
+    let outro = ponto(&mut s, "INT-SIM", 5.0, 5.0);
+    assert!(host(&mut s, &outro).is_null());
+    let r = s.execute("eletrica.ponto.empilhar", &json!({ "pontos": [outro], "base": segunda })).unwrap();
+    assert_eq!(r["base"], base.as_str(), "a base da pilha");
+    assert_eq!(host(&mut s, &outro), base.as_str());
+    s.undo().unwrap();
+    assert!(host(&mut s, &outro).is_null());
+    assert!(s.execute("eletrica.ponto.empilhar", &json!({ "pontos": [outro] })).is_err());
+    assert!(s.execute("eletrica.ponto.empilhar", &json!({ "pontos": [outro], "base": outro })).is_err());
 }

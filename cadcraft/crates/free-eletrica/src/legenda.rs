@@ -30,7 +30,13 @@ pub fn linhas(analise: &Analise) -> Vec<(String, String)> {
     let mut v: Vec<(crate::ponto::TipoPonto, String, String)> = analise
         .pontos
         .iter()
-        .map(|p| (p.tipo, p.bloco.clone(), p.legenda.clone().unwrap_or_else(|| format!("{} ({})", p.tipo.nome(), p.bloco))))
+        .map(|p| {
+            (
+                p.tipo,
+                crate::biblioteca::bloco_de_origem(&p.bloco).to_string(),
+                p.legenda.clone().unwrap_or_else(|| format!("{} ({})", p.tipo.nome(), p.bloco)),
+            )
+        })
         .collect();
     v.sort();
     v.dedup();

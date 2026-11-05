@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (C) 2026 Julio Ferreira. Free Elétrica: ver LICENSE e AVISO_LEGAL.md na raiz do repositorio.
-//! Inserir eletroduto: uma spline em arco (ou uma linha, com flecha zero) que liga exatamente dois
-//! blocos elétricos, gravados em `from_handle` e `to_handle`. Clicar no meio de um eletroduto
+//! Inserir eletroduto: uma entidade só, que liga exatamente dois blocos elétricos, gravados em
+//! `from_handle` e `to_handle`: `LINE` no reto, `ARC` circular no arco e `LWPOLYLINE` no 45° (nunca
+//! `SPLINE`). Inserir um trecho não mexe em nenhum outro. Clicar no meio de um eletroduto
 //! existente divide o trecho e insere uma caixa de passagem: é assim que se deriva no grafo
 //! estrito. Um bloco no caminho do eletroduto já é uma caixa (4x2, octogonal): [`encaixar`] corta o
 //! trecho nele, em `A -> bloco` e `bloco -> B`.
 
 use cadcraft_doc::color::Color;
-use cadcraft_doc::geom::{Polyline, Spline, Vec2, Vec3};
-use cadcraft_doc::{Common, Drawing, Entity, EntityKind, Handle, Line, Lineweight, Space};
+use cadcraft_doc::geom::{PolyVertex, Polyline, Spline, Vec2, Vec3};
+use cadcraft_doc::{Arc as Arco, Common, Drawing, Entity, EntityKind, Handle, Line, Lineweight, Space};
 
 use crate::biblioteca;
 use crate::ponto::ler_ponto;
@@ -281,13 +282,40 @@ impl Percurso {
         }
     }
 
-    /// A entidade do percurso.
+    /// A entidade do percurso: `LINE` reta, `ARC` circular ou `LWPOLYLINE` (o 45°, ou arcos por
+    /// desvios). Nunca `SPLINE`.
     pub fn entidade(&self, a: P, b: P) -> EntityKind {
+        let flecha = if self.flecha.is_finite() { self.flecha.clamp(-FLECHA_MAXIMA, FLECHA_MAXIMA) } else { 0.0 };
+        if self.tracado == Tracado::Arco && flecha.abs() >= 1e-9 {
+            if self.desvios.is_empty() {
+                if let Some(arco) = arco_circular(a, b, flecha) {
+                    return EntityKind::Arc(arco);
+                }
+            } else {
+                // Com desvios, um arco por pedaço, todos com a mesma flecha: o bulge é 2 × flecha, com o
+                // sinal contrário (o bulge positivo curva para a direita de quem anda).
+                let passagem: Vec<P> = std::iter::once(a).chain(self.desvios.iter().copied()).chain(std::iter::once(b)).collect();
+                let vertices = passagem
+                    .iter()
+                    .enumerate()
+                    .map(|(i, p)| PolyVertex {
+                        p: Vec2::new(p[0], p[1]),
+                        bulge: if i + 1 < passagem.len() { -2.0 * flecha } else { 0.0 },
+                        start_width: 0.0,
+                        end_width: 0.0,
+                    })
+                    .collect();
+                return EntityKind::LwPolyline(cadcraft_doc::LwPolyline {
+                    vertices,
+                    closed: false,
+                    const_width: 0.0,
+                    elevation: 0.0,
+                    plinegen: false,
+                });
+            }
+        }
         let pontos = self.pontos(a, b, 5);
         let v: Vec<Vec2> = pontos.iter().map(|p| Vec2::new(p[0], p[1])).collect();
-        if self.tracado == Tracado::Arco && (!self.desvios.is_empty() || self.flecha.abs() >= 1e-9) {
-            return EntityKind::Spline(Spline::from_fit_points(&v));
-        }
         if v.len() <= 2 {
             return EntityKind::Line(Line { a: Vec3::new(a[0], a[1], 0.0), b: Vec3::new(b[0], b[1], 0.0) });
         }
@@ -299,6 +327,32 @@ impl Percurso {
             plinegen: false,
         })
     }
+}
+
+/// O arco circular de `a` a `b` com a flecha dada (fração da corda: + à esquerda de quem vai de `a` para
+/// `b`). `None`: a corda é nula.
+pub fn arco_circular(a: P, b: P, flecha: f64) -> Option<Arco> {
+    let pts = pontos_do_arco(a, b, flecha, 3);
+    let m = *pts.get(1)?;
+    // O centro: o encontro das mediatrizes de a-m e m-b.
+    let (ax, ay, bx, by, cx, cy) = (a[0], a[1], m[0], m[1], b[0], b[1]);
+    let d = 2.0 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by));
+    if d.abs() < 1e-12 {
+        return None;
+    }
+    let (a2, b2, c2) = (ax * ax + ay * ay, bx * bx + by * by, cx * cx + cy * cy);
+    let ux = (a2 * (by - cy) + b2 * (cy - ay) + c2 * (ay - by)) / d;
+    let uy = (a2 * (cx - bx) + b2 * (ax - cx) + c2 * (bx - ax)) / d;
+    let r = (ax - ux).hypot(ay - uy);
+    if !(ux.is_finite() && uy.is_finite() && r.is_finite() && r > 0.0) {
+        return None;
+    }
+    let ang = |p: P| (p[1] - uy).atan2(p[0] - ux);
+    let tau = std::f64::consts::TAU;
+    let (ta, tm, tb) = (ang(a), ang(m), ang(b));
+    // O ARC corre no sentido anti-horário: começa no ponto de onde se chega ao outro passando pelo meio.
+    let (inicio, fim) = if (tm - ta).rem_euclid(tau) < (tb - ta).rem_euclid(tau) { (ta, tb) } else { (tb, ta) };
+    Some(Arco { center: Vec3::new(ux, uy, 0.0), radius: r, start: inicio, end: fim })
 }
 
 /// O que o próximo trecho de ELEELETRODUTO usa: a barra de cima muda enquanto o comando corre.
@@ -357,13 +411,16 @@ pub fn modelo_definido(desenho: u64) -> bool {
 pub fn bloco_em(doc: &Drawing, setup: &Setup, q: P, metros: f64) -> Option<Handle> {
     let metros = if metros > 0.0 { metros } else { 1.0 };
     let raio = setup.raio_captura / metros;
-    crate::analisar(doc)
+    let analise = crate::analisar(doc);
+    // Um ponto empilhado leva à caixa base: é nela que os eletrodutos chegam.
+    let base = |h: Handle| analise.pontos.iter().find(|p| p.handle == h).and_then(|p| p.host).filter(|b| analise.ponto(*b).is_some()).unwrap_or(h);
+    analise
         .pontos
         .iter()
         .map(|p| (p.handle, (p.posicao[0] - q[0]).hypot(p.posicao[1] - q[1])))
         .filter(|(_, d)| *d <= raio)
         .min_by(|a, b| a.1.total_cmp(&b.1))
-        .map(|(h, _)| h)
+        .map(|(h, _)| base(h))
 }
 
 /// O eletroduto mais perto de `q`, dentro do raio de captura: (handle, ponto nele).
@@ -395,6 +452,14 @@ fn parte(original: &EntityKind, pontos: &[P]) -> EntityKind {
             nova.vertices = Polyline::from_points(&v, false).vertices;
             EntityKind::LwPolyline(nova)
         }
+        // Um arco cortado continua arco: o mesmo centro e o mesmo raio, do primeiro ao último ponto da parte.
+        EntityKind::Arc(a) => match (pontos.first(), pontos.last()) {
+            (Some(p), Some(q)) => {
+                let ang = |x: &P| (x[1] - a.center.y).atan2(x[0] - a.center.x);
+                EntityKind::Arc(Arco { start: ang(p), end: ang(q), ..a.clone() })
+            }
+            _ => original.clone(),
+        },
         // Arco e spline viram uma spline por até 7 pontos da parte.
         _ => {
             let passo = (v.len().saturating_sub(1) / 6).max(1);
@@ -507,7 +572,7 @@ fn proximo_encaixe(
         let (Some(ini), Some(fim)) = (t.first().copied(), t.last().copied()) else { continue };
         let aresta = rede.arestas.iter().find(|a| a.eletroduto == e.handle);
         let e_ponta = |h: Handle| aresta.is_some_and(|a| [a.de, a.para].iter().any(|n| rede.nos.get(*n).is_some_and(|no| no.handle == h)));
-        for p in analise.pontos.iter().filter(|p| blocos.is_none_or(|l| l.contains(&p.handle)) && !e_ponta(p.handle)) {
+        for p in analise.pontos.iter().filter(|p| p.host.is_none() && blocos.is_none_or(|l| l.contains(&p.handle)) && !e_ponta(p.handle)) {
             if let Some((q, d, _)) = rota::perto_do_tracado(&t, p.posicao)
                 && d * metros <= tolerancia
                 && longe(q, ini)

@@ -331,9 +331,16 @@ impl Rede {
         let metros = if metros > 0.0 { metros } else { 1.0 };
         let raio = setup.raio_captura / metros;
         let mut rede = Rede { metros, ..Rede::default() };
-        for p in pontos {
+        // Um ponto empilhado numa caixa não é nó: o caminho até ele é o do ponto base da caixa.
+        let base = |p: &PontoEletrico| p.host.filter(|h| pontos.iter().any(|o| o.handle == *h && o.host.is_none()));
+        for p in pontos.iter().filter(|p| base(p).is_none()) {
             rede.indice.insert(p.handle, rede.nos.len());
             rede.nos.push(No { handle: p.handle, tipo: p.tipo, pos: p.posicao, z: altura(p, setup) });
+        }
+        for p in pontos {
+            if let Some(n) = base(p).and_then(|h| rede.indice.get(&h).copied()) {
+                rede.indice.insert(p.handle, n);
+            }
         }
         rede.adj = vec![Vec::new(); rede.nos.len()];
         for e in doc.model.iter() {

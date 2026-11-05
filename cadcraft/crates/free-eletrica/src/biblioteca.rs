@@ -71,7 +71,7 @@ pub fn blocos(doc: &Drawing) -> Vec<BlocoPonto> {
     let mut v: Vec<BlocoPonto> = doc
         .blocks
         .iter()
-        .filter(|(nome, _)| !nome.starts_with('*') && !nome.to_uppercase().starts_with("FIACAO-"))
+        .filter(|(nome, _)| !nome.starts_with('*') && !nome.to_uppercase().starts_with("FIACAO-") && !nome.ends_with(SUFIXO_EMPILHADO))
         .filter_map(|(nome, b)| {
             let defs = definicoes(b);
             let tem = |tags: &[&str]| defs.iter().find(|a| tags.iter().any(|t| a.tag.trim().eq_ignore_ascii_case(t)));
@@ -205,34 +205,21 @@ pub fn inserir_ponto(
 
 /// A caixa de passagem que ELEELETRODUTO insere ao dividir um trecho.
 pub const BLOCO_CAIXA: &str = "CX-PASSAGEM";
-/// Blocos base, na ordem da barra de inserção.
-pub const BLOCOS_BASE: [&str; 31] = [
+/// Blocos base, na ordem da barra de inserção. Cada tomada e cada interruptor é um módulo só: duas tomadas
+/// ou duas teclas no mesmo ponto são dois blocos empilhados ([`empilhar`]), cada um com o seu circuito e o
+/// seu comando.
+pub const BLOCOS_BASE: [&str; 16] = [
     "TOM-SIM-BAIXA",
-    "TOM-DUP-BAIXA",
     "TOM-SIM-MEDIA",
-    "TOM-DUP-MEDIA",
     "TOM-SIM-ALTA",
-    "TOM-DUP-ALTA",
     "TOM-TUE",
     "ILU-OCT",
     "INT-SIM",
-    "INT-2S",
-    "INT-3S",
     "INT-PAR",
-    "INT-PAR-2S",
-    "INT-PAR-3S",
     "INT-INT",
-    "INT-INT-2S",
-    "INT-INT-3S",
     "INT-SIM-ALTO",
-    "INT-2S-ALTO",
-    "INT-3S-ALTO",
     "INT-PAR-ALTO",
-    "INT-PAR-2S-ALTO",
-    "INT-PAR-3S-ALTO",
     "INT-INT-ALTO",
-    "INT-INT-2S-ALTO",
-    "INT-INT-3S-ALTO",
     "QDG",
     "QDC",
     "RJ45",
@@ -687,9 +674,15 @@ pub fn garantir_base(doc: &mut Drawing, setup: &crate::setup::Setup, metros: f64
         let Some((pecas, atributos)) = definicao_base(nome, &tensao) else { continue };
         let mut b = Block::new(nome);
         let u = |v: f64| v / m;
-        for p in &pecas {
-            let k = entidade_da_peca(p, &u);
-            b.entities.push(Entity::new(doc.new_handle(), k));
+        // As primeiras peças de um ponto de parede são a caixa 4x2 e a haste: marcadas, para o módulo
+        // empilhado sair sem elas.
+        let caixa = if pecas_com_caixa(nome) { 5 } else { 0 };
+        for (i, p) in pecas.iter().enumerate() {
+            let mut e = Entity::new(doc.new_handle(), entidade_da_peca(p, &u));
+            if i < caixa {
+                crate::xdata::gravar(&mut e.common.xdata, CHAVE_CAIXA_2D, Some("1"));
+            }
+            b.entities.push(e);
         }
         for a in &atributos {
             let k = EntityKind::AttDef(atributo_base(a, m));
@@ -701,6 +694,11 @@ pub fn garantir_base(doc: &mut Drawing, setup: &crate::setup::Setup, metros: f64
         }
     }
     true
+}
+
+/// Os blocos base que começam pela caixa 4x2 na parede.
+fn pecas_com_caixa(nome: &str) -> bool {
+    tomada_base(nome).is_some() || interruptor_base(nome).is_some() || matches!(nome, "TOM-TUE" | "RJ45")
 }
 
 /// Uma família base de desenho anterior ganha os textos da legenda e da lista de materiais. O que o
@@ -971,4 +969,148 @@ pub fn restaurar_base(doc: &mut Drawing) {
             familia::marcar_excluida(doc, n, false);
         }
     }
+}
+
+// ---------------------------------------------------------------- módulos empilhados
+
+/// XDATA das peças da caixa 4x2 (e da haste) de um bloco de parede.
+pub const CHAVE_CAIXA_2D: &str = "wall_box";
+/// O sufixo do bloco de um módulo empilhado: o mesmo símbolo, sem a caixa, com a base do símbolo na origem.
+pub const SUFIXO_EMPILHADO: &str = "$EMP";
+/// Até esta distância (m) do ponto base, um ponto novo de parede é empilhado na caixa dele.
+pub const TOLERANCIA_EMPILHAR: f64 = 0.10;
+
+/// O nome do bloco de origem de um módulo empilhado.
+pub fn bloco_de_origem(nome: &str) -> &str {
+    nome.strip_suffix(SUFIXO_EMPILHADO).unwrap_or(nome)
+}
+
+/// A faixa vertical (y mínimo e máximo) do desenho do bloco, sem atributos; com `sem_caixa`, sem a caixa 4x2.
+fn faixa_vertical(b: &Block, sem_caixa: bool) -> Option<(f64, f64)> {
+    let mut ys: Vec<f64> = Vec::new();
+    for e in b.entities.iter() {
+        if sem_caixa && crate::xdata::ler(&e.common.xdata).iter().any(|(k, _)| k == CHAVE_CAIXA_2D) {
+            continue;
+        }
+        match &e.kind {
+            EntityKind::Line(l) => ys.extend([l.a.y, l.b.y]),
+            EntityKind::Circle(c) => ys.extend([c.center.y - c.radius, c.center.y + c.radius]),
+            EntityKind::Solid(s) => ys.extend(s.corners.iter().map(|c| c.y)),
+            EntityKind::Arc(a) => ys.extend([a.center.y - a.radius, a.center.y + a.radius]),
+            EntityKind::LwPolyline(p) => ys.extend(p.vertices.iter().map(|v| v.p.y)),
+            _ => {}
+        }
+    }
+    let ys: Vec<f64> = ys.into_iter().filter(|y| y.is_finite()).collect();
+    let min = ys.iter().copied().reduce(f64::min)?;
+    let max = ys.iter().copied().reduce(f64::max)?;
+    Some((min, max))
+}
+
+/// O bloco do módulo empilhado de `nome`: criado na primeira vez, com a família copiada. Num bloco sem as
+/// peças da caixa marcadas, o desenho fica inteiro.
+fn bloco_empilhado(doc: &mut Drawing, nome: &str) -> Result<String, String> {
+    let nome = bloco_de_origem(nome).to_string();
+    let novo = format!("{nome}{SUFIXO_EMPILHADO}");
+    if doc.blocks.contains_key(&novo) {
+        return Ok(novo);
+    }
+    let origem = doc.blocks.get(&nome).cloned().ok_or_else(|| format!("o desenho não tem o bloco \"{nome}\""))?;
+    let (base, _) = faixa_vertical(&origem, true).unwrap_or((0.0, 0.0));
+    let descer = cadcraft_doc::geom::Mat3::translate(Vec2::new(0.0, -base));
+    let mut b = Block::new(&novo);
+    for e in origem.entities.iter() {
+        if crate::xdata::ler(&e.common.xdata).iter().any(|(k, _)| k == CHAVE_CAIXA_2D) {
+            continue;
+        }
+        let mut k = e.kind.clone();
+        k.transform(&descer);
+        let mut x = Entity::new(doc.new_handle(), k);
+        x.common = e.common.clone();
+        b.entities.push(x);
+    }
+    doc.blocks.insert(novo.clone(), Arc::new(b));
+    let f = familia::ler(doc, &nome);
+    familia::gravar(doc, &novo, f.as_ref())?;
+    Ok(novo)
+}
+
+/// O ponto base da caixa em que `h` cai: um ponto de parede com caixa 4x2, não empilhado, a até
+/// [`TOLERANCIA_EMPILHAR`].
+fn base_para(analise: &crate::Analise, h: Handle, metros: f64) -> Option<Handle> {
+    let p = analise.ponto(h)?;
+    let tol = TOLERANCIA_EMPILHAR / metros;
+    analise
+        .pontos
+        .iter()
+        .filter(|o| o.handle != h && o.host.is_none() && o.caixa == Some(familia::CaixaFisica::C4x2))
+        .map(|o| (o.handle, (o.posicao[0] - p.posicao[0]).hypot(o.posicao[1] - p.posicao[1])))
+        .filter(|(_, d)| *d <= tol)
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(o, _)| o)
+}
+
+/// Empilha o ponto `h` na caixa do ponto `base` (`None`: a caixa de parede que estiver no mesmo lugar). Na
+/// planta, o módulo sai sem a caixa 4x2 e encosta no topo do último símbolo; no grafo, ele fica no ponto base.
+/// Devolve o ponto base, ou `None` quando não havia onde empilhar.
+pub fn empilhar(doc: &mut Drawing, h: Handle, base: Option<Handle>, metros: f64) -> Result<Option<Handle>, String> {
+    let metros = if metros > 0.0 { metros } else { 1.0 };
+    let analise = crate::analisar(doc);
+    let p = analise.ponto(h).ok_or("o objeto não é um ponto elétrico")?.clone();
+    if p.host.is_some() {
+        return Ok(p.host);
+    }
+    let base = match base {
+        Some(b) => {
+            let o = analise.ponto(b).ok_or("a base não é um ponto elétrico")?;
+            if b == h {
+                return Err("um ponto não se empilha nele mesmo".into());
+            }
+            Some(o.host.unwrap_or(b))
+        }
+        None if p.caixa == Some(familia::CaixaFisica::C4x2) => base_para(&analise, h, metros),
+        None => None,
+    };
+    let Some(base) = base else { return Ok(None) };
+    if analise.pontos.iter().any(|o| o.host == Some(h)) {
+        return Err("o ponto já é a base de outros".into());
+    }
+    let b = analise.ponto(base).ok_or("a base não é um ponto elétrico")?.clone();
+    // O topo da pilha: o da base mais a altura de cada módulo já empilhado, na ordem em que entraram.
+    let altura_do = |doc: &Drawing, nome: &str, sem_caixa: bool| doc.blocks.get(nome).and_then(|bl| faixa_vertical(bl, sem_caixa));
+    let mut topo = altura_do(doc, &b.bloco, false).map_or(0.0, |(_, max)| max);
+    let mut empilhados: Vec<&crate::ponto::PontoEletrico> = analise.pontos.iter().filter(|o| o.host == Some(base) && o.handle != h).collect();
+    empilhados.sort_by_key(|o| o.handle.0);
+    for o in empilhados {
+        topo += altura_do(doc, &o.bloco, true).map_or(0.0, |(min, max)| max - min);
+    }
+    let variante = bloco_empilhado(doc, &p.bloco)?;
+    let rotacao = match doc.model.get(base).map(|e| &e.kind) {
+        Some(EntityKind::Insert(i)) => i.rotation,
+        _ => 0.0,
+    };
+    let (s, c) = rotacao.sin_cos();
+    let destino = [b.posicao[0] - s * topo, b.posicao[1] + c * topo];
+    let mut e = doc.model.get(h).map(|e| (**e).clone()).ok_or("ponto não encontrado")?;
+    let EntityKind::Insert(ins) = &mut e.kind else { return Err("o ponto não é um bloco".into()) };
+    // A base do símbolo desce para a origem no bloco empilhado: os atributos acompanham.
+    let descida = doc.blocks.get(&p.bloco).and_then(|bl| faixa_vertical(bl, true)).map_or(0.0, |(min, _)| min);
+    let (so, co) = ins.rotation.sin_cos();
+    let antigo = [ins.insert.x, ins.insert.y];
+    let levar = |q: Vec3| {
+        let (dx, dy) = (q.x - antigo[0], q.y - antigo[1]);
+        let local = [dx * co + dy * so, -dx * so + dy * co - descida];
+        Vec3::new(destino[0] + local[0] * c - local[1] * s, destino[1] + local[0] * s + local[1] * c, q.z)
+    };
+    for a in &mut ins.attribs {
+        a.text.insert = levar(a.text.insert);
+        a.text.align_pt = a.text.align_pt.map(levar);
+        a.text.rotation += rotacao - ins.rotation;
+    }
+    ins.block = variante;
+    ins.insert = Vec3::new(destino[0], destino[1], 0.0);
+    ins.rotation = rotacao;
+    crate::xdata::gravar(&mut e.common.xdata, crate::ponto::CHAVE_HOST, Some(&base.hex()));
+    doc.model.replace(e);
+    Ok(Some(base))
 }

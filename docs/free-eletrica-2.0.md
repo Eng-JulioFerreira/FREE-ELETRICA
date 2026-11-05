@@ -267,7 +267,10 @@ Limites:
 - **Bloco em linha:** um bloco no caminho do eletroduto corta o trecho, sem caixa nova nem aviso de erro.
 - **Excluir:** em blocos e famílias, pontos, circuitos, grupos DR, eletrodutos, perfis, cabos e tabelas de demanda.
 - **Legenda e materiais:** `LEGENDA` e `DESC_MATERIAL` em toda família e todo ponto; `ELELEGENDA` desenha a legenda da prancha.
-- **Famílias de fábrica:** 6 tomadas e 18 interruptores, com o preenchimento dizendo a altura ou a função.
+- **Famílias de fábrica:** tomadas e interruptores de um módulo cada, com o preenchimento dizendo a altura ou a função.
+  Duplas e várias teclas são módulos empilhados numa caixa 4x2 só; nos materiais, uma caixa por altura.
+- **Eletrodutos:** `LINE`, `ARC` ou `LWPOLYLINE`, nunca `SPLINE`, e um trecho novo não mexe nos outros.
+- **Unifilar:** marcas de fiação iguais às da prancha e disjuntor com terminais, arco e traço de disparo.
 - **Eletrodutos:** a cor é do material e o tipo de linha é do caminhamento.
 - **Tag de fiação:** direto no eletroduto (um clique) ou com linha de chamada em ângulo livre (dois cliques), guardada no XDATA.
 - **Tabela do quadro:** tudo dentro de uma moldura, com cabeçalho, grade, total e rodapé dividido.
@@ -281,3 +284,11 @@ Limites desta etapa:
 - **Módulos:** a estimativa não conta o DPS.
 - **Blocos excluídos:** a marca vive nos dados do desenho e não foi testada depois de salvar e reabrir o DXF.
 - **Template:** `templates/FREE_ELETRICA_BLOCOS.dxf` ainda traz os símbolos antigos; só os blocos gerados pelo motor seguem o novo padrão.
+
+Limites dos módulos empilhados:
+
+- **Comprimento:** o módulo empilhado usa o caminho até a caixa base; a diferença de altura entre os dois (0,30 m e 1,20 m, por
+  exemplo) não entra no comprimento do cabo.
+- **Base excluída:** os módulos que estavam nela voltam a ser pontos soltos, sem a caixa desenhada. Empilhe de novo ou reinsira.
+- **Blocos antigos:** `TOM-DUP-*` e os interruptores de 2 e 3 seções da etapa anterior ficam nos desenhos que já os têm, mas não
+  são mais criados.

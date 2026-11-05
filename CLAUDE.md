@@ -45,8 +45,10 @@ divulgado para engenheiros e usuários finais: código em teste ou incompleto n�
 - **Persistência no desenho:** atributos dos blocos e XDATA `FREE_ELETRICA`, incluindo famílias no `BLOCK_RECORD` e o
   resultado do último cálculo nos quadros. As configurações do Setup ficam nas preferências do programa.
 - **Grafo 3D estrito de eletrodutos:** nós são só blocos elétricos, e cada eletroduto liga exatamente dois deles.
-  Cruzamento sem bloco não conecta. Um bloco no caminho já é uma caixa: `eletroduto::encaixar` corta o trecho nele, a até
-  5 cm sem clique e no raio de captura quando clicado. Comprimento = traçado + desníveis até os blocos.
+  Cruzamento sem bloco não conecta. Cada trecho é uma entidade só (`LINE`, `ARC` ou `LWPOLYLINE`, nunca `SPLINE`), e inserir
+  um trecho não mexe em nenhum outro. Um bloco a até 5 cm do traçado já é uma caixa: `eletroduto::encaixar` corta o trecho
+  nele, sem deformar. Um módulo empilhado (`host_point_handle`) não é nó: o caminho até ele é o da caixa base. Comprimento =
+  traçado + desníveis até os blocos.
 - **Etapas separadas:** lançar não dimensiona. O cálculo, as tags e as tabelas só mudam com `ELEDIMENSIONAR` e `ELEREGEN`.
 - **Interface em janelas `egui` independentes, sem painel inferior fixo:** paleta no padrão das Tool Sets (abas Elétrica e
   Telecom, seções recolhíveis, ferramentas planas com ícone), mini-barra só enquanto um comando espera cliques, janelas sem

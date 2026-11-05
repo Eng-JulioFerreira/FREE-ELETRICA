@@ -1446,33 +1446,18 @@ fn legenda_inspecao(ctx: &egui::Context, xf: &crate::canvas::Xf, itens: &[Item])
 }
 
 /// O bloco de cada tipo da barra de inserção: (rótulo, bloco).
-const TIPOS_BARRA: [(&str, &str); 31] = [
-    ("Tomada baixa simples", "TOM-SIM-BAIXA"),
-    ("Tomada baixa dupla", "TOM-DUP-BAIXA"),
-    ("Tomada média simples", "TOM-SIM-MEDIA"),
-    ("Tomada média dupla", "TOM-DUP-MEDIA"),
-    ("Tomada alta simples", "TOM-SIM-ALTA"),
-    ("Tomada alta dupla", "TOM-DUP-ALTA"),
+const TIPOS_BARRA: [(&str, &str); 16] = [
+    ("Tomada baixa", "TOM-SIM-BAIXA"),
+    ("Tomada média", "TOM-SIM-MEDIA"),
+    ("Tomada alta", "TOM-SIM-ALTA"),
     ("TUE", "TOM-TUE"),
     ("Iluminação", "ILU-OCT"),
-    ("Simples 1 seção, médio", "INT-SIM"),
-    ("Simples 2 seções, médio", "INT-2S"),
-    ("Simples 3 seções, médio", "INT-3S"),
-    ("Paralelo 1 seção, médio", "INT-PAR"),
-    ("Paralelo 2 seções, médio", "INT-PAR-2S"),
-    ("Paralelo 3 seções, médio", "INT-PAR-3S"),
-    ("Intermediário 1 seção, médio", "INT-INT"),
-    ("Intermediário 2 seções, médio", "INT-INT-2S"),
-    ("Intermediário 3 seções, médio", "INT-INT-3S"),
-    ("Simples 1 seção, alto", "INT-SIM-ALTO"),
-    ("Simples 2 seções, alto", "INT-2S-ALTO"),
-    ("Simples 3 seções, alto", "INT-3S-ALTO"),
-    ("Paralelo 1 seção, alto", "INT-PAR-ALTO"),
-    ("Paralelo 2 seções, alto", "INT-PAR-2S-ALTO"),
-    ("Paralelo 3 seções, alto", "INT-PAR-3S-ALTO"),
-    ("Intermediário 1 seção, alto", "INT-INT-ALTO"),
-    ("Intermediário 2 seções, alto", "INT-INT-2S-ALTO"),
-    ("Intermediário 3 seções, alto", "INT-INT-3S-ALTO"),
+    ("Interruptor simples, médio", "INT-SIM"),
+    ("Interruptor paralelo, médio", "INT-PAR"),
+    ("Interruptor intermediário, médio", "INT-INT"),
+    ("Interruptor simples, alto", "INT-SIM-ALTO"),
+    ("Interruptor paralelo, alto", "INT-PAR-ALTO"),
+    ("Interruptor intermediário, alto", "INT-INT-ALTO"),
     ("Quadro QDG", "QDG"),
     ("Quadro QDC", "QDC"),
     ("Ponto de dados", "RJ45"),
@@ -1541,6 +1526,8 @@ fn barra_ponto(ui: &mut egui::Ui, uid: u64, st: &Estado, s: &Setup, filtro: &mut
     });
     ui.label("Bloco");
     let nome_de = |nome: &str| TIPOS_BARRA.iter().find(|(_, b)| b.eq_ignore_ascii_case(nome)).map_or(nome, |(n, _)| n).to_string();
+    ui.label(RichText::new("Clique sobre um ponto de parede para empilhar na caixa dele").weak())
+        .on_hover_text("Cada tomada e cada tecla é um módulo, com o seu circuito e o seu comando");
     egui::ComboBox::from_id_salt("ele-barra-tipo").selected_text(nome_de(&bloco.nome)).width(210.0).show_ui(ui, |ui| {
         for b in st.blocos.iter().filter(|b| filtro.aceita(b.tipo)) {
             if ui.selectable_label(bloco.nome == b.nome, nome_de(&b.nome)).on_hover_text(b.nome.as_str()).clicked() {

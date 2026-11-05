@@ -58,6 +58,8 @@ pub fn specs() -> Vec<CommandSpec> {
             .params("{pontos: [hex], altura: m | null} (at the project's standard height or null: the visible ALTURA stays empty; otherwise the exact value goes to XDATA and the plan shows h=1,45m) → {pontos}"),
         CommandSpec::new("eletrica.ponto.demanda", "Point Demand", run_ponto_demanda)
             .params("{pontos: [hex], classe?: ILUM_TUG | AQUECIMENTO | AR | MOTORES | ELETRODOMESTICOS | FATOR_MANUAL | null, fator?: 0-1 | null} (null: back to the family's or to the utility's table) → {pontos}"),
+        CommandSpec::new("eletrica.ponto.empilhar", "Stack Points", run_empilhar)
+            .params("{pontos: [hex], base: hex} → stacks the points on the base's 4x2 box: the plan shows one box with the symbols on top of each other, and the base's conduits serve them all: {base, empilhados}"),
         CommandSpec::new("eletrica.ponto.documentacao", "Point Documentation", run_ponto_documentacao)
             .params("{pontos: [hex], legenda?: text | null, descMaterial?: text | null} (null or empty: back to the family's) → {pontos}"),
         CommandSpec::new("elelegenda", "Symbol Legend", run_legenda)
@@ -1457,7 +1459,6 @@ fn bloco_no_ponto(s: &mut Session, q: [f64; 2]) -> Result<std::result::Result<Ha
     let setup = ele::setup::atual();
     let m = metros(s)?;
     if let Some(h) = ele::eletroduto::bloco_em(s.doc()?, &setup, q, m) {
-        encaixar_clicado(s, h)?;
         return Ok(Ok(h));
     }
     let Some((e, p)) = ele::eletroduto::eletroduto_em(s.doc()?, &setup, q, m) else {
@@ -1621,18 +1622,21 @@ fn run_encaixar(s: &mut Session, _p: &Value) -> Result<Value> {
     Ok(json!({ "divididos": n }))
 }
 
-/// O bloco clicado pode estar no caminho de um eletroduto: ele já é uma caixa, e o trecho se corta nele.
-fn encaixar_clicado(s: &mut Session, h: Handle) -> Result<()> {
-    let (setup, m) = (ele::setup::atual(), metros(s)?);
-    ele::eletroduto::encaixar(s.doc_mut()?, &setup, m, setup.raio_captura, Some(&[h]), None).map_err(erro)?;
-    Ok(())
-}
-
 /// Um trecho novo pode passar por blocos que já existem.
 fn encaixar_trecho(s: &mut Session, h: Handle) -> Result<()> {
     let (setup, m) = (ele::setup::atual(), metros(s)?);
     ele::eletroduto::encaixar(s.doc_mut()?, &setup, m, ele::eletroduto::TOLERANCIA_EM_LINHA, None, Some(&[h])).map_err(erro)?;
     Ok(())
+}
+
+/// Um ponto novo de parede no lugar de outro empilha na caixa dele; senão, pode cair no caminho de um
+/// eletroduto que já existe.
+fn assentar_ponto(s: &mut Session, h: Handle) -> Result<()> {
+    let m = metros(s)?;
+    if ele::biblioteca::empilhar(s.doc_mut()?, h, None, m).map_err(erro)?.is_some() {
+        return Ok(());
+    }
+    encaixar_ponto(s, h)
 }
 
 /// Um ponto novo pode cair no caminho de um eletroduto que já existe.
@@ -1861,10 +1865,7 @@ impl Interactive for EletrodutoM {
                 s.set_selection(Vec::new());
                 let bloco = hs.iter().copied().find(|h| s.doc().ok().and_then(|d| ele::ponto::ler_ponto(d, *h)).is_some());
                 match bloco {
-                    Some(h) => {
-                        encaixar_clicado(s, h)?;
-                        self.clicar(s, h)
-                    }
+                    Some(h) => self.clicar(s, h),
                     None => {
                         s.echo("Clique num bloco elétrico ou no meio de um eletroduto.");
                         Ok(Step::Continue)
@@ -1959,6 +1960,18 @@ fn run_ponto_demanda(s: &mut Session, p: &Value) -> Result<Value> {
         }
     }
     Ok(json!({ "pontos": hs.len() }))
+}
+
+fn run_empilhar(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "eletrica.ponto.empilhar";
+    let hs = handles(CMD, p, "pontos")?;
+    let base = handle(CMD, p, "base")?;
+    let m = metros(s)?;
+    let mut feito = None;
+    for h in &hs {
+        feito = ele::biblioteca::empilhar(s.doc_mut()?, *h, Some(base), m).map_err(|e| bad(CMD, e))?;
+    }
+    Ok(json!({ "base": feito.map(|b| b.hex()), "empilhados": hs.len() }))
 }
 
 fn run_ponto_documentacao(s: &mut Session, p: &Value) -> Result<Value> {
@@ -2240,7 +2253,7 @@ fn run_ponto(s: &mut Session, p: &Value) -> Result<Value> {
         let r = if auto { ele::biblioteca::alinhar_a_parede(s.doc()?, &setup, pos, m).unwrap_or(rotacao) } else { rotacao };
         let h = ele::biblioteca::inserir_ponto(s.doc_mut()?, &bloco, pos, r, &valores, &setup).map_err(erro)?;
         ligar_ao_quadro_pai(s, h, pai)?;
-        encaixar_ponto(s, h)?;
+        assentar_ponto(s, h)?;
         feitos.push(h.hex());
     }
     Ok(json!({ "pontos": feitos }))
@@ -2385,7 +2398,7 @@ impl Interactive for PontoM {
                 match ele::biblioteca::inserir_ponto(s.doc_mut()?, &m.bloco, [p.x, p.y], r, &m.valores, &ele::setup::atual()) {
                     Ok(h) => {
                         ligar_ao_quadro_pai(s, h, m.quadro)?;
-                        encaixar_ponto(s, h)?;
+                        assentar_ponto(s, h)?;
                         self.feitos += 1;
                     }
                     Err(e) => s.echo(e),
