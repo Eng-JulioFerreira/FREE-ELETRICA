@@ -322,7 +322,12 @@ fn pequeno(texto: impl Into<String>, cor: Color32) -> RichText {
 
 /// Número com casas fixas e vírgula decimal.
 fn fixo(v: f64, casas: usize) -> String {
-    format!("{v:.casas$}").replace('.', ",")
+    let texto = format!("{v:.casas$}").replace('.', ",");
+    // Soma vazia ou arredondamento dão -0: zero não tem sinal.
+    match texto.strip_prefix('-') {
+        Some(resto) if resto.chars().all(|c| c == '0' || c == ',') => resto.to_string(),
+        _ => texto,
+    }
 }
 
 /// Campo numérico com vírgula decimal ("2,80 m"); aceita digitar com vírgula ou ponto.
@@ -2351,4 +2356,17 @@ fn secao_circuitos(ui: &mut egui::Ui, t: &Tokens, a: &ele::Analise, acoes: &mut 
     });
     let avisos: Vec<String> = a.circuitos.iter().flat_map(|c| c.avisos.iter().map(move |w| format!("Circuito {}: {w}", c.id))).collect();
     lista_avisos(ui, "ele-avisos-circuitos", &avisos);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fixo;
+
+    #[test]
+    fn zero_nao_tem_sinal() {
+        assert_eq!(fixo(-0.0, 0), "0");
+        assert_eq!(fixo(-0.001, 2), "0,00");
+        assert_eq!(fixo(-1.5, 1), "-1,5");
+        assert_eq!(fixo(2.5, 2), "2,50");
+    }
 }
