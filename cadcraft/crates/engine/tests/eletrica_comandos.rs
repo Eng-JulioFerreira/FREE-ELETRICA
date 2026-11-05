@@ -1180,3 +1180,44 @@ fn esquema_curva_dr_e_unifilar_por_comando() {
     assert_eq!((i.insert.x, i.insert.y), (10.0, 20.0));
     s.execute("eletrica.setup", &json!({ "compartilharPe": false })).unwrap();
 }
+
+#[test]
+fn bloco_no_caminho_do_eletroduto_ja_e_a_caixa() {
+    let _setup = trava_setup();
+    let mut s = Session::new();
+    let mut d = Drawing::new_metric();
+    d.header.set_i64("INSUNITS", 6);
+    s.open_drawing(d, "Planta", None);
+    s.execute("eletrica.bootstrap", &json!({})).unwrap();
+    let ponto = |s: &mut Session, b: &str, x: f64, y: f64| -> String {
+        s.execute("eleponto", &json!({ "bloco": b, "pontos": [[x, y]] })).unwrap()["pontos"][0].as_str().unwrap().to_string()
+    };
+    let trechos = |s: &mut Session| s.execute("eletrica.eletrodutos", &json!({})).unwrap();
+    let q = ponto(&mut s, "QDG", 0.0, 0.0);
+    let meio = ponto(&mut s, "TOM-SIM-BAIXA", 2.0, 0.0);
+    let fim = ponto(&mut s, "TOM-SIM-BAIXA", 4.0, 0.0);
+    // O trecho novo que passa por um bloco se corta nele.
+    s.execute("eleeletroduto", &json!({ "de": q, "para": fim, "tracado": "STRAIGHT" })).unwrap();
+    let r = trechos(&mut s);
+    assert_eq!((r["trechos"].as_array().unwrap().len(), r["soltos"].as_array().unwrap().len()), (2, 0), "{r}");
+    assert!(r["trechos"].as_array().unwrap().iter().any(|t| t["para"] == meio.as_str() || t["de"] == meio.as_str()));
+    // Um ponto novo sobre um trecho existente também corta, sem caixa nova.
+    let novo = ponto(&mut s, "TOM-SIM-BAIXA", 3.0, 0.0);
+    let r = trechos(&mut s);
+    assert_eq!(r["trechos"].as_array().unwrap().len(), 3, "{r}");
+    assert!(r["trechos"].as_array().unwrap().iter().any(|t| t["de"] == novo.as_str() || t["para"] == novo.as_str()));
+    assert_eq!(s.execute("eletrica.analisar", &json!({})).unwrap()["pontos"].as_array().unwrap().len(), 4);
+    // Clicado no traçado, um bloco a 20 cm do eletroduto liga e o seguinte parte dele, sem erro.
+    let de_lado = ponto(&mut s, "TOM-SIM-BAIXA", 1.0, 0.2);
+    assert_eq!(trechos(&mut s)["trechos"].as_array().unwrap().len(), 3);
+    let outro = ponto(&mut s, "TOM-SIM-BAIXA", 1.0, 3.0);
+    s.start("eleeletroduto").unwrap();
+    s.input(Input::Point(Vec2::new(1.0, 0.2))).unwrap();
+    s.input(Input::Point(Vec2::new(1.0, 3.0))).unwrap();
+    s.input(Input::Enter).unwrap();
+    let r = trechos(&mut s);
+    let lista = r["trechos"].as_array().unwrap();
+    assert_eq!((lista.len(), r["soltos"].as_array().unwrap().len()), (5, 0), "{r}");
+    assert_eq!(lista.iter().filter(|t| t["de"] == de_lado.as_str() || t["para"] == de_lado.as_str()).count(), 3, "{r}");
+    assert!(lista.iter().any(|t| t["de"] == outro.as_str() || t["para"] == outro.as_str()));
+}

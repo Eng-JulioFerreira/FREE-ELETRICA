@@ -102,14 +102,19 @@ pub fn inspecionar(doc: &Drawing, analise: &Analise, setup: &Setup) -> Vec<Item>
             continue;
         }
         if sem_caminho.contains(&p.handle) {
-            // Encostado no meio de um eletroduto: o grafo estrito não liga sem caixa.
-            let no_meio = doc.model.iter().any(|e| {
+            // No caminho de um eletroduto o bloco já é uma caixa: só falta o corte (`eletroduto::encaixar`),
+            // que a inspeção não faz porque não muda o desenho.
+            let em_linha = doc.model.iter().any(|e| {
                 setup.e_camada_eletroduto(&e.common.layer)
                     && rota::tracado(&e.kind, 0.005 / metros.max(1e-9))
                         .and_then(|t| rota::perto_do_tracado(&t, p.posicao))
-                        .is_some_and(|(_, d, _)| d * metros <= setup.raio_captura)
+                        .is_some_and(|(_, d, _)| d * metros <= crate::eletroduto::TOLERANCIA_EM_LINHA)
             });
-            let motivo = if no_meio { "encostado no meio de um eletroduto: use uma caixa" } else { "sem caminho de eletrodutos até o quadro" };
+            let motivo = if em_linha {
+                "em linha com um eletroduto: Atualizar tags e tabelas liga os trechos"
+            } else {
+                "sem caminho de eletrodutos até o quadro"
+            };
             itens.push(item(Nivel::Laranja, motivo.into()));
             continue;
         }

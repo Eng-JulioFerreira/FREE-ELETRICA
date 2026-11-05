@@ -107,8 +107,11 @@ fn abrir(q: Qual) -> Result<Value, String> {
 /// Fecha uma janela e o que só existe com ela.
 fn fechar(j: &mut Janelas, q: Qual) {
     j.abertas.retain(|x| *x != q);
-    if q == Qual::Setup {
-        j.setup = None;
+    match q {
+        Qual::Setup => j.setup = None,
+        // O destaque do circuito só existe com o quadro de cargas aberto: não sobra nada no desenho.
+        Qual::Cargas => j.destaque = None,
+        _ => {}
     }
 }
 
@@ -348,9 +351,13 @@ pub fn route(app: &mut CadApp, id: &str, _params: &Value) -> Option<Result<Value
             Some(abrir(Qual::Conferencia))
         }
         "ui.eletrica.inspecao" | "eleinspecao" => {
-            let mut j = trava(&JANELAS);
-            j.inspecao = !j.inspecao;
-            Some(Ok(json!({ "inspecao": j.inspecao })))
+            let ligar = !trava(&JANELAS).inspecao;
+            // Um bloco no caminho de um eletroduto já é uma caixa: liga antes de olhar o projeto.
+            if ligar && app.session.doc().is_ok() && app.session.running.is_none() {
+                let _ = app.run("eletrica.eletroduto.encaixar", json!({}));
+            }
+            trava(&JANELAS).inspecao = ligar;
+            Some(Ok(json!({ "inspecao": ligar })))
         }
         "ui.eletrica.pontos" | "elepontos" => Some(comecar_a_inserir(app)),
         "ui.eletrica.lista" => Some(abrir(Qual::Pontos)),
@@ -1319,7 +1326,7 @@ pub fn janelas(app: &mut CadApp, ctx: &egui::Context) {
 pub fn sobre_canvas(app: &mut CadApp, ui: &mut egui::Ui, painter: &egui::Painter, xf: &crate::canvas::Xf) {
     let (inspecao, destaque) = {
         let j = trava(&JANELAS);
-        (j.inspecao, j.destaque.clone())
+        (j.inspecao, j.destaque.clone().filter(|_| j.abertas.contains(&Qual::Cargas)))
     };
     let comando = app.session.running.as_ref().map(|r| r.id.clone());
     let barra = comando.as_deref().filter(|c| matches!(*c, "eleponto" | "eleeletroduto" | "elecircuito")).map(str::to_string);
@@ -1355,8 +1362,10 @@ fn desenhar_destaque(painter: &egui::Painter, xf: &crate::canvas::Xf, d: &Destaq
         let linha: Vec<egui::Pos2> = t.iter().map(|p| na_tela(xf, *p)).collect();
         painter.add(egui::Shape::line(linha, Stroke::new(3.0, COR_DESTAQUE_TRECHO)));
     }
+    // Um quadrado: círculos e halos sobre o desenho são só da inspeção.
     for p in &d.pontos {
-        painter.circle_stroke(na_tela(xf, *p), 11.0, Stroke::new(2.5, COR_DESTAQUE_PONTO));
+        let r = egui::Rect::from_center_size(na_tela(xf, *p), vec2(20.0, 20.0));
+        painter.rect_stroke(r, 0.0, Stroke::new(2.5, COR_DESTAQUE_PONTO), egui::StrokeKind::Middle);
     }
 }
 
@@ -2874,7 +2883,7 @@ fn aba_lista_eletrodutos(ui: &mut egui::Ui, app: &CadApp, t: &Tokens, st: &mut E
         }
     }
     ui.label(pequeno(
-        "Grafo estrito: um eletroduto liga exatamente dois blocos. Cruzamentos e derivações sem caixa não conectam; clique no meio de um trecho com Inserir eletroduto para pôr a caixa.",
+        "Grafo estrito: um eletroduto liga exatamente dois blocos. Um bloco no caminho do trecho já é uma caixa e divide o trecho nele. Cruzamentos sem bloco não conectam; clique no meio de um trecho com Inserir eletroduto para pôr uma caixa.",
         t.text_dim,
     ));
 }
@@ -4085,5 +4094,19 @@ mod tests {
         assert_eq!(fixo(-0.001, 2), "0,00");
         assert_eq!(fixo(-1.5, 1), "-1,5");
         assert_eq!(fixo(2.5, 2), "2,50");
+    }
+}
+
+#[cfg(test)]
+mod testes_janelas {
+    use super::*;
+
+    #[test]
+    fn fechar_o_quadro_de_cargas_apaga_o_destaque_do_desenho() {
+        let mut j = Janelas { abertas: vec![Qual::Cargas, Qual::Pontos], destaque: Some((Handle(1), "1".into())), ..Janelas::default() };
+        fechar(&mut j, Qual::Pontos);
+        assert!(j.destaque.is_some());
+        fechar(&mut j, Qual::Cargas);
+        assert!(j.destaque.is_none());
     }
 }

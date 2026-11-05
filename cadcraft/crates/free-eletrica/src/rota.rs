@@ -5,9 +5,9 @@
 //!
 //! **Regra do grafo:** os nós são só blocos elétricos (quadro, tomada, luminária, interruptor,
 //! caixa). Cada eletroduto é uma aresta que liga exatamente dois blocos: os das pontas dele.
-//! Duas linhas que se cruzam em X ou em T sem um bloco ali **não** se ligam, e um bloco encostado
-//! no meio de um eletroduto também não: para derivar, é preciso uma caixa (ELEELETRODUTO divide o
-//! trecho e insere a caixa).
+//! Duas linhas que se cruzam em X ou em T sem um bloco ali **não** se ligam: para derivar, é preciso
+//! uma caixa (ELEELETRODUTO divide o trecho e insere a caixa). Um bloco no caminho de um eletroduto já
+//! é uma caixa: `eletroduto::encaixar` corta o trecho nele, e este grafo continua só lendo as pontas.
 //!
 //! Comprimento de um trecho: 2D + |cota do eletroduto − Z do bloco A| + |cota − Z do bloco B|.
 //! A cota vem da instalação: teto (pé-direito), piso (0) ou parede (na altura do bloco A).

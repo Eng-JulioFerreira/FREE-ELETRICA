@@ -790,9 +790,11 @@ pub struct Regeneracao {
 /// projetista), cria tags nos eletrodutos de `criar` (`None`: nenhuma nova), apaga as de
 /// eletrodutos que sumiram e refaz as tabelas de quadro de cargas no desenho.
 pub fn regenerar(doc: &mut Drawing, setup: &Setup, criar: Option<&[Handle]>) -> Result<Regeneracao, String> {
-    let analise = crate::analisar(doc);
     let (m, _) = setup.unidade.metros(doc.header.i64("INSUNITS", 0));
     let m = if m > 0.0 { m } else { 1.0 };
+    // Um bloco movido para o caminho de um eletroduto entra na rede antes de calcular.
+    crate::eletroduto::encaixar(doc, setup, m, crate::eletroduto::TOLERANCIA_EM_LINHA, None, None)?;
+    let analise = crate::analisar(doc);
     let (trechos, soltos, avisos) = todos_os_trechos(doc, &analise, setup);
     let mut reg = Regeneracao { avisos, ..Regeneracao::default() };
     reg.apagadas += apagar_marcas_antigas(doc);

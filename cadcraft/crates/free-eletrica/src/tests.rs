@@ -1710,7 +1710,13 @@ fn inspecao_classifica_pontos_e_eletrodutos() {
     assert_eq!(nivel(interruptor).0, Nivel::Vermelho);
     assert!(nivel(interruptor).1.contains("luminária"));
     assert_eq!(nivel(sem_caminho).0, Nivel::Laranja);
-    assert!(nivel(no_meio).1.contains("meio de um eletroduto"), "{:?}", nivel(no_meio));
+    assert_eq!(nivel(no_meio).0, Nivel::Laranja);
+    assert!(nivel(no_meio).1.contains("em linha"), "{:?}", nivel(no_meio));
+    // Encaixado, o bloco deixa de ser problema: já é a caixa do trecho.
+    let mut d2 = d.clone();
+    assert_eq!(eletroduto::encaixar(&mut d2, &setup, 1.0, eletroduto::TOLERANCIA_EM_LINHA, None, None).unwrap(), 1);
+    let itens2 = inspecionar(&d2, &analisar(&d2), &setup);
+    assert_ne!(itens2.iter().find(|i| i.handle == no_meio).unwrap().motivo, nivel(no_meio).1);
     let solto = itens.iter().find(|i| i.eletroduto).unwrap();
     assert_eq!(solto.nivel, Nivel::Laranja);
     // Do mais grave ao menos grave.
@@ -2598,4 +2604,48 @@ fn modelo_do_proximo_eleponto_e_do_desenho() {
     assert_eq!(biblioteca::modelo(911), Some(m));
     biblioteca::definir_modelo(911, None);
     assert_eq!(biblioteca::modelo(911), None);
+}
+
+#[test]
+fn bloco_em_linha_corta_o_eletroduto_sem_caixa_nova() {
+    let setup = Setup::default();
+    let mut d = metros();
+    let q = qd(&mut d, 0.0, 0.0);
+    let meio = tug(&mut d, 2.0, 0.0, "1");
+    let fim = tug(&mut d, 4.0, 0.0, "1");
+    let perto = tug(&mut d, 3.0, 0.2, "1");
+    let h = eletroduto::inserir(&mut d, q, fim, rota::Instalacao::Teto, 0.0).unwrap();
+    let pontos_antes = analisar(&d).pontos.len();
+    // Passar a 20 cm não é estar em linha; o bloco em linha corta o trecho, sem caixa nova.
+    assert_eq!(eletroduto::encaixar(&mut d, &setup, 1.0, eletroduto::TOLERANCIA_EM_LINHA, None, None).unwrap(), 1);
+    assert_eq!(analisar(&d).pontos.len(), pontos_antes);
+    let a = analisar(&d);
+    let rede = rede_de(&d);
+    assert_eq!(rede.arestas.len(), 2);
+    let ligados = |h: Handle| {
+        let n = rede.no_de(h).unwrap();
+        rede.arestas.iter().filter(|x| x.de == n || x.para == n).count()
+    };
+    assert_eq!((ligados(q), ligados(meio), ligados(fim), ligados(perto)), (1, 2, 1, 0));
+    assert!(rede.arestas.iter().any(|x| x.eletroduto == h));
+    assert_eq!(a.pontos.len(), pontos_antes);
+    // De novo não corta nada: as pontas não contam.
+    assert_eq!(eletroduto::encaixar(&mut d, &setup, 1.0, eletroduto::TOLERANCIA_EM_LINHA, None, None).unwrap(), 0);
+    // Clicado, o bloco a 20 cm também liga, pelo raio de captura.
+    assert_eq!(eletroduto::encaixar(&mut d, &setup, 1.0, setup.raio_captura, Some(&[perto]), None).unwrap(), 1);
+    assert_eq!(rede_de(&d).arestas.len(), 3);
+    // Dois blocos no mesmo trecho, com a restrição ao eletroduto novo.
+    let mut d = metros();
+    let q = qd(&mut d, 0.0, 0.0);
+    let (b1, b2) = (tug(&mut d, 2.0, 0.0, "1"), tug(&mut d, 4.0, 0.0, "1"));
+    let fim = tug(&mut d, 6.0, 0.0, "1");
+    let h = eletroduto::inserir(&mut d, q, fim, rota::Instalacao::Teto, 0.0).unwrap();
+    assert_eq!(eletroduto::encaixar(&mut d, &setup, 1.0, eletroduto::TOLERANCIA_EM_LINHA, None, Some(&[h])).unwrap(), 2);
+    let rede = rede_de(&d);
+    assert_eq!(rede.arestas.len(), 3);
+    let ligados = |h: Handle| {
+        let n = rede.no_de(h).unwrap();
+        rede.arestas.iter().filter(|x| x.de == n || x.para == n).count()
+    };
+    assert_eq!(ligados(b1) + ligados(b2), 4);
 }

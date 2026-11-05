@@ -96,6 +96,8 @@ pub fn specs() -> Vec<CommandSpec> {
             .params("{instalacao?: \"CEILING\" | \"FLOOR\" | \"WALL\", tipo?: PVC_CORR_LIGHT | PVC_CORR_HEAVY | PVC_RIGID | HDPE_CORR | STEEL_ELECTRO | STEEL_HOT_DIP, perfil?: profile name | null, tracado?: STRAIGHT | ANGLE45 | ARC, flecha?: number} → what ELEELETRODUTO uses, also while it runs")
             .noundo(),
         CommandSpec::new("eletrica.eletroduto.dividir", "Split Conduit", run_dividir).params("{eletroduto: hex, ponto: [x, y]} → splits it with a pull box: {caixa}"),
+        CommandSpec::new("eletrica.eletroduto.encaixar", "Connect Blocks In Line", run_encaixar)
+            .params("{} → splits each conduit at the blocks in its path, without a new box: {divididos}"),
         CommandSpec::new("eletrica.eletroduto.definir", "Conduit Properties", run_definir_eletroduto)
             .params("{eletroduto: hex, diametro?: mm | null (a number locks it; null: back to automatic), instalacao?: \"CEILING\" | \"FLOOR\" | \"WALL\", tipo?: conduit type code, perfil?: profile name} → {eletroduto}"),
         CommandSpec::new("eletrica.eletrodutos", "Conduit Summary", run_eletrodutos).params("{} → {trechos, soltos, avisos}").noundo(),
@@ -506,6 +508,7 @@ fn run_materiais(s: &mut Session, _p: &Value) -> Result<Value> {
 
 fn run_dimensionar(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "eletrica.dimensionar";
+    run_encaixar(s, &Value::Null)?;
     let a = analise(s)?;
     let quadro = match p.get("quadro").filter(|q| !q.is_null()) {
         Some(q) => Some(achar_quadro(&a, Some(q))?),
@@ -1230,6 +1233,7 @@ fn bloco_no_ponto(s: &mut Session, q: [f64; 2]) -> Result<std::result::Result<Ha
     let setup = ele::setup::atual();
     let m = metros(s)?;
     if let Some(h) = ele::eletroduto::bloco_em(s.doc()?, &setup, q, m) {
+        encaixar_clicado(s, h)?;
         return Ok(Ok(h));
     }
     let Some((e, p)) = ele::eletroduto::eletroduto_em(s.doc()?, &setup, q, m) else {
@@ -1308,6 +1312,7 @@ fn run_eletroduto(s: &mut Session, p: &Value) -> Result<Value> {
         Some(f) => ele::eletroduto::inserir_com_perfil(s.doc_mut()?, de, para, &percurso, f).map_err(erro)?,
         None => ele::eletroduto::inserir_percurso(s.doc_mut()?, de, para, instalacao, &percurso, tipo).map_err(erro)?,
     };
+    encaixar_trecho(s, h)?;
     Ok(json!({ "eletroduto": h.hex(), "de": de.hex(), "para": para.hex() }))
 }
 
@@ -1346,6 +1351,33 @@ fn run_dividir(s: &mut Session, p: &Value) -> Result<Value> {
     let m = metros(s)?;
     let caixa = ele::eletroduto::dividir(s.doc_mut()?, &ele::setup::atual(), e, q, m).map_err(erro)?;
     Ok(json!({ "caixa": caixa.hex() }))
+}
+
+fn run_encaixar(s: &mut Session, _p: &Value) -> Result<Value> {
+    let m = metros(s)?;
+    let n = ele::eletroduto::encaixar(s.doc_mut()?, &ele::setup::atual(), m, ele::eletroduto::TOLERANCIA_EM_LINHA, None, None).map_err(erro)?;
+    Ok(json!({ "divididos": n }))
+}
+
+/// O bloco clicado pode estar no caminho de um eletroduto: ele já é uma caixa, e o trecho se corta nele.
+fn encaixar_clicado(s: &mut Session, h: Handle) -> Result<()> {
+    let (setup, m) = (ele::setup::atual(), metros(s)?);
+    ele::eletroduto::encaixar(s.doc_mut()?, &setup, m, setup.raio_captura, Some(&[h]), None).map_err(erro)?;
+    Ok(())
+}
+
+/// Um trecho novo pode passar por blocos que já existem.
+fn encaixar_trecho(s: &mut Session, h: Handle) -> Result<()> {
+    let (setup, m) = (ele::setup::atual(), metros(s)?);
+    ele::eletroduto::encaixar(s.doc_mut()?, &setup, m, ele::eletroduto::TOLERANCIA_EM_LINHA, None, Some(&[h])).map_err(erro)?;
+    Ok(())
+}
+
+/// Um ponto novo pode cair no caminho de um eletroduto que já existe.
+fn encaixar_ponto(s: &mut Session, h: Handle) -> Result<()> {
+    let (setup, m) = (ele::setup::atual(), metros(s)?);
+    ele::eletroduto::encaixar(s.doc_mut()?, &setup, m, ele::eletroduto::TOLERANCIA_EM_LINHA, Some(&[h]), None).map_err(erro)?;
+    Ok(())
 }
 
 fn run_definir_eletroduto(s: &mut Session, p: &Value) -> Result<Value> {
@@ -1438,7 +1470,8 @@ impl EletrodutoM {
                 None => ele::eletroduto::inserir_percurso(s.doc_mut()?, a, h, m.instalacao, &percurso, m.tipo),
             };
             match feito {
-                Ok(_) => {
+                Ok(novo) => {
+                    encaixar_trecho(s, novo)?;
                     self.feitos += 1;
                     self.desvios.clear();
                 }
@@ -1566,7 +1599,10 @@ impl Interactive for EletrodutoM {
                 s.set_selection(Vec::new());
                 let bloco = hs.iter().copied().find(|h| s.doc().ok().and_then(|d| ele::ponto::ler_ponto(d, *h)).is_some());
                 match bloco {
-                    Some(h) => self.clicar(s, h),
+                    Some(h) => {
+                        encaixar_clicado(s, h)?;
+                        self.clicar(s, h)
+                    }
                     None => {
                         s.echo("Clique num bloco elétrico ou no meio de um eletroduto.");
                         Ok(Step::Continue)
@@ -1866,6 +1902,7 @@ fn run_ponto(s: &mut Session, p: &Value) -> Result<Value> {
         let r = if auto { ele::biblioteca::alinhar_a_parede(s.doc()?, &setup, pos, m).unwrap_or(rotacao) } else { rotacao };
         let h = ele::biblioteca::inserir_ponto(s.doc_mut()?, &bloco, pos, r, &valores, &setup).map_err(erro)?;
         ligar_ao_quadro_pai(s, h, pai)?;
+        encaixar_ponto(s, h)?;
         feitos.push(h.hex());
     }
     Ok(json!({ "pontos": feitos }))
@@ -2010,6 +2047,7 @@ impl Interactive for PontoM {
                 match ele::biblioteca::inserir_ponto(s.doc_mut()?, &m.bloco, [p.x, p.y], r, &m.valores, &ele::setup::atual()) {
                     Ok(h) => {
                         ligar_ao_quadro_pai(s, h, m.quadro)?;
+                        encaixar_ponto(s, h)?;
                         self.feitos += 1;
                     }
                     Err(e) => s.echo(e),

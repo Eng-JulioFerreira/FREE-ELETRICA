@@ -3,11 +3,12 @@
 //! Inserir eletroduto: uma spline em arco (ou uma linha, com flecha zero) que liga exatamente dois
 //! blocos elétricos, gravados em `from_handle` e `to_handle`. Clicar no meio de um eletroduto
 //! existente divide o trecho e insere uma caixa de passagem: é assim que se deriva no grafo
-//! estrito.
+//! estrito. Um bloco no caminho do eletroduto já é uma caixa (4x2, octogonal): [`encaixar`] corta o
+//! trecho nele, em `A -> bloco` e `bloco -> B`.
 
 use cadcraft_doc::color::Color;
 use cadcraft_doc::geom::{Polyline, Spline, Vec2, Vec3};
-use cadcraft_doc::{Common, Drawing, EntityKind, Handle, Line, Lineweight, Space};
+use cadcraft_doc::{Common, Drawing, Entity, EntityKind, Handle, Line, Lineweight, Space};
 
 use crate::biblioteca;
 use crate::ponto::ler_ponto;
@@ -23,6 +24,10 @@ pub const CAMADA_PAREDE: &str = "ELE-ELETRODUTO-PAREDE";
 pub const FLECHA_PADRAO: f64 = 0.15;
 /// A flecha vai até meia corda (meia circunferência).
 pub const FLECHA_MAXIMA: f64 = 0.5;
+/// Até esta distância (m) do traçado, um bloco está em linha com o eletroduto sem que ninguém tenha
+/// clicado nele. É bem menor que o raio de captura: um eletroduto que só passa perto de um interruptor
+/// não vira um trecho dele.
+pub const TOLERANCIA_EM_LINHA: f64 = 0.05;
 
 type P = [f64; 2];
 
@@ -410,7 +415,23 @@ pub fn dividir(doc: &mut Drawing, setup: &Setup, h: Handle, q: P, metros: f64) -
     biblioteca::garantir_base(doc, setup, metros);
     let valores = vec![("ALTURA".to_string(), crate::ponto::br(z))];
     let caixa = biblioteca::inserir_ponto(doc, biblioteca::BLOCO_CAIXA, p, 0.0, &valores, setup)?;
+    partir(doc, &original, &t, i, p, caixa, pontas, instalacao)?;
+    Ok(caixa)
+}
 
+/// Corta o eletroduto `original` em `p`, no segmento `i` do traçado `t`: `de -> no` fica com o handle
+/// dele e `no -> para` é uma entidade nova, que é devolvida.
+#[allow(clippy::too_many_arguments)]
+fn partir(
+    doc: &mut Drawing,
+    original: &Entity,
+    t: &[P],
+    i: usize,
+    p: P,
+    no: Handle,
+    pontas: Option<(Handle, Handle)>,
+    instalacao: Instalacao,
+) -> Result<Handle, String> {
     let mut primeira: Vec<P> = t.iter().take(i + 1).copied().collect();
     primeira.push(p);
     let mut segunda: Vec<P> = vec![p];
@@ -418,7 +439,7 @@ pub fn dividir(doc: &mut Drawing, setup: &Setup, h: Handle, q: P, metros: f64) -
 
     let mut e1 = original.clone();
     e1.kind = parte(&original.kind, &primeira);
-    xdata::gravar(&mut e1.common.xdata, rota::CHAVE_PARA, Some(&caixa.hex()));
+    xdata::gravar(&mut e1.common.xdata, rota::CHAVE_PARA, Some(&no.hex()));
     if let Some((de, _)) = pontas {
         xdata::gravar(&mut e1.common.xdata, rota::CHAVE_DE, Some(&de.hex()));
     }
@@ -427,15 +448,82 @@ pub fn dividir(doc: &mut Drawing, setup: &Setup, h: Handle, q: P, metros: f64) -
 
     let mut x2 = original.common.xdata.clone();
     xdata::gravar(&mut x2, rota::CHAVE_ESQUEMA, Some(rota::VERSAO_ESQUEMA));
-    xdata::gravar(&mut x2, rota::CHAVE_DE, Some(&caixa.hex()));
+    xdata::gravar(&mut x2, rota::CHAVE_DE, Some(&no.hex()));
     if let Some((_, para)) = pontas {
         xdata::gravar(&mut x2, rota::CHAVE_PARA, Some(&para.hex()));
     }
     xdata::gravar(&mut x2, rota::CHAVE_INSTALACAO, Some(instalacao.codigo()));
     xdata::gravar(&mut x2, rota::CHAVE_TAG, None);
     let c2 = Common { xdata: x2, ..original.common.clone() };
-    doc.add(&Space::Model, c2, parte(&original.kind, &segunda)).map_err(|e| e.to_string())?;
-    Ok(caixa)
+    doc.add(&Space::Model, c2, parte(&original.kind, &segunda)).map_err(|e| e.to_string())
+}
+
+/// O próximo corte: (eletroduto, bloco, posição do bloco). Um bloco das pontas do eletroduto não conta.
+fn proximo_encaixe(
+    doc: &Drawing,
+    setup: &Setup,
+    metros: f64,
+    tolerancia: f64,
+    blocos: Option<&[Handle]>,
+    eletrodutos: Option<&[Handle]>,
+) -> Option<(Handle, Handle, P)> {
+    let analise = crate::analisar(doc);
+    let rede = rota::Rede::montar(doc, setup, &analise.pontos, metros);
+    let margem = TOLERANCIA_EM_LINHA / metros;
+    let longe = |a: P, b: P| (a[0] - b[0]).hypot(a[1] - b[1]) > margem;
+    for e in doc.model.iter().filter(|e| setup.e_camada_eletroduto(&e.common.layer)) {
+        if eletrodutos.is_some_and(|l| !l.contains(&e.handle)) {
+            continue;
+        }
+        let Some(t) = rota::tracado(&e.kind, 0.005 / metros) else { continue };
+        let (Some(ini), Some(fim)) = (t.first().copied(), t.last().copied()) else { continue };
+        let aresta = rede.arestas.iter().find(|a| a.eletroduto == e.handle);
+        let e_ponta = |h: Handle| aresta.is_some_and(|a| [a.de, a.para].iter().any(|n| rede.nos.get(*n).is_some_and(|no| no.handle == h)));
+        for p in analise.pontos.iter().filter(|p| blocos.is_none_or(|l| l.contains(&p.handle)) && !e_ponta(p.handle)) {
+            if let Some((q, d, _)) = rota::perto_do_tracado(&t, p.posicao)
+                && d * metros <= tolerancia
+                && longe(q, ini)
+                && longe(q, fim)
+            {
+                return Some((e.handle, p.handle, p.posicao));
+            }
+        }
+    }
+    None
+}
+
+/// Liga os blocos que estão no caminho de eletrodutos: cada um corta o trecho em `A -> bloco` e
+/// `bloco -> B`, pois o próprio bloco já é uma caixa. `tolerancia` em metros: [`TOLERANCIA_EM_LINHA`]
+/// sem clique, o raio de captura num bloco clicado. `blocos` e `eletrodutos` restringem a busca. Devolve
+/// quantos cortes fez.
+pub fn encaixar(
+    doc: &mut Drawing,
+    setup: &Setup,
+    metros: f64,
+    tolerancia: f64,
+    blocos: Option<&[Handle]>,
+    eletrodutos: Option<&[Handle]>,
+) -> Result<usize, String> {
+    let metros = if metros > 0.0 { metros } else { 1.0 };
+    let mut lista = eletrodutos.map(<[Handle]>::to_vec);
+    let mut n = 0;
+    // O limite é só uma trava: cada corte encurta um trecho, e isso sempre termina.
+    while n < 10_000 {
+        let Some((h, bloco, pos)) = proximo_encaixe(doc, setup, metros, tolerancia, blocos, lista.as_deref()) else { break };
+        let original = doc.model.get(h).map(|e| (**e).clone()).ok_or("eletroduto não encontrado")?;
+        let t = rota::tracado(&original.kind, 0.005 / metros).ok_or("o objeto não é um eletroduto aberto")?;
+        let (_, _, i) = rota::perto_do_tracado(&t, pos).ok_or("não achei o ponto no eletroduto")?;
+        let analise = crate::analisar(doc);
+        let rede = rota::Rede::montar(doc, setup, &analise.pontos, metros);
+        let pontas = rede.arestas.iter().find(|a| a.eletroduto == h).and_then(|a| Some((rede.nos.get(a.de)?.handle, rede.nos.get(a.para)?.handle)));
+        let instalacao = rota::instalacao_de(&xdata::ler(&original.common.xdata), &original.common.layer, setup);
+        let novo = partir(doc, &original, &t, i, pos, bloco, pontas, instalacao)?;
+        if let Some(l) = &mut lista {
+            l.push(novo);
+        }
+        n += 1;
+    }
+    Ok(n)
 }
 
 /// Trava (`Some`) ou destrava (`None`) o diâmetro de um eletroduto.
