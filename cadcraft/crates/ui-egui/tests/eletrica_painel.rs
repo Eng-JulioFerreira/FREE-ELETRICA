@@ -178,22 +178,25 @@ fn paleta_ferramentas_e_fluxo_completo() {
     h.run_steps(4);
     // A paleta tem as ferramentas na ordem do fluxo.
     for f in [
-        "1. Pontos",
+        "Elétrica",
+        "Telecom",
+        "Pontos e Famílias",
         "Blocos e famílias...",
         "Inspetor de atributos...",
         "Dimensionar projeto...",
         "Inserir pontos",
-        "2. Circuitos e comandos",
+        "Circuitos e Comandos",
         "Criar circuito",
         "Comandos e luminárias",
-        "3. Quadro de cargas",
+        "Quadros e Dimensionamento",
         "Quadro de cargas...",
         "Lista de pontos...",
         "Lista de eletrodutos...",
         "Lista de materiais...",
-        "4. Eletrodutos",
+        "Eletrodutos",
         "Inserir eletroduto",
-        "5. Documentação e tags",
+        "Documentação e Tabelas",
+        "Projeto e Inspeção",
         "Tags de fiação",
         "Tabela do quadro",
         "Atualizar tags e tabelas",
@@ -202,6 +205,33 @@ fn paleta_ferramentas_e_fluxo_completo() {
     ] {
         h.get_by_label(f);
     }
+    // Imagem da paleta, quando pedida.
+    if let Ok(saida) = std::env::var("FREE_ELETRICA_PNG_PALETA") {
+        h.render().unwrap().save(saida).unwrap();
+    }
+    // Uma seção recolhe e abre pela seta, e o estado fica junto das Tool Sets.
+    h.get_by_label("Eletrodutos").click();
+    h.run_steps(3);
+    assert!(h.query_by_label("Inserir eletroduto").is_none());
+    assert!(h.state().ui.collapsed_groups.iter().any(|g| g == "eletrica/Eletrodutos"));
+    h.get_by_label("Eletrodutos").click();
+    h.run_steps(3);
+    h.get_by_label("Inserir eletroduto");
+    // A aba Telecom troca as ferramentas.
+    h.get_by_label("Telecom").click();
+    h.run_steps(3);
+    assert!(h.query_by_label("Criar circuito").is_none());
+    for f in ["Pontos e Racks", "Inserir ponto de dados", "Inserir rack", "Lista de pontos de dados...", "Infraestrutura", "Catálogo de cabos..."] {
+        h.get_by_label(f);
+    }
+    h.get_by_label("Inserir ponto de dados").click();
+    h.run_steps(3);
+    assert_eq!(h.state().session.running.as_ref().map(|r| r.id.as_str()), Some("eleponto"));
+    assert_eq!(free_eletrica::biblioteca::modelo(h.state().session.state().unwrap().uid).unwrap().bloco, "RJ45");
+    h.state_mut().session.input(Input::Enter).unwrap();
+    h.run_steps(3);
+    h.get_by_label("Elétrica").click();
+    h.run_steps(3);
     // Nada fica aberto sem ser pedido.
     assert!(h.query_by_label("Rotear fiação...").is_none());
     assert!(h.query_by_label("Pontos elétricos").is_none());
@@ -226,14 +256,14 @@ fn paleta_ferramentas_e_fluxo_completo() {
     h.run_steps(3);
     h.get_by_label("Diâmetro externo dos condutores");
     h.get_by_label("Cor da fase R");
-    h.get_by_label("Eletrodutos").click();
+    h.query_all_by_label("Eletrodutos").last().unwrap().click();
     h.run_steps(3);
     h.get_by_label("Diâmetro mínimo");
     h.get_by_label("Demanda").click();
     h.run_steps(3);
     h.get_by_label("Concessionária");
     h.get_by_label("Tipo de edificação");
-    h.get_by_label("Telecom").click();
+    h.get_by_label("Cabos").click();
     h.run_steps(3);
     h.get_by_label("Fibra óptica N12");
     h.get_by_label("Cadastrar novo cabo");
@@ -273,8 +303,8 @@ fn paleta_ferramentas_e_fluxo_completo() {
     h.get_by_label("vazio");
     h.state_mut().session.undo().unwrap();
     h.run_steps(3);
-    // Esc fecha; ELEROTEAR abre a mesma janela.
-    h.key_press(egui::Key::Escape);
+    // O X do cabeçalho interno fecha, como Esc; ELEROTEAR abre a mesma janela.
+    h.get_by_label("Fechar").click();
     h.run_steps(3);
     assert!(h.query_by_label("PAINEL: QD-01").is_none());
     assert!(h.state_mut().cmdline("ELEROTEAR").is_none());
@@ -323,7 +353,7 @@ fn paleta_ferramentas_e_fluxo_completo() {
     assert!(r["linhas"][0]["sobrescrita"]["secao"].is_number(), "{r}");
     h.state_mut().session.undo().unwrap();
     h.run_steps(3);
-    h.get_by_label("Quadro de cargas").click();
+    h.get_by_label("Resumo").click();
     h.run_steps(3);
     // Na paleta e no resumo.
     assert!(h.query_all_by_label("Dimensionar projeto...").count() >= 2);
@@ -414,7 +444,7 @@ fn paleta_ferramentas_e_fluxo_completo() {
     h.get_by_label("Lista de materiais...").click();
     h.run_steps(3);
     h.get_by_label("Cabos, com a folga do projeto");
-    h.get_by_label("Eletrodutos");
+    assert!(h.query_all_by_label("Eletrodutos").count() >= 2, "a seção da paleta e o título na lista");
     h.get_by_label("Disjuntores");
     assert!(h.query_all_by_label("Cabo flexível PVC 70 °C (450/750 V)").count() >= 1);
     assert!(h.query_all_by_label("PVC rígido (roscável ou soldável)").count() >= 1);
@@ -423,6 +453,7 @@ fn paleta_ferramentas_e_fluxo_completo() {
 
     // ELEPONTOS: a mini-barra na hora, sem janela; cada clique insere.
     assert!(h.query_by_label("Quadro pai").is_none());
+    h.state_mut().run("eletrica.ponto.modelo", json!({ "bloco": "TOM-SIM-BAIXA" })).unwrap();
     assert!(h.state_mut().cmdline("ELEPONTOS").is_none());
     h.run_steps(3);
     assert_eq!(h.state().session.running.as_ref().map(|r| r.id.as_str()), Some("eleponto"));

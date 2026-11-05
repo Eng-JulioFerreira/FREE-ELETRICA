@@ -2,11 +2,13 @@
 // Copyright (C) 2026 Julio Ferreira. Free Elétrica: ver LICENSE e AVISO_LEGAL.md na raiz do repositorio.
 //! Free Elétrica: a interface. Nada fica aberto sem ser pedido.
 //!
-//! 1. A paleta Elétrica (`show`): as ferramentas na ordem do fluxo de trabalho.
+//! 1. A paleta (`show`): as abas Elétrica e Telecom, com seções recolhíveis e ferramentas planas,
+//!    como as Tool Sets do CADCraft.
 //! 2. A mini-barra (`sobre_canvas`): sobre o desenho, só enquanto ELEPONTO, ELEELETRODUTO ou
 //!    ELECIRCUITO esperam cliques. Muda o que o comando usa sem interrompê-lo.
 //! 3. As janelas (`janelas`): blocos, inspetor de atributos, quadro de cargas em duas abas,
-//!    dimensionamento, eletrodutos, pontos, conferência, materiais e configurações. Cada uma fecha no X ou com Esc, a última aberta primeiro.
+//!    dimensionamento, eletrodutos, pontos, conferência, materiais e configurações. Sem barra de
+//!    título: o cabeçalho é interno, e cada uma fecha no X dele ou com Esc, a última aberta primeiro.
 //! 4. A sobreposição (`sobre_canvas`): os halos da inspeção visual e o destaque do circuito.
 //!
 //! Toda alteração passa por um comando do motor (`app.run`/`app.start`): a interface não decide
@@ -76,6 +78,8 @@ struct Janelas {
     destaque: Option<(Handle, String)>,
     /// O filtro de categoria da mini-barra de pontos.
     filtro_barra: FiltroPontos,
+    /// A aba da paleta.
+    aba_paleta: AbaPaleta,
 }
 
 /// As janelas do Free Elétrica.
@@ -187,7 +191,7 @@ impl Aba {
             Aba::Eletrodutos => "Eletrodutos",
             Aba::Agrupamento => "Agrupamento",
             Aba::Demanda => "Demanda",
-            Aba::Telecom => "Telecom",
+            Aba::Telecom => "Cabos",
         }
     }
 }
@@ -300,6 +304,14 @@ fn comecar_a_inserir(app: &mut CadApp) -> Result<Value, String> {
     Ok(Value::Null)
 }
 
+/// Começa a inserir já com um bloco escolhido.
+fn inserir_bloco(app: &mut CadApp, bloco: &str) -> Result<Value, String> {
+    app.run("eletrica.bootstrap", json!({}))?;
+    app.run("eletrica.ponto.modelo", json!({ "bloco": bloco }))?;
+    app.start("eleponto");
+    Ok(Value::Null)
+}
+
 /// Comandos do Free Elétrica que só existem na interface: a paleta, as janelas e a inspeção. `None`
 /// quando `id` não é um deles.
 ///
@@ -321,6 +333,21 @@ pub fn route(app: &mut CadApp, id: &str, _params: &Value) -> Option<Result<Value
         }
         "ui.eletrica.pontos" | "elepontos" => Some(comecar_a_inserir(app)),
         "ui.eletrica.lista" => Some(abrir(Qual::Pontos)),
+        "ui.eletrica.telecom.dados" => Some(inserir_bloco(app, "RJ45")),
+        "ui.eletrica.telecom.rack" => Some(inserir_bloco(app, "RACK")),
+        "ui.eletrica.telecom.lista" => {
+            let mut j = trava(&JANELAS);
+            j.pontos.filtro = FiltroPontos::Dados;
+            drop(j);
+            Some(abrir(Qual::Pontos))
+        }
+        "ui.eletrica.telecom.cabos" => {
+            let r = abrir_setup();
+            if let Some(rascunho) = trava(&JANELAS).setup.as_mut() {
+                rascunho.aba = Aba::Telecom;
+            }
+            Some(r)
+        }
         "ui.eletrica.blocos" | "eleblocos" => Some(abrir(Qual::Blocos)),
         "ui.eletrica.atributos" | "eleatributos" => Some(abrir(Qual::Atributos)),
         "ui.eletrica.dimensionar" | "eledimensionar" => {
@@ -471,48 +498,64 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         executar(app, acoes);
         return;
     }
-    let mut comando: Option<&str> = None;
     let inspecao = trava(&JANELAS).inspecao;
-    egui::ScrollArea::vertical().id_salt("dock-eletrica").auto_shrink([false, false]).show(ui, |ui| {
-        egui::Frame::NONE.inner_margin(egui::Margin::symmetric(8, 6)).show(ui, |ui| {
-            ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
-            let mut botao = |ui: &mut egui::Ui, texto: &str, id: &'static str, dica: &str| {
-                if ferramenta(ui, texto, tem_desenho, dica).clicked() {
-                    comando = Some(id);
+    let mut aba = trava(&JANELAS).aba_paleta;
+    let mut comando: Option<&'static str> = None;
+    let mut alternar: Option<String> = None;
+    let recolhidas = app.ui.collapsed_groups.clone();
+    egui::Frame::NONE.fill(t.panel).show(ui, |ui| {
+        let r = ui.max_rect();
+        let p = ui.painter().clone();
+        // As abas das disciplinas, como Desenho | Modelagem nas Tool Sets.
+        let altura_abas = 28.0;
+        let mut x = r.left();
+        for (qual, nome) in [(AbaPaleta::Eletrica, "Elétrica"), (AbaPaleta::Telecom, "Telecom")] {
+            let tr = egui::Rect::from_min_size(egui::pos2(x, r.top()), vec2(92.0, altura_abas));
+            let ativa = aba == qual;
+            let resp = ui.interact(tr, ui.id().with(("ele-aba-paleta", nome)), egui::Sense::click());
+            p.rect_filled(tr, 0.0, if ativa { t.tab_active } else { t.chrome });
+            p.text(tr.center(), egui::Align2::CENTER_CENTER, nome, egui::FontId::proportional(13.5), if ativa { t.text } else { t.text_dim });
+            crate::icons::describe_control(ui, &resp, nome, Some(ativa), true);
+            if resp.clicked() {
+                aba = qual;
+            }
+            x += 92.0;
+        }
+        p.rect_filled(egui::Rect::from_min_max(egui::pos2(x, r.top()), egui::pos2(r.right(), r.top() + altura_abas)), 0.0, t.chrome);
+        let corpo = egui::Rect::from_min_max(egui::pos2(r.left(), r.top() + altura_abas), r.max);
+        ui.scope_builder(egui::UiBuilder::new().max_rect(corpo), |ui| {
+            egui::ScrollArea::vertical().id_salt("dock-eletrica").auto_shrink([false, false]).show(ui, |ui| {
+                ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+                let secoes = if aba == AbaPaleta::Eletrica { &PALETA_ELETRICA[..] } else { &PALETA_TELECOM[..] };
+                for secao in secoes {
+                    let chave = chave_da_secao(secao.nome);
+                    let recolhida = recolhidas.contains(&chave);
+                    if cabecalho_da_secao(ui, &t, secao.nome, recolhida) {
+                        alternar = Some(chave);
+                    }
+                    if !recolhida {
+                        for f in secao.ferramentas {
+                            let ativa = f.comando == "ui.eletrica.inspecao" && inspecao;
+                            if linha_de_ferramenta(ui, &t, f, tem_desenho || !f.exige_desenho, ativa) {
+                                comando = Some(f.comando);
+                            }
+                        }
+                    }
+                    let (sr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), egui::Sense::hover());
+                    ui.painter().hline(sr.x_range().shrink(6.0), sr.center().y, Stroke::new(1.0, t.border));
                 }
-            };
-            grupo(ui, &t, "1. Pontos");
-            botao(ui, "Blocos e famílias...", "ui.eletrica.blocos", "Crie um bloco elétrico novo ou edite os do desenho, com categoria, altura padrão e caixa (ELEBLOCOS)");
-            botao(ui, "Inserir pontos", "ui.eletrica.pontos", "A mini-barra escolhe o bloco, a potência, a altura e o quadro; cada clique no desenho insere um ponto. Tab gira (ELEPONTOS)");
-            botao(ui, "Lista de pontos...", "ui.eletrica.lista", "Pontos do desenho por categoria: altura, selecionar e excluir");
-            botao(ui, "Inspetor de atributos...", "ui.eletrica.atributos", "Selecione um bloco: valores, visibilidade e posição de cada atributo (ELEATRIBUTOS)");
-            grupo(ui, &t, "2. Circuitos e comandos");
-            botao(ui, "Criar circuito", "elecircuito", "Selecione o quadro, o número e os pontos do circuito; a barra sobre o desenho edita descrição, esquema e tensão (ELECIRCUITO)");
-            botao(ui, "Comandos e luminárias", "elecomando", "Selecione o interruptor e as luminárias que ele comanda (ELECOMANDO)");
-            grupo(ui, &t, "3. Quadro de cargas");
-            botao(ui, "Quadro de cargas...", "ui.eletrica.cargas", "Resumo dos circuitos de um quadro e a ficha de engenharia de cada um (ELECARGAS)");
-            botao(ui, "Dimensionar projeto...", "ui.eletrica.dimensionar", "Premissas do cálculo e o botão Processar cálculo: só aqui os cabos e disjuntores mudam (ELEDIMENSIONAR)");
-            grupo(ui, &t, "4. Eletrodutos");
-            botao(ui, "Inserir eletroduto", "eleeletroduto", "Clique nos blocos em sequência; a mini-barra escolhe a cota e o tipo. Clicar no meio de um eletroduto insere uma caixa de passagem (ELEELETRODUTO)");
-            botao(ui, "Lista de eletrodutos...", "ui.eletrica.eletrodutos", "Trechos, com tipo, cota, diâmetro e ocupação");
-            grupo(ui, &t, "5. Documentação e tags");
-            botao(ui, "Tags de fiação", "elefiacao", "Põe a simbologia de fiação e o diâmetro nos eletrodutos; a posição que você der fica guardada (ELEFIACAO)");
-            botao(ui, "Tabela do quadro", "elequadro_tabela", "Desenha o quadro de cargas num ponto da planta (ELEQUADRO_TABELA)");
-            botao(ui, "Atualizar tags e tabelas", "eleregen", "Refaz o que é gerado sem mudar as posições (ELEREGEN)");
-            botao(ui, "Lista de materiais...", "ui.eletrica.materiais", "Cabos por seção e tipo, eletrodutos por tipo e diâmetro, caixas, pontos e disjuntores (ELEMATERIAIS)");
-            ui.add_space(6.0);
-            let largura = ui.available_width();
-            let inspecionar = egui::Button::new("Inspecionar projeto").selected(inspecao).min_size(vec2(largura, 26.0));
-            let dica = "Halos no desenho: vermelho falta circuito ou comando, laranja sem caminho até o quadro, amarelo acima do limite, verde válido (ELEINSPECAO)";
-            if ui.add_enabled(tem_desenho, inspecionar).on_hover_text(dica).clicked() {
-                comando = Some("ui.eletrica.inspecao");
-            }
-            ui.add_space(6.0);
-            if ferramenta(ui, "Configurações...", true, "Setup do projeto: sistema, temperatura, isolação, cabos, eletrodutos, telecom (ELECONFIG)").clicked() {
-                comando = Some("ui.eletrica.setup");
-            }
+            });
         });
     });
+    trava(&JANELAS).aba_paleta = aba;
+    if let Some(chave) = alternar {
+        let grupos = &mut app.ui.collapsed_groups;
+        if let Some(i) = grupos.iter().position(|g| *g == chave) {
+            grupos.remove(i);
+        } else {
+            grupos.push(chave);
+        }
+    }
     if let Some(c) = comando {
         if c.starts_with("ui.") {
             if let Err(e) = app.run(c, Value::Null) {
@@ -524,9 +567,374 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     }
 }
 
-fn grupo(ui: &mut egui::Ui, t: &Tokens, nome: &str) {
-    ui.add_space(4.0);
-    ui.label(pequeno(nome, t.text_dim).strong());
+/// As disciplinas da paleta.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum AbaPaleta {
+    #[default]
+    Eletrica,
+    Telecom,
+}
+
+/// Um botão da paleta.
+struct Ferramenta {
+    icone: Icone,
+    rotulo: &'static str,
+    comando: &'static str,
+    dica: &'static str,
+    exige_desenho: bool,
+}
+
+/// Uma seção recolhível da paleta.
+struct Secao {
+    nome: &'static str,
+    ferramentas: &'static [Ferramenta],
+}
+
+const fn ferr(icone: Icone, rotulo: &'static str, comando: &'static str, dica: &'static str) -> Ferramenta {
+    Ferramenta { icone, rotulo, comando, dica, exige_desenho: true }
+}
+
+const PALETA_ELETRICA: [Secao; 6] = [
+    Secao {
+        nome: "Pontos e Famílias",
+        ferramentas: &[
+            ferr(
+                Icone::Bloco,
+                "Blocos e famílias...",
+                "ui.eletrica.blocos",
+                "Crie um bloco elétrico novo ou edite os do desenho, com categoria, altura padrão e caixa (ELEBLOCOS)",
+            ),
+            ferr(
+                Icone::Tomada,
+                "Inserir pontos",
+                "ui.eletrica.pontos",
+                "A mini-barra escolhe o bloco, a potência, a altura e o quadro; cada clique no desenho insere um ponto. Tab gira (ELEPONTOS)",
+            ),
+            ferr(Icone::Lista, "Lista de pontos...", "ui.eletrica.lista", "Pontos do desenho por categoria: altura, selecionar e excluir"),
+            ferr(
+                Icone::Etiqueta,
+                "Inspetor de atributos...",
+                "ui.eletrica.atributos",
+                "Selecione um bloco: valores, visibilidade e posição de cada atributo (ELEATRIBUTOS)",
+            ),
+        ],
+    },
+    Secao {
+        nome: "Circuitos e Comandos",
+        ferramentas: &[
+            ferr(
+                Icone::Circuito,
+                "Criar circuito",
+                "elecircuito",
+                "Selecione o quadro, o número e os pontos do circuito; a barra sobre o desenho edita descrição, esquema e tensão (ELECIRCUITO)",
+            ),
+            ferr(Icone::Interruptor, "Comandos e luminárias", "elecomando", "Selecione o interruptor e as luminárias que ele comanda (ELECOMANDO)"),
+        ],
+    },
+    Secao {
+        nome: "Quadros e Dimensionamento",
+        ferramentas: &[
+            ferr(
+                Icone::Quadro,
+                "Quadro de cargas...",
+                "ui.eletrica.cargas",
+                "Resumo dos circuitos de um quadro e a ficha de engenharia de cada um (ELECARGAS)",
+            ),
+            ferr(
+                Icone::Engrenagem,
+                "Dimensionar projeto...",
+                "ui.eletrica.dimensionar",
+                "Esquemas, cabos e grupos DR por circuito; calcule, revise e aplique ao quadro (ELEDIMENSIONAR)",
+            ),
+        ],
+    },
+    Secao {
+        nome: "Eletrodutos",
+        ferramentas: &[
+            ferr(
+                Icone::Eletroduto,
+                "Inserir eletroduto",
+                "eleeletroduto",
+                "Clique nos blocos em sequência; a mini-barra escolhe o perfil e o traçado. Clicar no meio de um eletroduto insere uma caixa de passagem (ELEELETRODUTO)",
+            ),
+            ferr(Icone::Lista, "Lista de eletrodutos...", "ui.eletrica.eletrodutos", "Trechos, com tipo, cota, diâmetro e ocupação"),
+        ],
+    },
+    Secao {
+        nome: "Documentação e Tabelas",
+        ferramentas: &[
+            ferr(
+                Icone::Chamada,
+                "Tags de fiação",
+                "elefiacao",
+                "Põe a simbologia de fiação e o diâmetro nos eletrodutos; a posição que você der fica guardada (ELEFIACAO)",
+            ),
+            ferr(Icone::Grade, "Tabela do quadro", "elequadro_tabela", "Desenha o quadro de cargas num ponto da planta (ELEQUADRO_TABELA)"),
+            ferr(Icone::Atualizar, "Atualizar tags e tabelas", "eleregen", "Refaz o que é gerado sem mudar as posições (ELEREGEN)"),
+            ferr(
+                Icone::Prancheta,
+                "Lista de materiais...",
+                "ui.eletrica.materiais",
+                "Cabos por seção e tipo, eletrodutos por tipo e diâmetro, caixas, pontos e disjuntores (ELEMATERIAIS)",
+            ),
+        ],
+    },
+    Secao {
+        nome: "Projeto e Inspeção",
+        ferramentas: &[
+            ferr(
+                Icone::Olho,
+                "Inspecionar projeto",
+                "ui.eletrica.inspecao",
+                "Halos no desenho: vermelho falta circuito ou comando, laranja sem caminho até o quadro, amarelo acima do limite, verde válido (ELEINSPECAO)",
+            ),
+            Ferramenta {
+                icone: Icone::Controles,
+                rotulo: "Configurações...",
+                comando: "ui.eletrica.setup",
+                dica: "Critérios do projeto, alturas, cabos, eletrodutos e demanda (ELECONFIG)",
+                exige_desenho: false,
+            },
+        ],
+    },
+];
+
+const PALETA_TELECOM: [Secao; 3] = [
+    Secao {
+        nome: "Pontos e Racks",
+        ferramentas: &[
+            ferr(
+                Icone::Tomada,
+                "Inserir ponto de dados",
+                "ui.eletrica.telecom.dados",
+                "A mini-barra já começa com o bloco RJ45; cada clique no desenho insere um ponto",
+            ),
+            ferr(
+                Icone::Quadro,
+                "Inserir rack",
+                "ui.eletrica.telecom.rack",
+                "A mini-barra já começa com o bloco RACK; cada clique no desenho insere um rack",
+            ),
+            ferr(
+                Icone::Lista,
+                "Lista de pontos de dados...",
+                "ui.eletrica.telecom.lista",
+                "Pontos de dados do desenho: altura, selecionar e excluir",
+            ),
+        ],
+    },
+    Secao {
+        nome: "Infraestrutura",
+        ferramentas: &[
+            ferr(
+                Icone::Eletroduto,
+                "Inserir eletroduto",
+                "eleeletroduto",
+                "O mesmo eletroduto da aba Elétrica, escolhendo o perfil e o traçado na mini-barra",
+            ),
+            ferr(Icone::Lista, "Lista de eletrodutos...", "ui.eletrica.eletrodutos", "Trechos, com tipo, cota, diâmetro e ocupação"),
+        ],
+    },
+    Secao {
+        nome: "Cabos",
+        ferramentas: &[Ferramenta {
+            icone: Icone::Cabo,
+            rotulo: "Catálogo de cabos...",
+            comando: "ui.eletrica.telecom.cabos",
+            dica: "UTP, fibra e coaxial cadastrados, com o diâmetro de cada um",
+            exige_desenho: false,
+        }],
+    },
+];
+
+/// A chave da seção em `app.ui.collapsed_groups`, junto das Tool Sets: fica salva com o programa.
+fn chave_da_secao(nome: &str) -> String {
+    format!("eletrica/{nome}")
+}
+
+/// O cabeçalho de uma seção, com a seta. Devolve se foi clicado.
+fn cabecalho_da_secao(ui: &mut egui::Ui, t: &Tokens, nome: &str, recolhida: bool) -> bool {
+    let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 22.0), egui::Sense::click());
+    let p = ui.painter();
+    let seta = egui::Rect::from_center_size(egui::pos2(r.left() + 11.0, r.center().y), vec2(11.0, 11.0));
+    crate::icons::paint(p, seta, if recolhida { crate::icons::Icon::ChevronRight } else { crate::icons::Icon::ChevronDown }, false);
+    p.text(egui::pos2(r.left() + 22.0, r.center().y), egui::Align2::LEFT_CENTER, nome, egui::FontId::proportional(12.5), t.text);
+    crate::icons::describe_control(ui, &resp, nome, Some(!recolhida), false);
+    resp.clicked()
+}
+
+/// Uma linha da paleta: ícone e texto, sem moldura, com um fundo leve sob o mouse. Devolve se foi clicada.
+fn linha_de_ferramenta(ui: &mut egui::Ui, t: &Tokens, f: &Ferramenta, habilitada: bool, ativa: bool) -> bool {
+    ui.add_enabled_ui(habilitada, |ui| {
+        let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 25.0), egui::Sense::click());
+        let p = ui.painter();
+        if ativa {
+            p.rect_filled(r, 0.0, t.tab_active);
+        } else if resp.hovered() {
+            p.rect_filled(r, 0.0, t.control_hover.gamma_multiply(0.6));
+        }
+        let cor = if habilitada { t.text } else { t.text_dim };
+        let caixa = egui::Rect::from_center_size(egui::pos2(r.left() + 19.0, r.center().y), vec2(16.0, 16.0));
+        desenhar_icone(p, caixa, f.icone, cor, if habilitada { COR_ICONE } else { t.text_dim });
+        p.text(egui::pos2(r.left() + 34.0, r.center().y), egui::Align2::LEFT_CENTER, f.rotulo, egui::FontId::proportional(12.5), cor);
+        crate::icons::describe_control(ui, &resp, f.rotulo, None, false);
+        resp.on_hover_text(f.dica).on_disabled_hover_text(f.dica).clicked()
+    })
+    .inner
+}
+
+/// O azul de detalhe dos ícones da paleta.
+const COR_ICONE: Color32 = Color32::from_rgb(0x4D, 0xA3, 0xFF);
+
+/// Os ícones da paleta.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Icone {
+    Bloco,
+    Tomada,
+    Lista,
+    Etiqueta,
+    Circuito,
+    Interruptor,
+    Quadro,
+    Engrenagem,
+    Eletroduto,
+    Chamada,
+    Grade,
+    Atualizar,
+    Prancheta,
+    Olho,
+    Controles,
+    Cabo,
+}
+
+/// Desenha um ícone em traço fino, com um detalhe em azul. As coordenadas vão de 0 a 16.
+fn desenhar_icone(p: &egui::Painter, caixa: egui::Rect, icone: Icone, cor: Color32, azul: Color32) {
+    let e = caixa.width() / 16.0;
+    let em = |x: f32, y: f32| caixa.min + vec2(x * e, y * e);
+    let traco = Stroke::new(1.1, cor);
+    let detalhe = Stroke::new(1.4, azul);
+    let l = |pontos: &[(f32, f32)], s: Stroke| {
+        p.add(egui::Shape::line(pontos.iter().map(|(x, y)| em(*x, *y)).collect(), s));
+    };
+    let ret = |x0: f32, y0: f32, x1: f32, y1: f32, s: Stroke| {
+        p.rect_stroke(egui::Rect::from_min_max(em(x0, y0), em(x1, y1)), 1.0, s, egui::StrokeKind::Middle);
+    };
+    let circ = |x: f32, y: f32, r: f32, s: Stroke| {
+        p.circle_stroke(em(x, y), r * e, s);
+    };
+    match icone {
+        Icone::Bloco => {
+            ret(2.0, 3.0, 14.0, 13.0, traco);
+            l(&[(5.0, 10.0), (8.0, 5.0), (11.0, 10.0), (5.0, 10.0)], detalhe);
+        }
+        Icone::Tomada => {
+            circ(7.0, 9.0, 5.0, traco);
+            l(&[(5.5, 7.5), (5.5, 10.5)], traco);
+            l(&[(8.5, 7.5), (8.5, 10.5)], traco);
+            l(&[(13.0, 1.5), (13.0, 6.5)], detalhe);
+            l(&[(10.5, 4.0), (15.5, 4.0)], detalhe);
+        }
+        Icone::Lista => {
+            for y in [4.0, 8.0, 12.0] {
+                l(&[(1.5, y), (3.5, y)], detalhe);
+                l(&[(5.5, y), (14.5, y)], traco);
+            }
+        }
+        Icone::Etiqueta => {
+            l(&[(1.5, 5.0), (7.0, 2.0), (12.5, 5.0), (12.5, 11.0), (1.5, 11.0), (1.5, 5.0)], traco);
+            circ(10.5, 10.5, 3.0, detalhe);
+            l(&[(12.7, 12.7), (15.0, 15.0)], detalhe);
+        }
+        Icone::Circuito => {
+            l(&[(1.0, 8.0), (4.0, 8.0)], traco);
+            l(&[(12.0, 8.0), (15.0, 8.0)], traco);
+            l(&[(9.5, 2.0), (5.5, 8.5), (8.5, 8.5), (6.5, 14.0), (11.0, 7.0), (8.0, 7.0), (9.5, 2.0)], detalhe);
+        }
+        Icone::Interruptor => {
+            circ(3.0, 12.0, 1.5, traco);
+            circ(13.0, 12.0, 1.5, traco);
+            l(&[(4.2, 11.2), (11.5, 6.5)], traco);
+            circ(8.0, 3.5, 2.5, detalhe);
+        }
+        Icone::Quadro => {
+            ret(2.5, 1.5, 13.5, 14.5, traco);
+            l(&[(2.5, 5.5), (13.5, 5.5)], traco);
+            for y in [8.0, 10.5, 13.0] {
+                l(&[(5.0, y), (11.0, y)], detalhe);
+            }
+        }
+        Icone::Engrenagem => {
+            circ(8.0, 8.0, 4.5, traco);
+            for (dx, dy) in [(0.0, 1.0), (1.0, 0.0), (0.7, 0.7), (0.7, -0.7)] {
+                l(&[(8.0 + dx * 4.5, 8.0 + dy * 4.5), (8.0 + dx * 6.5, 8.0 + dy * 6.5)], traco);
+                l(&[(8.0 - dx * 4.5, 8.0 - dy * 4.5), (8.0 - dx * 6.5, 8.0 - dy * 6.5)], traco);
+            }
+            circ(8.0, 8.0, 1.8, detalhe);
+        }
+        Icone::Eletroduto => {
+            ret(1.0, 11.0, 4.0, 14.0, traco);
+            ret(12.0, 2.0, 15.0, 5.0, traco);
+            l(&[(4.0, 12.5), (7.0, 11.5), (10.0, 9.0), (12.0, 6.5), (13.5, 5.0)], detalhe);
+        }
+        Icone::Chamada => {
+            ret(6.5, 2.0, 15.0, 8.0, traco);
+            l(&[(6.5, 6.0), (1.5, 13.5)], detalhe);
+            circ(1.8, 13.5, 0.8, detalhe);
+        }
+        Icone::Grade => {
+            ret(1.5, 2.5, 14.5, 13.5, traco);
+            l(&[(1.5, 6.5), (14.5, 6.5)], detalhe);
+            l(&[(1.5, 10.0), (14.5, 10.0)], traco);
+            l(&[(6.0, 2.5), (6.0, 13.5)], traco);
+            l(&[(10.5, 2.5), (10.5, 13.5)], traco);
+        }
+        Icone::Atualizar => {
+            let arco = |ini: f32, fim: f32, s: Stroke| {
+                let v: Vec<(f32, f32)> = (0..=10)
+                    .map(|i| {
+                        let a = (ini + (fim - ini) * i as f32 / 10.0).to_radians();
+                        (8.0 + 5.5 * a.cos(), 8.0 + 5.5 * a.sin())
+                    })
+                    .collect();
+                l(&v, s);
+            };
+            arco(200.0, 340.0, traco);
+            arco(20.0, 160.0, detalhe);
+            l(&[(13.2, 2.2), (13.2, 6.1), (9.5, 5.2)], traco);
+            l(&[(2.8, 13.8), (2.8, 9.9), (6.5, 10.8)], detalhe);
+        }
+        Icone::Prancheta => {
+            ret(3.0, 3.0, 13.0, 15.0, traco);
+            ret(6.0, 1.5, 10.0, 4.5, detalhe);
+            l(&[(5.5, 8.0), (10.5, 8.0)], traco);
+            l(&[(5.5, 11.0), (10.5, 11.0)], traco);
+        }
+        Icone::Olho => {
+            let lado = |sinal: f32| -> Vec<(f32, f32)> {
+                (0..=12)
+                    .map(|i| {
+                        let x = i as f32 / 12.0;
+                        (1.0 + 14.0 * x, 8.0 + sinal * 4.5 * (x * std::f32::consts::PI).sin())
+                    })
+                    .collect()
+            };
+            l(&lado(1.0), traco);
+            l(&lado(-1.0), traco);
+            circ(8.0, 8.0, 2.0, detalhe);
+        }
+        Icone::Controles => {
+            for (y, x) in [(3.5, 10.0), (8.0, 5.0), (12.5, 11.0)] {
+                l(&[(1.5, y), (14.5, y)], traco);
+                p.circle_filled(em(x, y), 1.8 * e, azul);
+            }
+        }
+        Icone::Cabo => {
+            l(&[(1.5, 13.0), (5.0, 13.0), (7.0, 8.0), (9.0, 3.0), (14.5, 3.0)], traco);
+            for (x, y) in [(1.5, 13.0), (14.5, 3.0)] {
+                circ(x, y, 1.4, detalhe);
+            }
+        }
+    }
 }
 
 fn ferramenta(ui: &mut egui::Ui, texto: &str, ativa: bool, dica: &str) -> egui::Response {
@@ -738,16 +1146,47 @@ fn localizar(app: &mut CadApp, pontos: &[[f64; 2]]) {
     }
 }
 
-/// Uma janela do Free Elétrica: fecha no X. Devolve se continua aberta.
+/// A moldura das janelas: cantos redondos, como a mini-barra.
+fn moldura_de_janela(ctx: &egui::Context) -> egui::Frame {
+    egui::Frame::window(&ctx.global_style()).corner_radius(8.0)
+}
+
+/// O cabeçalho dentro de uma janela sem barra de título. Devolve se pediram para fechar.
+fn cabecalho_de_janela(ui: &mut egui::Ui, titulo: &str) -> bool {
+    let mut fechar = false;
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(titulo).strong().size(14.0));
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            let (r, resp) = ui.allocate_exact_size(vec2(18.0, 18.0), egui::Sense::click());
+            let cor = if resp.hovered() { ui.visuals().strong_text_color() } else { ui.visuals().text_color() };
+            let c = r.shrink(5.0);
+            let s = Stroke::new(1.3, cor);
+            ui.painter().line_segment([c.left_top(), c.right_bottom()], s);
+            ui.painter().line_segment([c.right_top(), c.left_bottom()], s);
+            crate::icons::describe_control(ui, &resp, "Fechar", None, false);
+            fechar = resp.on_hover_text("Fechar (Esc)").clicked();
+        });
+    });
+    ui.separator();
+    fechar
+}
+
+/// Uma janela do Free Elétrica: sem barra de título, com cabeçalho interno. Devolve se continua aberta.
 fn janela(ctx: &egui::Context, titulo: &str, pos: (f32, f32), tamanho: (f32, f32), conteudo: impl FnOnce(&mut egui::Ui)) -> bool {
     let mut aberta = true;
     egui::Window::new(format!("Free Elétrica · {titulo}"))
         .id(egui::Id::new(("ele-janela", titulo)))
-        .open(&mut aberta)
+        .title_bar(false)
+        .frame(moldura_de_janela(ctx))
         .default_pos(egui::pos2(pos.0, pos.1))
         .default_width(tamanho.0)
         .default_height(tamanho.1)
-        .show(ctx, conteudo);
+        .show(ctx, |ui| {
+            if cabecalho_de_janela(ui, titulo) {
+                aberta = false;
+            }
+            conteudo(ui);
+        });
     aberta
 }
 
@@ -806,12 +1245,12 @@ pub fn janelas(app: &mut CadApp, ctx: &egui::Context) {
             }),
             Qual::Atributos => janela(ctx, "Inspetor de atributos", (560.0, 140.0), (540.0, 400.0), |ui| janela_atributos(ui, app, &t, &mut acoes)),
             Qual::Eletrodutos => {
-                janela(ctx, "Eletrodutos", (280.0, 140.0), (980.0, 420.0), |ui| aba_lista_eletrodutos(ui, app, &t, &mut st, &s, &mut acoes))
+                janela(ctx, "Lista de eletrodutos", (280.0, 140.0), (980.0, 420.0), |ui| aba_lista_eletrodutos(ui, app, &t, &mut st, &s, &mut acoes))
             }
             Qual::Pontos => {
-                janela(ctx, "Pontos", (300.0, 160.0), (860.0, 420.0), |ui| lista_de_pontos(ui, &t, &st.analise, &s, &mut pontos, &mut acoes))
+                janela(ctx, "Lista de pontos", (300.0, 160.0), (860.0, 420.0), |ui| lista_de_pontos(ui, &t, &st.analise, &s, &mut pontos, &mut acoes))
             }
-            Qual::Conferencia => janela(ctx, "Conferência", (480.0, 140.0), (520.0, 460.0), |ui| {
+            Qual::Conferencia => janela(ctx, "Conferência do projeto", (480.0, 140.0), (520.0, 460.0), |ui| {
                 let itens = st.inspecao(app, &s);
                 egui::ScrollArea::vertical().auto_shrink([false, true]).show(ui, |ui| aba_conferencia(ui, &t, &st.analise, &itens, &mut acoes));
             }),
@@ -1200,7 +1639,7 @@ fn aba_cargas(
     });
     let Some(q) = c.quadro else { return };
     ui.horizontal(|ui| {
-        for (aba, nome) in [(AbaCargas::Resumo, "Quadro de cargas"), (AbaCargas::Ficha, "Ficha de engenharia")] {
+        for (aba, nome) in [(AbaCargas::Resumo, "Resumo"), (AbaCargas::Ficha, "Ficha de engenharia")] {
             if ui.selectable_label(c.aba == aba, nome).clicked() {
                 c.aba = aba;
             }
@@ -2364,16 +2803,16 @@ fn propriedades_da_familia(ui: &mut egui::Ui, t: &Tokens, nome: &str, familia: O
 
 fn janela_setup(ctx: &egui::Context, t: &Tokens, tem_desenho: bool, acoes: &mut Vec<Acao>) {
     let Some(mut r) = trava(&JANELAS).setup.clone() else { return };
-    let mut aberta = true;
     let mut fechar = false;
     egui::Window::new("Free Elétrica · Configurações")
         .id(egui::Id::new("ele-janela-setup"))
-        .open(&mut aberta)
-        .collapsible(false)
+        .title_bar(false)
+        .frame(moldura_de_janela(ctx))
         .resizable(false)
         .default_pos(egui::pos2(420.0, 120.0))
-        .default_width(520.0)
+        .default_width(620.0)
         .show(ctx, |ui| {
+            fechar = cabecalho_de_janela(ui, "Configurações");
             ui.horizontal(|ui| {
                 for aba in Aba::TODAS {
                     if ui.selectable_label(r.aba == aba, aba.nome()).clicked() {
@@ -2404,7 +2843,7 @@ fn janela_setup(ctx: &egui::Context, t: &Tokens, tem_desenho: bool, acoes: &mut 
             });
         });
     let mut j = trava(&JANELAS);
-    if aberta && !fechar {
+    if !fechar {
         j.setup = Some(r);
     } else {
         crate::eletrica::fechar(&mut j, Qual::Setup);
@@ -2868,7 +3307,24 @@ fn secao_circuitos(ui: &mut egui::Ui, t: &Tokens, a: &ele::Analise, acoes: &mut 
 
 #[cfg(test)]
 mod tests {
-    use super::fixo;
+    use super::{PALETA_ELETRICA, PALETA_TELECOM, chave_da_secao, fixo};
+
+    #[test]
+    fn a_paleta_tem_as_secoes_pedidas_sem_numeros_e_sem_rotulos_repetidos() {
+        let nomes: Vec<&str> = PALETA_ELETRICA.iter().map(|s| s.nome).collect();
+        assert_eq!(
+            nomes,
+            ["Pontos e Famílias", "Circuitos e Comandos", "Quadros e Dimensionamento", "Eletrodutos", "Documentação e Tabelas", "Projeto e Inspeção"]
+        );
+        for paleta in [&PALETA_ELETRICA[..], &PALETA_TELECOM[..]] {
+            let mut rotulos: Vec<&str> = paleta.iter().flat_map(|s| s.ferramentas.iter().map(|f| f.rotulo)).collect();
+            let total = rotulos.len();
+            rotulos.sort_unstable();
+            rotulos.dedup();
+            assert_eq!(rotulos.len(), total);
+        }
+        assert_eq!(chave_da_secao("Eletrodutos"), "eletrica/Eletrodutos");
+    }
 
     #[test]
     fn zero_nao_tem_sinal() {
