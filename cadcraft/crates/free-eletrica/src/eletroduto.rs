@@ -11,7 +11,7 @@ use cadcraft_doc::{Common, Drawing, EntityKind, Handle, Line, Lineweight, Space}
 
 use crate::biblioteca;
 use crate::ponto::ler_ponto;
-use crate::rota::{self, Instalacao};
+use crate::rota::{self, Instalacao, TipoEletroduto};
 use crate::setup::Setup;
 use crate::xdata;
 
@@ -91,8 +91,20 @@ fn xdata_do_eletroduto(de: Handle, para: Handle, instalacao: Instalacao) -> Vec<
     x
 }
 
-/// Cria o eletroduto em arco entre dois blocos elétricos.
+/// Cria um eletroduto de PVC rígido em arco entre dois blocos elétricos.
 pub fn inserir(doc: &mut Drawing, de: Handle, para: Handle, instalacao: Instalacao, flecha: f64) -> Result<Handle, String> {
+    inserir_com_tipo(doc, de, para, instalacao, flecha, TipoEletroduto::PvcRigido)
+}
+
+/// Cria o eletroduto em arco entre dois blocos elétricos.
+pub fn inserir_com_tipo(
+    doc: &mut Drawing,
+    de: Handle,
+    para: Handle,
+    instalacao: Instalacao,
+    flecha: f64,
+    tipo: TipoEletroduto,
+) -> Result<Handle, String> {
     let posicao = |h: Handle| ler_ponto(doc, h).map(|p| p.posicao).ok_or_else(|| format!("o objeto {} não é um bloco elétrico", h.hex()));
     let (a, b) = (posicao(de)?, posicao(para)?);
     if de == para || (a[0] - b[0]).hypot(a[1] - b[1]) <= 1e-9 {
@@ -105,7 +117,9 @@ pub fn inserir(doc: &mut Drawing, de: Handle, para: Handle, instalacao: Instalac
         let fit: Vec<Vec2> = pontos_do_arco(a, b, flecha, 5).into_iter().map(|p| Vec2::new(p[0], p[1])).collect();
         EntityKind::Spline(Spline::from_fit_points(&fit))
     };
-    let common = Common { layer: camada(instalacao).into(), xdata: xdata_do_eletroduto(de, para, instalacao), ..Common::default() };
+    let mut xdata_novo = xdata_do_eletroduto(de, para, instalacao);
+    xdata::gravar(&mut xdata_novo, rota::CHAVE_TIPO, Some(tipo.codigo()));
+    let common = Common { layer: camada(instalacao).into(), xdata: xdata_novo, ..Common::default() };
     doc.add(&Space::Model, common, kind).map_err(|e| e.to_string())
 }
 
@@ -115,11 +129,12 @@ pub fn inserir(doc: &mut Drawing, de: Handle, para: Handle, instalacao: Instalac
 pub struct ModeloEletroduto {
     pub instalacao: Instalacao,
     pub flecha: f64,
+    pub tipo: TipoEletroduto,
 }
 
 impl Default for ModeloEletroduto {
     fn default() -> Self {
-        ModeloEletroduto { instalacao: Instalacao::Teto, flecha: FLECHA_PADRAO }
+        ModeloEletroduto { instalacao: Instalacao::Teto, flecha: FLECHA_PADRAO, tipo: TipoEletroduto::CorrugadoReforcado }
     }
 }
 
@@ -267,6 +282,14 @@ pub fn travar_diametro(doc: &mut Drawing, h: Handle, diametro: Option<f64>) -> R
             xdata::gravar(&mut e.common.xdata, rota::CHAVE_TRAVA_DIAMETRO, None);
         }
     }
+    doc.model.replace(e);
+    Ok(())
+}
+
+/// Muda o tipo de um eletroduto.
+pub fn definir_tipo(doc: &mut Drawing, h: Handle, tipo: TipoEletroduto) -> Result<(), String> {
+    let mut e = doc.model.get(h).map(|e| (**e).clone()).ok_or("eletroduto não encontrado")?;
+    xdata::gravar(&mut e.common.xdata, rota::CHAVE_TIPO, Some(tipo.codigo()));
     doc.model.replace(e);
     Ok(())
 }

@@ -18,7 +18,8 @@ pub enum Panel {
     ExternalRefs,
     /// Free Elétrica: projeto elétrico (NBR 5410).
     Eletrica,
-    /// Free Elétrica: o painel de baixo (quadro de cargas, eletrodutos, pontos, conferência).
+    /// Free Elétrica: o painel de baixo, que não existe mais. O nome fica para um workspace salvo com
+    /// ele continuar abrindo; `eletrica::janelas` o fecha.
     QuadroCargas,
 }
 
@@ -375,7 +376,7 @@ pub fn show(app: &mut crate::CadApp, ui: &mut egui::Ui) {
                 egui::ScrollArea::both().id_salt("dock-xrefs").auto_shrink([false, false]).show(ui, |ui| crate::xrefs::section(app, ui));
             }
             Panel::Eletrica => crate::eletrica::show(app, ui),
-            Panel::QuadroCargas => crate::eletrica::painel(app, ui),
+            Panel::QuadroCargas => {}
         },
     );
     // Existing panel close buttons and commands still own their visibility switches.

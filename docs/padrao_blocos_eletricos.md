@@ -85,6 +85,19 @@ Camadas: `ELE-PONTOS`, `ELE-QUADROS`, `ELE-FIACAO`, `ELE-ELETRODUTO-TETO`, `ELE-
 e `ELE-ELETRODUTO-PAREDE`. Camadas antigas com `ELETRODUTO` no nome continuam valendo. Para limpar
 blocos que não são mais usados num desenho, use o comando `PURGE` (ou `PU`).
 
+### Tipo de cabo e tipo de eletroduto
+
+Cada circuito tem o seu tipo de cabo, no XDATA do quadro (`CABO.<circuito>`): `FLEX_PVC_70`, `UNI_PVC_70`,
+`HEPR_XLPE_90`, `LSZH_70` ou `LSZH_HEPR_90`. Sem ele, vale o cabo padrão das Configurações. A temperatura
+da isolação (70 °C ou 90 °C) escolhe a capacidade de condução e o FCT do circuito; a tensão (450/750 V ou
+0,6/1 kV) escolhe a coluna de diâmetro externo. Um `ISOL.<circuito>` de desenho anterior vira o cabo
+equivalente.
+
+Cada eletroduto guarda o tipo no XDATA (`conduit_type`): `PVC_CORR_LIGHT` (PVC-CL), `PVC_CORR_HEAVY`
+(PVC-CR), `PVC_RIGID` (PVC-R), `HDPE_CORR` (PEAD), `STEEL_ELECTRO` (AG-E) ou `STEEL_HOT_DIP` (AG-F). Sem
+ele, é PVC rígido. Os diâmetros internos de cada tipo entram na ocupação. O PVC rígido usa a tabela das
+Configurações; os outros usam valores típicos de catálogo no código, a conferir com o fabricante.
+
 ### Tags de fiação
 
 `ELEFIACAO` põe em cada eletroduto escolhido uma tag, um bloco `ELE_TAG_FIACAO_<handle>` com uma

@@ -129,7 +129,7 @@ pub fn inspecionar(doc: &Drawing, analise: &Analise, setup: &Setup) -> Vec<Item>
             handle: t.handle,
             pos: t.meio,
             nivel: Nivel::Amarelo,
-            motivo: format!("eletroduto com ocupação de {oc:.0} %"),
+            motivo: format!("eletroduto {} com ocupação de {oc:.0} %", t.tipo.abreviado()),
             eletroduto: true,
         });
     }

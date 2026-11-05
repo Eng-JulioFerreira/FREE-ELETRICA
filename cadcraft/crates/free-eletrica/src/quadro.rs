@@ -30,6 +30,8 @@ pub const CHAVE_DESCRICAO: &str = "DESC.";
 pub const CHAVE_ISOLACAO: &str = "ISOLACAO";
 /// Isolação de um circuito: `ISOL.<circuito>`; sem ela vale a do quadro.
 pub const CHAVE_ISOLACAO_CIRCUITO: &str = "ISOL.";
+/// Tipo de cabo de um circuito: `CABO.<circuito>`; vale sobre `ISOL.`, dos desenhos anteriores.
+pub const CHAVE_CABO: &str = "CABO.";
 /// Esquema de condutores de um circuito: `ESQUEMA.<circuito>` (`F+N`, `F+N+T`, `2F+T`, `3F+N+T`).
 pub const CHAVE_ESQUEMA: &str = "ESQUEMA.";
 /// Tensão de um circuito: `TENSAO.<circuito>`; vale sobre a dos pontos.
@@ -42,6 +44,7 @@ pub const CHAVE_FASE: &str = "FASE.";
 #[serde(rename_all = "camelCase")]
 pub struct Propriedades {
     pub isolacao: Option<nbr5410::Isolacao>,
+    pub cabo: Option<nbr5410::TipoCabo>,
     pub esquema: Option<nbr5410::Esquema>,
     pub tensao: Option<f64>,
     /// Fases travadas à mão: índices em [`NOMES_FASES`].
@@ -68,6 +71,8 @@ pub fn propriedades(quadro: &PontoEletrico) -> HashMap<String, Propriedades> {
         let k = k.to_uppercase();
         if let Some(c) = k.strip_prefix(CHAVE_ISOLACAO_CIRCUITO) {
             m.entry(c.to_string()).or_default().isolacao = nbr5410::Isolacao::de_codigo(v);
+        } else if let Some(c) = k.strip_prefix(CHAVE_CABO) {
+            m.entry(c.to_string()).or_default().cabo = nbr5410::TipoCabo::de_codigo(v);
         } else if let Some(c) = k.strip_prefix(CHAVE_ESQUEMA) {
             m.entry(c.to_string()).or_default().esquema = nbr5410::Esquema::de_codigo(v);
         } else if let Some(c) = k.strip_prefix(CHAVE_TENSAO) {
@@ -76,17 +81,31 @@ pub fn propriedades(quadro: &PontoEletrico) -> HashMap<String, Propriedades> {
             m.entry(c.to_string()).or_default().fases = fases_de_texto(v);
         }
     }
+    // O tipo de cabo manda; uma isolação de desenho anterior vira o cabo equivalente.
+    for p in m.values_mut() {
+        match (p.cabo, p.isolacao) {
+            (Some(c), _) => p.isolacao = Some(c.isolacao()),
+            (None, Some(i)) => p.cabo = Some(nbr5410::TipoCabo::de_isolacao(i)),
+            (None, None) => {}
+        }
+    }
     m
 }
 
-/// A isolação do quadro: a gravada nele ou a padrão das configurações.
+/// A isolação gravada no quadro, de desenhos anteriores ao tipo de cabo por circuito.
+fn isolacao_gravada(quadro: &PontoEletrico) -> Option<nbr5410::Isolacao> {
+    quadro.extras.iter().find(|(k, _)| k.eq_ignore_ascii_case(CHAVE_ISOLACAO)).and_then(|(_, v)| nbr5410::Isolacao::de_codigo(v))
+}
+
+/// A isolação do quadro: a gravada nele ou a do cabo padrão das configurações.
 pub fn isolacao_do_quadro(quadro: &PontoEletrico, setup: &Setup) -> nbr5410::Isolacao {
-    quadro
-        .extras
-        .iter()
-        .find(|(k, _)| k.eq_ignore_ascii_case(CHAVE_ISOLACAO))
-        .and_then(|(_, v)| nbr5410::Isolacao::de_codigo(v))
-        .unwrap_or(setup.isolacao)
+    isolacao_gravada(quadro).unwrap_or_else(|| setup.cabo_padrao.isolacao())
+}
+
+/// O cabo dos circuitos do quadro que não escolheram o seu: o equivalente ao gravado no quadro ou o
+/// padrão das configurações.
+pub fn cabo_do_quadro(quadro: &PontoEletrico, setup: &Setup) -> nbr5410::TipoCabo {
+    isolacao_gravada(quadro).map_or(setup.cabo_padrao, nbr5410::TipoCabo::de_isolacao)
 }
 
 /// As descrições de circuitos gravadas no quadro: (circuito, descrição), na ordem natural.
@@ -181,6 +200,8 @@ pub struct Linha {
     pub indicacao: String,
     /// Isolação dos condutores do circuito (a dele, a do quadro ou a das configurações).
     pub isolacao: nbr5410::Isolacao,
+    /// O tipo de cabo do circuito.
+    pub tipo_cabo: nbr5410::TipoCabo,
     /// A isolação foi escolhida para este circuito.
     pub isolacao_propria: bool,
     /// Tipos de carga dos pontos do circuito (atributo TIPO_CARGA), sem repetição.
@@ -329,6 +350,7 @@ pub fn rotear(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle) -
     let (metros, aviso_unidade) = setup.unidade.metros(doc.header.i64("INSUNITS", 0));
     avisos.extend(aviso_unidade);
     let isolacao = isolacao_do_quadro(q, setup);
+    let cabo_padrao = cabo_do_quadro(q, setup);
     let mut cfg_base = setup.config_com(isolacao);
     (cfg_base.tensao_fn, cfg_base.tensao_ff) = tensoes_do_quadro(q, (cfg_base.tensao_fn, cfg_base.tensao_ff));
     let descr = descricoes(q);
@@ -444,6 +466,7 @@ pub fn rotear(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle) -
                 condutores,
                 cabo: r.percurso * f64::from(condutores) * setup.fator_materiais,
                 isolacao: isolacao_circuito,
+                tipo_cabo: p.cabo.unwrap_or(cabo_padrao),
                 isolacao_propria: p.isolacao.is_some(),
                 tipos_carga,
                 potencia_w,

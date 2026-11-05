@@ -33,6 +33,7 @@ pub const CHAVE_DIAMETRO: &str = "nominal_diameter_mm";
 pub const CHAVE_TRAVA_DIAMETRO: &str = "manual_diameter_lock";
 pub const CHAVE_FIOS: &str = "passing_wires";
 pub const CHAVE_TAG: &str = "tag_handle";
+pub const CHAVE_TIPO: &str = "conduit_type";
 pub const CHAVE_ESQUEMA: &str = "schema_ver";
 pub const VERSAO_ESQUEMA: &str = "2";
 
@@ -76,6 +77,101 @@ impl Instalacao {
     }
 }
 
+/// O tipo de um eletroduto: entra na ocupação, nos materiais e nas propriedades.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TipoEletroduto {
+    CorrugadoLeve,
+    CorrugadoReforcado,
+    /// O tipo dos eletrodutos desenhados antes de existir esta escolha.
+    #[default]
+    PvcRigido,
+    PeadCorrugado,
+    AcoEletrolitico,
+    AcoFogo,
+}
+
+impl TipoEletroduto {
+    pub const TODOS: [TipoEletroduto; 6] =
+        [Self::CorrugadoLeve, Self::CorrugadoReforcado, Self::PvcRigido, Self::PeadCorrugado, Self::AcoEletrolitico, Self::AcoFogo];
+
+    /// O código gravado no XDATA.
+    pub fn codigo(self) -> &'static str {
+        match self {
+            Self::CorrugadoLeve => "PVC_CORR_LIGHT",
+            Self::CorrugadoReforcado => "PVC_CORR_HEAVY",
+            Self::PvcRigido => "PVC_RIGID",
+            Self::PeadCorrugado => "HDPE_CORR",
+            Self::AcoEletrolitico => "STEEL_ELECTRO",
+            Self::AcoFogo => "STEEL_HOT_DIP",
+        }
+    }
+
+    pub fn nome(self) -> &'static str {
+        match self {
+            Self::CorrugadoLeve => "PVC flexível corrugado leve (amarelo, parede)",
+            Self::CorrugadoReforcado => "PVC flexível corrugado reforçado (laranja, laje)",
+            Self::PvcRigido => "PVC rígido (roscável ou soldável)",
+            Self::PeadCorrugado => "PEAD flexível corrugado (subterrâneo, piso)",
+            Self::AcoEletrolitico => "Aço galvanizado eletrolítico (médio, leve)",
+            Self::AcoFogo => "Aço galvanizado a fogo (pesado)",
+        }
+    }
+
+    /// O nome curto, para tabelas e propriedades.
+    pub fn abreviado(self) -> &'static str {
+        match self {
+            Self::CorrugadoLeve => "PVC-CL",
+            Self::CorrugadoReforcado => "PVC-CR",
+            Self::PvcRigido => "PVC-R",
+            Self::PeadCorrugado => "PEAD",
+            Self::AcoEletrolitico => "AG-E",
+            Self::AcoFogo => "AG-F",
+        }
+    }
+
+    pub fn de_codigo(t: &str) -> Option<Self> {
+        let t = t.trim();
+        Self::TODOS.into_iter().find(|i| i.codigo().eq_ignore_ascii_case(t) || i.abreviado().eq_ignore_ascii_case(t))
+    }
+
+    /// (nominal, polegadas, interno) em mm: valores típicos de catálogo, a conferir com o
+    /// fabricante. `None`: o PVC rígido usa a tabela editável das configurações.
+    pub fn tamanhos_tipicos(self) -> Option<&'static [(f64, &'static str, f64)]> {
+        Some(match self {
+            Self::PvcRigido => return None,
+            Self::CorrugadoLeve => &[(20.0, "1/2\"", 15.4), (25.0, "3/4\"", 19.0), (32.0, "1\"", 25.0)],
+            Self::CorrugadoReforcado => &[(20.0, "1/2\"", 15.0), (25.0, "3/4\"", 18.6), (32.0, "1\"", 24.6)],
+            Self::PeadCorrugado => &[
+                (40.0, "1 1/4\"", 32.0),
+                (50.0, "1 1/2\"", 40.0),
+                (63.0, "2\"", 50.0),
+                (75.0, "2 1/2\"", 61.0),
+                (90.0, "3\"", 75.0),
+                (110.0, "4\"", 93.0),
+            ],
+            Self::AcoEletrolitico => &[
+                (20.0, "1/2\"", 16.0),
+                (25.0, "3/4\"", 21.0),
+                (32.0, "1\"", 27.0),
+                (40.0, "1 1/4\"", 35.5),
+                (50.0, "1 1/2\"", 41.0),
+                (60.0, "2\"", 52.5),
+            ],
+            Self::AcoFogo => &[
+                (20.0, "1/2\"", 15.8),
+                (25.0, "3/4\"", 20.9),
+                (32.0, "1\"", 26.6),
+                (40.0, "1 1/4\"", 35.1),
+                (50.0, "1 1/2\"", 40.9),
+                (60.0, "2\"", 52.5),
+                (75.0, "2 1/2\"", 62.7),
+                (85.0, "3\"", 77.9),
+            ],
+        })
+    }
+}
+
 /// Um nó do grafo: um bloco elétrico.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -97,6 +193,7 @@ pub struct Aresta {
     pub de: usize,
     pub para: usize,
     pub instalacao: Instalacao,
+    pub tipo: TipoEletroduto,
     /// Comprimento em planta (m).
     pub comprimento_2d: f64,
     /// Comprimento com as subidas e descidas até os blocos (m).
@@ -253,6 +350,11 @@ impl Rede {
             match (ponta(a), ponta(b)) {
                 (Some(de), Some(para)) if de != para => {
                     let instalacao = instalacao_de(&xd, &e.common.layer, setup);
+                    let tipo = xd
+                        .iter()
+                        .find(|(k, _)| k.eq_ignore_ascii_case(CHAVE_TIPO))
+                        .and_then(|(_, v)| TipoEletroduto::de_codigo(v))
+                        .unwrap_or_default();
                     let (za, zb) = (rede.nos[de].z, rede.nos[para].z);
                     let cota = match instalacao {
                         Instalacao::Teto => setup.pe_direito,
@@ -262,7 +364,7 @@ impl Rede {
                     let comprimento_2d = comprimento_tracado(&tr) * metros;
                     let comprimento = comprimento_2d + (cota - za).abs() + (cota - zb).abs();
                     let i = rede.arestas.len();
-                    rede.arestas.push(Aresta { eletroduto: e.handle, de, para, instalacao, comprimento_2d, comprimento, meio, angulo });
+                    rede.arestas.push(Aresta { eletroduto: e.handle, de, para, instalacao, tipo, comprimento_2d, comprimento, meio, angulo });
                     rede.adj[de].push((para, i));
                     rede.adj[para].push((de, i));
                 }

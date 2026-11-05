@@ -29,20 +29,24 @@ aqui.
 
 ## O que faz
 
-A paleta **Elétrica** segue o fluxo de trabalho. Nada bloqueia o desenho: enquanto um comando espera
-cliques, uma barra sobre o desenho muda o que ele usa, e os dados ficam num painel embaixo do desenho.
+A paleta **Elétrica** segue o fluxo de trabalho. Nada fica aberto sem ser pedido: enquanto um comando
+espera cliques, uma mini-barra sobre o desenho muda o que ele usa; os dados ficam em janelas
+independentes, que fecham no X ou com Esc.
 
 | Ferramenta | Comando | O quê |
 | :--- | :--- | :--- |
 | 1. Famílias de blocos | `BEDIT` | No editor de blocos, a paleta vira as Propriedades da Família: domínio, categoria, altura padrão, caixa física, potência, FP e teclas, mais geometria base, ponto de conexão e atributos prontos. |
-| 1. Inserir pontos | `ELEPONTOS` | Filtre por categoria e escolha o bloco; a altura já vem da legenda. Clique onde vai cada ponto. O ponto alinha à parede mais próxima, e Tab gira. Altura diferente da legenda aparece na planta como `h=1,45m`. |
+| 1. Inserir pontos | `ELEPONTOS` | A mini-barra tem categoria, bloco, potência, altura e quadro pai; cada clique no desenho insere um ponto. Ele alinha à parede mais próxima, e Tab gira. Altura diferente da legenda aparece na planta como `h=1,45m`. |
+| 1. Lista de pontos | | Pontos por categoria: altura, selecionar, excluir. |
 | 2. Criar circuito | `ELECIRCUITO` | Quadro, número e pontos; a barra edita descrição, esquema (F+N, F+N+T, 2F+T, 3F+N+T) e tensão. O atributo CIRCUITO muda na hora. |
 | 2. Comandos e luminárias | `ELECOMANDO` | Interruptor e luminárias. A letra é a próxima livre, respeitando as teclas do interruptor, ou a que você digitar. |
-| 3. Quadro de cargas | `ELECARGAS` (ou `ELEROTEAR`) | Planilha no painel de baixo: Ib, I'b, queda, seção, disjuntor, isolação e fases R, S, T, com cadeado para travar o que foi escolhido à mão (vermelho se viola a NBR 5410). Clicar no circuito o destaca no desenho. Embaixo, demanda, alimentador, DR, DPS e cabos. |
-| 4. Inserir eletroduto | `ELEELETRODUTO` | Clique nos blocos em sequência. Clicar no meio de um eletroduto divide o trecho com uma caixa de passagem. Cota de teto, piso ou parede. |
+| 3. Quadro de cargas | `ELECARGAS` (ou `ELEROTEAR`) | Janela com a tabela: pontos, potência, fases R, S, T, tipo de cabo, cabo e disjuntor, com cadeado para travar o que foi escolhido à mão (vermelho se viola a NBR 5410). Clicar no circuito o destaca no desenho. **Detalhes** abre a engenharia do circuito: FCT, FCA, I'b, Iz, queda, esquema e tensão. |
+| 4. Inserir eletroduto | `ELEELETRODUTO` | Clique nos blocos em sequência; a mini-barra escolhe a cota e o tipo de eletroduto. Clicar no meio de um eletroduto divide o trecho com uma caixa de passagem. |
+| 4. Lista de eletrodutos | | Trechos com tipo, cota, diâmetro e ocupação. |
 | 5. Tags de fiação | `ELEFIACAO` | Simbologia, circuito, seção e diâmetro em cada eletroduto. A posição que você der à tag fica guardada, e ela acompanha as mudanças do projeto. |
 | 5. Tabela do quadro | `ELEQUADRO_TABELA` | Desenha o quadro de cargas num ponto da planta e o refaz no mesmo lugar. |
 | 5. Atualizar | `ELEREGEN` | Refaz tags e tabelas sem mudar as posições. |
+| 5. Lista de materiais | `ELEMATERIAIS` | Cabos por seção e tipo, eletrodutos por tipo e diâmetro, caixas, pontos e disjuntores. |
 | Inspecionar projeto | `ELEINSPECAO`, `ELECONFERIR` | Halos no desenho: vermelho falta circuito ou comando, laranja sem caminho até o quadro, amarelo acima do limite, verde válido. |
 | Configurações | `ELECONFIG` | Critérios elétricos (sistema, temperatura, isolação, quedas de iluminação, força e alimentador, folga de cabos), alturas padrão do projeto, cores, diâmetros, eletrodutos, telecom e demanda da concessionária. |
 
@@ -51,7 +55,8 @@ e derivações sem caixa não conectam. Veja `docs/free-eletrica-2.0.md`.
 
 Tudo também responde em JSON pelo canal de controle e pelo `cadcraft-cli`: `eletrica.analisar`,
 `eletrica.rotear`, `eletrica.sobrescrever`, `eletrica.circuito.*`, `eletrica.quadro`,
-`eletrica.eletroduto.*`, `eletrica.eletrodutos`, `eletrica.inspecionar`, `eletrica.bootstrap`,
+`eletrica.eletroduto.*`, `eletrica.eletrodutos`, `eletrica.materiais`, `eletrica.dimensionar`,
+`eletrica.quadro.equilibrar`, `eletrica.inspecionar`, `eletrica.bootstrap`,
 `eletrica.demanda.tabelas`, `eletrica.blocos`, `eletrica.ponto.modelo`, `eletrica.ponto.altura`,
 `eletrica.ponto.excluir`, `eletrica.familia.*`, `elefamilia_conector`,
 `eletrica.setup`, `eleponto`, `elecircuito`, `eleremoverponto`, `elecomando`, `eleeletroduto`,

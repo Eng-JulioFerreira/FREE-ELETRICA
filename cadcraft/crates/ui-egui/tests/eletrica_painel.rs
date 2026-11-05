@@ -122,7 +122,7 @@ fn paleta_ferramentas_e_fluxo_completo() {
     // Digitado, abre a paleta acima das Tool Sets, com altura fixa.
     assert!(app.cmdline("ELETRICA").is_none());
     let local = app.ui.docking.layout.location(&Panel::Eletrica).unwrap();
-    assert_eq!(local.size, Some(craft_ui::layout::SplitSize::FixedFirst(540.0)));
+    assert_eq!(local.size, Some(craft_ui::layout::SplitSize::FixedFirst(610.0)));
     assert_eq!(local.anchor, Some(Panel::ToolSets));
 
     let (qd, luz, int) = handles(app);
@@ -185,7 +185,10 @@ fn paleta_ferramentas_e_fluxo_completo() {
         "Criar circuito",
         "Comandos e luminárias",
         "3. Quadro de cargas",
-        "Quadro de cargas",
+        "Quadro de cargas...",
+        "Lista de pontos...",
+        "Lista de eletrodutos...",
+        "Lista de materiais...",
         "4. Eletrodutos",
         "Inserir eletroduto",
         "5. Documentação e tags",
@@ -197,17 +200,17 @@ fn paleta_ferramentas_e_fluxo_completo() {
     ] {
         h.get_by_label(f);
     }
-    // Nada de planilha flutuando: sem o painel, sem as tabelas.
+    // Nada fica aberto sem ser pedido.
     assert!(h.query_by_label("Rotear fiação...").is_none());
     assert!(h.query_by_label("Pontos elétricos").is_none());
-    assert!(!h.state().ui.docking.layout.contains(&Panel::QuadroCargas));
+    assert!(h.query_by_label("PAINEL: QD-01").is_none());
 
     // Configurações: isolação e diâmetros dos condutores, eletrodutos, e o catálogo de telecom
     // com o diâmetro do cabo novo.
     h.get_by_label("Configurações...").click();
     h.run_steps(3);
     h.get_by_label("Sistema de distribuição");
-    h.get_by_label("Isolação padrão");
+    h.get_by_label("Tipo de cabo padrão");
     h.get_by_label("Queda de tensão: iluminação");
     h.get_by_label("Folga de cabos");
     h.get_by_label("Alturas").click();
@@ -237,31 +240,22 @@ fn paleta_ferramentas_e_fluxo_completo() {
     h.run_steps(3);
     assert!(h.query_by_label("Cadastrar novo cabo").is_none());
 
-    // Quadro de cargas: abre no painel de baixo do desenho, acoplado, com altura fixa.
-    h.get_by_label("Quadro de cargas").click();
+    // Quadro de cargas: uma janela, só quando pedida; o painel de baixo não existe mais.
+    h.get_by_label("Quadro de cargas...").click();
     h.run_steps(3);
-    let local = h.state().ui.docking.layout.location(&Panel::QuadroCargas).unwrap();
-    assert_eq!(local.anchor, Some(Panel::Canvas));
-    assert_eq!(local.size, Some(craft_ui::layout::SplitSize::FixedSecond(340.0)));
+    assert!(!h.state().ui.docking.layout.contains(&Panel::QuadroCargas));
     h.get_by_label("PAINEL: QD-01");
-    for coluna in [
-        "Esquema",
-        "Tipo de carga",
-        "Potência (VA)",
-        "FP",
-        "Potência (W)",
-        "Ib (A)",
-        "I'b (A)",
-        "Queda (%)",
-        "Isolação",
-        "Fases",
-        "Fase R (VA)",
-        "Situação",
-    ] {
+    for coluna in ["Descrição", "Pontos", "Potência (VA)", "Fase R (VA)", "Fases", "Tipo de cabo", "Cabo (mm²)", "Disjuntor (A)", "Situação"] {
         assert!(h.query_all_by_label(coluna).count() >= 1, "coluna {coluna}");
     }
+    for fora in ["Queda (%)", "I'b (A)", "FP", "Isolação"] {
+        assert!(h.query_by_label(fora).is_none(), "{fora} fica nos detalhes do circuito");
+    }
+    h.get_by_label("Equilibrar fases");
+    h.get_by_label("Dimensionar");
     h.get_by_label("Copiar resumo");
     // Os botões da linha do circuito.
+    assert!(h.query_all_by_label("Detalhes").count() >= 2);
     assert!(h.query_all_by_label("+ Pontos").count() >= 2);
     assert!(h.query_all_by_label("- Ponto").count() >= 2);
     assert!(h.query_all_by_label("Localizar").count() >= 2);
@@ -273,14 +267,16 @@ fn paleta_ferramentas_e_fluxo_completo() {
     h.get_by_label("vazio");
     h.state_mut().session.undo().unwrap();
     h.run_steps(3);
-    // ELEROTEAR abre o mesmo painel.
+    // Esc fecha; ELEROTEAR abre a mesma janela.
+    h.key_press(egui::Key::Escape);
+    h.run_steps(3);
+    assert!(h.query_by_label("PAINEL: QD-01").is_none());
     assert!(h.state_mut().cmdline("ELEROTEAR").is_none());
     h.run_steps(3);
     assert_eq!(h.query_all_by_label("PAINEL: QD-01").count(), 1);
 
-    // Cadeado: travar a seção do primeiro circuito leva ao valor em uso, e a seção automática
-    // fica como estava para quem não travou.
-    h.query_all_by_label("Automático").next().unwrap().click();
+    // Cadeado: travar a seção do primeiro circuito leva ao valor em uso (o primeiro é o das fases).
+    h.query_all_by_label("Automático").nth(1).unwrap().click();
     h.run_steps(3);
     let r = h.state_mut().run("eletrica.rotear", json!({})).unwrap();
     assert!(r["linhas"][0]["sobrescrita"]["secao"].is_number(), "{r}");
@@ -290,57 +286,93 @@ fn paleta_ferramentas_e_fluxo_completo() {
     let antes = h.state().session.state().unwrap().view().center;
     h.query_all_by_label("Localizar").next().unwrap().click();
     h.run_steps(3);
-    let depois = h.state().session.state().unwrap().view().center;
-    assert_ne!(antes, depois);
+    assert_ne!(antes, h.state().session.state().unwrap().view().center);
+    // Equilibrar destrava as fases e Dimensionar responde na barra de status, sem abrir nada.
+    h.state_mut().run("eletrica.circuito.definir", json!({ "circuito": "2", "fases": "S" })).unwrap();
+    h.run_steps(3);
+    h.get_by_label("Equilibrar fases").click();
+    h.run_steps(3);
+    let r = h.state_mut().run("eletrica.rotear", json!({})).unwrap();
+    assert!(r["linhas"].as_array().unwrap().iter().all(|l| l["fasesTravadas"] == false), "{r}");
+    h.get_by_label("Dimensionar").click();
+    h.run_steps(3);
 
-    // Recolher e expandir mudam a altura; destacar solta o painel e acoplar devolve.
-    h.get_by_label("Recolher").click();
+    // Detalhes: a engenharia do circuito, numa janela própria, com o tipo de cabo.
+    h.query_all_by_label("Detalhes").next().unwrap().click();
     h.run_steps(3);
-    assert_eq!(h.state().ui.docking.layout.location(&Panel::QuadroCargas).unwrap().size, Some(craft_ui::layout::SplitSize::FixedSecond(96.0)));
-    h.get_by_label("Expandir").click();
+    for campo in [
+        "Método de instalação",
+        "Temperatura e FCT",
+        "Agrupamento e FCA",
+        "Queda de tensão",
+        "Capacidade (Iz)",
+        "Seção e disjuntor",
+        "Tensão",
+        "Esquema",
+    ] {
+        assert!(h.query_all_by_label(campo).count() >= 1, "{campo}");
+    }
+    // Esc fecha só a última aberta: os detalhes, e o quadro continua.
+    h.key_press(egui::Key::Escape);
     h.run_steps(3);
-    assert_eq!(h.state().ui.docking.layout.location(&Panel::QuadroCargas).unwrap().size, Some(craft_ui::layout::SplitSize::FixedSecond(340.0)));
-    h.get_by_label("Destacar").click();
+    assert!(h.query_by_label("Método de instalação").is_none());
+    h.get_by_label("PAINEL: QD-01");
+    h.key_press(egui::Key::Escape);
     h.run_steps(3);
-    assert!(h.state().ui.docking.layout.floating.iter().any(|g| g.panels.contains(&Panel::QuadroCargas)));
-    h.get_by_label("Acoplar").click();
-    h.run_steps(3);
-    assert!(!h.state().ui.docking.layout.floating.iter().any(|g| g.panels.contains(&Panel::QuadroCargas)));
+    assert!(h.query_by_label("PAINEL: QD-01").is_none());
 
-    // Aba Eletrodutos: os trechos, com diâmetro travável.
-    h.get_by_label("Eletrodutos").click();
+    // Lista de eletrodutos: os trechos, com o tipo.
+    h.get_by_label("Lista de eletrodutos...").click();
     h.run_steps(3);
     h.get_by_label("4 trecho(s) ligados, 0 solto(s)");
     h.get_by_label("Ocupação");
+    h.get_by_label("Tipo");
+    h.key_press(egui::Key::Escape);
+    h.run_steps(3);
 
-    // Aba Pontos: filtrar por tipo, escolher o bloco, inserir com os valores e excluir.
-    // ELEPONTOS prepara o desenho e abre a lista; escolher o bloco já começa a inserir.
+    // Lista de materiais: cabos por seção e tipo, eletrodutos por tipo e diâmetro.
+    h.get_by_label("Lista de materiais...").click();
+    h.run_steps(3);
+    h.get_by_label("Cabos, com a folga do projeto");
+    h.get_by_label("Eletrodutos");
+    h.get_by_label("Disjuntores");
+    assert!(h.query_all_by_label("Cabo flexível PVC 70 °C (450/750 V)").count() >= 1);
+    assert!(h.query_all_by_label("PVC rígido (roscável ou soldável)").count() >= 1);
+    h.key_press(egui::Key::Escape);
+    h.run_steps(3);
+
+    // ELEPONTOS: a mini-barra na hora, sem janela; cada clique insere.
+    assert!(h.query_by_label("Quadro pai").is_none());
     assert!(h.state_mut().cmdline("ELEPONTOS").is_none());
     h.run_steps(3);
-    h.get_by_label("Blocos");
-    for filtro in ["Todos (", "Iluminação (", "Interruptores (", "Dados/Telecom (", "Quadros/Racks (", "Caixas ("] {
-        assert!(h.query_all(egui_kittest::kittest::by().label_contains(filtro)).count() >= 1, "filtro {filtro}");
+    assert_eq!(h.state().session.running.as_ref().map(|r| r.id.as_str()), Some("eleponto"));
+    for campo in ["Categoria", "Bloco", "Potência", "Altura", "Quadro pai"] {
+        assert!(h.query_all_by_label(campo).count() >= 1, "{campo}");
     }
-    h.get_by_label("Tomadas (1)").click();
-    h.run_steps(3);
-    h.get_by_label("Pontos no desenho (1)");
-    assert!(h.query_by_label("ILU-OCT  ·  Iluminação  ·  0 no desenho").is_none(), "o filtro esconde as luminárias");
-    h.get_by_label("TOM-X  ·  TUG  ·  0 no desenho").click();
-    h.run_steps(3);
-    h.get_by_label("POTENCIA");
-    h.get_by_label("Altura (m)");
-    // Imagem da aba Pontos, quando pedida.
+    assert!(h.query_by_label("PAINEL: QD-01").is_none());
+    // Imagem da mini-barra, quando pedida.
     if let Ok(saida) = std::env::var("FREE_ELETRICA_PNG_PONTOS") {
         h.render().unwrap().save(saida).unwrap();
     }
+    let antes = h.state_mut().run("eletrica.analisar", json!({})).unwrap()["pontos"].as_array().unwrap().len();
     let app = h.state_mut();
-    assert!(app.session.running.is_some(), "ELEPONTO começou");
     app.session.input(Input::Point(Vec2::new(9.0, 9.0))).unwrap();
     app.session.input(Input::Enter).unwrap();
     assert!(app.session.running.is_none());
     let a = app.run("eletrica.analisar", json!({})).unwrap();
-    let novo = a["pontos"].as_array().unwrap().iter().find(|p| p["bloco"] == "TOM-X").expect("ponto inserido").clone();
-    assert_eq!((novo["potencia"].as_f64(), novo["posicao"][0].as_f64()), (Some(100.0), Some(9.0)));
+    assert_eq!(a["pontos"].as_array().unwrap().len(), antes + 1);
+    assert!(a["pontos"].as_array().unwrap().iter().any(|p| p["posicao"][0].as_f64() == Some(9.0)), "{a}");
+    h.run_steps(3);
+    assert!(h.query_by_label("Quadro pai").is_none(), "a mini-barra some com o comando");
+
+    // Lista de pontos: filtrar, editar e excluir; inserir é só na mini-barra.
+    h.get_by_label("Lista de pontos...").click();
+    h.run_steps(3);
+    assert!(h.query_by_label("Inserir no desenho").is_none());
+    for filtro in ["Todos (", "Iluminação (", "Interruptores (", "Dados/Telecom (", "Quadros/Racks (", "Caixas ("] {
+        assert!(h.query_all(egui_kittest::kittest::by().label_contains(filtro)).count() >= 1, "filtro {filtro}");
+    }
+    h.get_by_label("Tomadas (2)").click();
     h.run_steps(3);
     h.get_by_label("Pontos no desenho (2)");
     // Excluir pede confirmação na própria linha.
@@ -349,6 +381,9 @@ fn paleta_ferramentas_e_fluxo_completo() {
     h.get_by_label("Excluir?").click();
     h.run_steps(3);
     h.get_by_label("Pontos no desenho (1)");
+    // O X também fecha: aqui, Esc.
+    h.key_press(egui::Key::Escape);
+    h.run_steps(3);
 
     // Editor de blocos: a paleta vira as propriedades da família.
     assert!(h.query_by_label("Propriedades da Família").is_none());
@@ -386,31 +421,26 @@ fn paleta_ferramentas_e_fluxo_completo() {
     let nova = blocos.as_array().unwrap().iter().find(|b| b["nome"] == "MINHA-TOMADA").expect("a família aparece na lista").clone();
     assert_eq!(nova["familia"]["categoria"], "pontoForca");
 
-    // Barra de contexto: só enquanto o comando espera cliques, e muda o modelo sem interrompê-lo.
-    assert!(h.query_by_label("Alinhar à parede").is_none());
+    // A mini-barra muda o modelo sem interromper o comando.
     h.state_mut().run("eletrica.bootstrap", json!({})).unwrap();
     h.state_mut().run("eletrica.ponto.modelo", json!({ "bloco": "TOM-SIM-BAIXA" })).unwrap();
     h.state_mut().start("eleponto");
     h.run_steps(3);
     assert_eq!(h.state().session.running.as_ref().map(|r| r.id.as_str()), Some("eleponto"));
-    h.get_by_label("Alinhar à parede").click();
-    h.run_steps(3);
-    assert_eq!(h.state().session.running.as_ref().map(|r| r.id.as_str()), Some("eleponto"));
     let uid = h.state().session.state().unwrap().uid;
-    assert!(!free_eletrica::biblioteca::modelo(uid).unwrap().rotacao_auto);
-    // Na barra e no cabeçalho da lista de pontos.
-    assert!(h.query_all_by_label("Altura").count() >= 2);
-    h.get_by_label("Potência");
-    h.get_by_label("Girar").click();
+    h.state_mut().run("eletrica.ponto.modelo", json!({ "bloco": "RJ45" })).unwrap();
     h.run_steps(3);
     assert!(h.state().session.running.is_some());
+    assert!(h.query_by_label("Quadro pai").is_none(), "um ponto de dados não tem quadro elétrico");
+    h.state_mut().run("eletrica.ponto.modelo", json!({ "bloco": "TOM-SIM-BAIXA" })).unwrap();
     h.state_mut().session.input(Input::Enter).unwrap();
     h.run_steps(3);
-    assert!(h.query_by_label("Alinhar à parede").is_none());
 
     h.get_by_label("Inserir eletroduto").click();
     h.run_steps(3);
     h.get_by_label("Cota");
+    h.get_by_label("Flecha");
+    assert!(h.query_all_by_label("Tipo").count() >= 1);
     h.get_by_label("Piso").click();
     h.run_steps(3);
     assert_eq!(free_eletrica::eletroduto::modelo(uid).instalacao, free_eletrica::rota::Instalacao::Piso);

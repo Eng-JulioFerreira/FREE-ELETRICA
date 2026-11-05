@@ -1744,6 +1744,156 @@ fn limite_de_queda_por_natureza_do_circuito() {
 }
 
 #[test]
+fn tipo_de_cabo_por_circuito_escolhe_a_tabela() {
+    use nbr5410::{Isolacao, TipoCabo as C};
+    let mut d = planta();
+    let qd = quadro(&d);
+    let setup = Setup::default();
+    let linha = |d: &Drawing, id: &str, s: &Setup| {
+        rotear_quadro(d, &analisar(d), s, quadro(d)).unwrap().linhas.into_iter().find(|l| l.circuito.id == id).unwrap()
+    };
+    assert_eq!((linha(&d, "3", &setup).tipo_cabo, linha(&d, "3", &setup).isolacao), (C::FlexivelPvc70, Isolacao::Pvc));
+    let antes = linha(&d, "3", &setup).escolha;
+
+    // O chuveiro em HEPR 90 °C: outra capacidade e outro FCT; os outros circuitos não mudam.
+    editar::definir_cabo_circuito(&mut d, qd, "3", Some(C::HeprXlpe90)).unwrap();
+    let l = linha(&d, "3", &setup);
+    assert_eq!((l.tipo_cabo, l.isolacao, l.isolacao_propria), (C::HeprXlpe90, Isolacao::Epr, true));
+    assert!(l.escolha.iz.unwrap() != antes.iz.unwrap() || l.escolha.secao != antes.secao);
+    assert_eq!(linha(&d, "2", &setup).tipo_cabo, C::FlexivelPvc70);
+    let quente = Setup { temperatura_ambiente: 50.0, ..Setup::default() };
+    assert!(linha(&d, "3", &quente).fct > linha(&d, "2", &quente).fct, "a 50 °C o cabo de 90 °C perde menos");
+
+    // Todos os tipos: a temperatura da isolação decide a tabela, e a tensão a coluna do diâmetro.
+    for c in C::TODOS {
+        assert_eq!(C::de_codigo(c.codigo()), Some(c));
+        editar::definir_cabo_circuito(&mut d, qd, "3", Some(c)).unwrap();
+        let l = linha(&d, "3", &setup);
+        assert_eq!(l.tipo_cabo, c);
+        assert_eq!(l.isolacao, if matches!(c, C::HeprXlpe90 | C::LszhHepr90) { Isolacao::Epr } else { Isolacao::Pvc }, "{c:?}");
+    }
+    assert!(setup.diametro_do_cabo(2.5, C::UnipolarPvc70) > setup.diametro_do_cabo(2.5, C::FlexivelPvc70), "0,6/1 kV é mais grosso");
+    assert_eq!(setup.diametro_do_cabo(3.0, C::FlexivelPvc70), None);
+
+    // None volta ao padrão das configurações; o padrão vale para quem não escolheu.
+    editar::definir_cabo_circuito(&mut d, qd, "3", None).unwrap();
+    assert!(!linha(&d, "3", &setup).isolacao_propria);
+    let padrao = Setup { cabo_padrao: C::Lszh70, ..Setup::default() };
+    assert_eq!(linha(&d, "3", &padrao).tipo_cabo, C::Lszh70);
+
+    // Desenho anterior, com isolação gravada: vira o cabo equivalente; o tipo novo a substitui.
+    editar::definir_isolacao_circuito(&mut d, qd, "3", Some(Isolacao::Xlpe)).unwrap();
+    assert_eq!(linha(&d, "3", &setup).tipo_cabo, C::HeprXlpe90);
+    editar::definir_cabo_circuito(&mut d, qd, "3", Some(C::FlexivelPvc70)).unwrap();
+    assert_eq!(linha(&d, "3", &setup).isolacao, Isolacao::Pvc);
+    assert!(editar::definir_cabo_circuito(&mut d, qd, " ", Some(C::Lszh70)).is_err());
+    // Excluir o circuito leva junto.
+    editar::excluir_circuito(&mut d, qd, "3").unwrap();
+    assert!(!quadro::propriedades(analisar(&d).ponto(qd).unwrap()).contains_key("3"));
+}
+
+#[test]
+fn tipo_de_eletroduto_entra_na_ocupacao_e_no_xdata() {
+    use rota::TipoEletroduto as T;
+    let setup = Setup::default();
+    for t in T::TODOS {
+        assert_eq!(T::de_codigo(t.codigo()), Some(t));
+        assert_eq!(T::de_codigo(t.abreviado()), Some(t));
+        assert!(!setup.tamanhos_de(t).is_empty());
+    }
+    assert_eq!(setup.tamanhos_de(T::PvcRigido), setup.eletrodutos, "o rígido usa a tabela editável");
+    // Os mesmos condutores ocupam mais num corrugado do que num rígido do mesmo nominal.
+    let tres = [3.6, 3.6, 3.6, 3.6, 3.6, 3.6, 3.6];
+    let (rigido, oc_r) = setup.eletroduto_do_tipo(&tres, T::PvcRigido).unwrap();
+    let (corrugado, oc_c) = setup.eletroduto_do_tipo(&tres, T::CorrugadoReforcado).unwrap();
+    assert!(corrugado.nominal > rigido.nominal || oc_c > oc_r, "{rigido:?} {corrugado:?}");
+    // PEAD não tem 20 mm: começa no menor dele.
+    assert_eq!(setup.eletroduto_do_tipo(&[3.6], T::PeadCorrugado).unwrap().0.nominal, 40.0);
+
+    let mut d = metros();
+    let q = qd(&mut d, 0.0, 0.0);
+    let a = tug(&mut d, 4.0, 0.0, "1");
+    let h = eletroduto::inserir_com_tipo(&mut d, q, a, rota::Instalacao::Teto, 0.0, T::AcoFogo).unwrap();
+    assert!(xdata::ler(&d.model.get(h).unwrap().common.xdata).iter().any(|(k, v)| k == "conduit_type" && v == "STEEL_HOT_DIP"));
+    assert_eq!(rede_de(&d).arestas[0].tipo, T::AcoFogo);
+    let f = fiacao::calcular(&d, &analisar(&d), &setup, q).unwrap();
+    assert_eq!(f.trechos[0].tipo, T::AcoFogo);
+    // Dividir mantém o tipo nas duas partes.
+    eletroduto::dividir(&mut d, &setup, h, [2.0, 0.0], 1.0).unwrap();
+    assert!(rede_de(&d).arestas.iter().all(|e| e.tipo == T::AcoFogo));
+    eletroduto::definir_tipo(&mut d, h, T::PeadCorrugado).unwrap();
+    assert!(rede_de(&d).arestas.iter().any(|e| e.tipo == T::PeadCorrugado));
+    assert!(eletroduto::definir_tipo(&mut d, Handle(0xFFFF), T::PvcRigido).is_err());
+    // Um eletroduto sem tipo gravado é PVC rígido; um diâmetro travado precisa existir no tipo.
+    let mut d = metros();
+    let q2 = qd(&mut d, 0.0, 0.0);
+    let b = tug(&mut d, 4.0, 0.0, "1");
+    eletroduto(&mut d, (0.0, 0.0), (4.0, 0.0));
+    assert_eq!(rede_de(&d).arestas[0].tipo, T::PvcRigido);
+    let h = rede_de(&d).arestas[0].eletroduto;
+    eletroduto::definir_tipo(&mut d, h, T::CorrugadoLeve).unwrap();
+    eletroduto::travar_diametro(&mut d, h, Some(85.0)).unwrap();
+    let f = fiacao::calcular(&d, &analisar(&d), &setup, q2).unwrap();
+    assert!(f.avisos.iter().any(|a| a.contains("PVC-CL")), "{:?}", f.avisos);
+    let _ = b;
+}
+
+#[test]
+fn lista_de_materiais_separa_por_tipo_e_diametro() {
+    use nbr5410::TipoCabo as C;
+    use rota::TipoEletroduto as T;
+    let setup = Setup::default();
+    let mut d = metros();
+    biblioteca::garantir_base(&mut d, &setup, 1.0);
+    let v = |c: &str| vec![("CIRCUITO".to_string(), c.to_string())];
+    let q = biblioteca::inserir_ponto(&mut d, "QDG", [0.0, 0.0], 0.0, &[], &setup).unwrap();
+    let a = biblioteca::inserir_ponto(&mut d, "TOM-SIM-BAIXA", [4.0, 0.0], 0.0, &v("1"), &setup).unwrap();
+    let b = biblioteca::inserir_ponto(&mut d, "TOM-SIM-BAIXA", [8.0, 0.0], 0.0, &v("2"), &setup).unwrap();
+    biblioteca::inserir_ponto(&mut d, "RJ45", [9.0, 9.0], 0.0, &[], &setup).unwrap();
+    biblioteca::inserir_ponto(&mut d, "ILU-OCT", [1.0, 9.0], 0.0, &[], &setup).unwrap();
+    let solto = biblioteca::inserir_ponto(&mut d, "CX-PASSAGEM", [20.0, 0.0], 0.0, &[], &setup).unwrap();
+    let _ = solto;
+    editar::definir_cabo_circuito(&mut d, q, "2", Some(C::HeprXlpe90)).unwrap();
+    eletroduto::inserir_com_tipo(&mut d, q, a, rota::Instalacao::Teto, 0.0, T::CorrugadoReforcado).unwrap();
+    eletroduto::inserir_com_tipo(&mut d, a, b, rota::Instalacao::Teto, 0.0, T::AcoFogo).unwrap();
+    eletroduto(&mut d, (30.0, 0.0), (31.0, 0.0));
+    let m = materiais::levantar(&d, &analisar(&d), &setup);
+    // Mesma seção, tipos diferentes: duas linhas; com a folga de cabos.
+    assert!(m.cabos.iter().any(|c| c.tipo == C::FlexivelPvc70 && c.secao == 2.5 && c.metros > 0.0), "{:?}", m.cabos);
+    assert!(m.cabos.iter().any(|c| c.tipo == C::HeprXlpe90 && c.metros > 0.0), "{:?}", m.cabos);
+    // Metragem em 3D por tipo e diâmetro.
+    let duto = |t: T| m.eletrodutos.iter().find(|e| e.tipo == t).unwrap().clone();
+    assert!(perto(duto(T::CorrugadoReforcado).metros, 4.0 + 1.3 + 2.5, 1e-9), "{:?}", m.eletrodutos);
+    // Três cabos HEPR de 6 mm passam de 40 % no Ø20 de aço a fogo.
+    assert_eq!(duto(T::AcoFogo).diametro, Some(25.0));
+    assert_eq!(m.eletrodutos_soltos, 1);
+    // Caixas pela família; pontos e disjuntores contados.
+    let qtd = |l: &[materiais::ItemContado], n: &str| l.iter().find(|i| i.nome == n).map_or(0, |i| i.quantidade);
+    assert_eq!(qtd(&m.caixas, "4x2\""), 3, "{:?}", m.caixas);
+    assert_eq!(qtd(&m.caixas, "Octogonal"), 1);
+    assert_eq!(qtd(&m.caixas, "Passagem 15x15"), 1);
+    assert_eq!(qtd(&m.pontos, "TUG"), 2);
+    assert_eq!(qtd(&m.pontos, "Dados/Telecom"), 1);
+    assert_eq!(m.disjuntores.iter().map(|i| i.quantidade).sum::<usize>(), 3, "dois circuitos e o geral: {:?}", m.disjuntores);
+    assert_eq!(m.pontos_sem_caixa, 0);
+    // Desenho vazio.
+    assert_eq!(materiais::levantar(&metros(), &analisar(&metros()), &setup), materiais::Materiais::default());
+}
+
+#[test]
+fn liberar_fases_devolve_ao_balanceamento() {
+    let mut d = planta();
+    let qd = quadro(&d);
+    editar::travar_fases(&mut d, qd, "2", Some("R")).unwrap();
+    editar::travar_fases(&mut d, qd, "1", Some("R")).unwrap();
+    assert_eq!(editar::liberar_fases(&mut d, qd).unwrap(), 2);
+    assert_eq!(editar::liberar_fases(&mut d, qd).unwrap(), 0);
+    let r = rotear_quadro(&d, &analisar(&d), &Setup::default(), qd).unwrap();
+    assert!(r.linhas.iter().all(|l| !l.fases_travadas));
+    assert!(editar::liberar_fases(&mut d, Handle(0xFFFF)).is_err());
+}
+
+#[test]
 fn letra_nova_entra_nas_teclas_livres() {
     use circuito::comando_com_letra as c;
     assert_eq!(c("", "a", 1), "a");
@@ -1764,7 +1914,7 @@ fn bloco_no_clique_e_modelo_do_eletroduto() {
     assert_eq!(eletroduto::bloco_em(&d, &setup, [3.09, 0.0], 1.0), Some(longe));
     assert_eq!(eletroduto::bloco_em(&d, &setup, [9.0, 0.0], 1.0), None);
     // Cada desenho tem o seu modelo.
-    let m = eletroduto::ModeloEletroduto { instalacao: rota::Instalacao::Piso, flecha: 0.0 };
+    let m = eletroduto::ModeloEletroduto { instalacao: rota::Instalacao::Piso, flecha: 0.0, tipo: rota::TipoEletroduto::AcoFogo };
     eletroduto::definir_modelo(991_001, m);
     assert_eq!(eletroduto::modelo(991_001), m);
     assert_eq!(eletroduto::modelo(991_002), eletroduto::ModeloEletroduto::default());

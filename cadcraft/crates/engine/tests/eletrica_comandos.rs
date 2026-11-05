@@ -326,14 +326,22 @@ fn desenho_virgem_ganha_camadas_e_blocos_sem_perguntar() {
         assert!(doc.layer(c).is_some(), "{c}");
     }
     assert_eq!(s.execute("eletrica.bootstrap", &json!({})).unwrap()["mudou"], false);
-    // Interativo: começar o comando já prepara outro desenho virgem, e ele pergunta o bloco.
+    // Interativo: começar o comando prepara outro desenho virgem e o primeiro clique já insere.
     s.open_drawing(Drawing::new_metric(), "Virgem 2", None);
     s.start("eleponto").unwrap();
-    assert!(s.prompt_text().contains("Nome do bloco"), "{}", s.prompt_text());
-    s.input(Input::Text("QDC".into())).unwrap();
+    assert!(s.prompt_text().contains("Ponto de inserção"), "{}", s.prompt_text());
+    s.input(Input::Point(Vec2::new(0.5, 0.5))).unwrap();
+    assert_eq!(s.execute("eletrica.analisar", &json!({})).unwrap()["pontos"][0]["bloco"], "TOM-SIM-BAIXA");
+    // Trocar de bloco digitando.
+    s.input(Input::Keyword("Bloco".into())).unwrap();
+    s.input(Input::Text("NADA".into())).unwrap();
+    assert!(s.running.is_some());
+    s.input(Input::Keyword("Bloco".into())).unwrap();
+    s.input(Input::Text("qdc".into())).unwrap();
     s.input(Input::Point(Vec2::new(1.0, 1.0))).unwrap();
     s.input(Input::Enter).unwrap();
-    assert_eq!(s.execute("eletrica.analisar", &json!({})).unwrap()["pontos"][0]["bloco"], "QDC");
+    let a = s.execute("eletrica.analisar", &json!({})).unwrap();
+    assert!(a["pontos"].as_array().unwrap().iter().any(|p| p["bloco"] == "QDC"), "{a}");
     // E o comando manual também funciona num desenho virgem.
     s.open_drawing(Drawing::new_metric(), "Virgem 3", None);
     assert_eq!(s.execute("eletrica.bootstrap", &json!({})).unwrap()["mudou"], true);
@@ -390,6 +398,95 @@ fn barra_muda_o_modelo_enquanto_o_comando_corre_e_tab_gira() {
     assert!((rotacao(&s, 4) - 90.0).abs() < 1e-9);
     assert!(s.execute("eleponto", &json!({ "bloco": "TOM-TUE", "pontos": [[f64::INFINITY, 5.0]]})).is_err());
     assert!(s.execute("eleponto", &json!({ "bloco": "TOM-TUE", "pontos": 3 })).is_err());
+}
+
+#[test]
+fn cabo_eletroduto_quadro_pai_e_materiais_por_comandos() {
+    let mut s = Session::new();
+    let mut d = Drawing::new_metric();
+    d.header.set_i64("INSUNITS", 6);
+    s.open_drawing(d, "Planta", None);
+    s.execute("eletrica.bootstrap", &json!({})).unwrap();
+    let um = |v: Value| v["pontos"][0].as_str().unwrap().to_string();
+    let q1 = um(s.execute("eleponto", &json!({ "bloco": "QDG", "pontos": [[0.0, 0.0]], "valores": { "TAG": "QD-1" } })).unwrap());
+    let q2 = um(s.execute("eleponto", &json!({ "bloco": "QDC", "pontos": [[0.0, 5.0]], "valores": { "TAG": "QD-2" } })).unwrap());
+
+    // Quadro pai: por handle ou TAG; o que não é quadro é recusado.
+    let a = um(s
+        .execute("eleponto", &json!({ "bloco": "TOM-SIM-BAIXA", "pontos": [[4.0, 0.0]], "quadro": "QD-1", "valores": { "CIRCUITO": "1" } }))
+        .unwrap());
+    assert!(s.execute("eleponto", &json!({ "bloco": "TOM-SIM-BAIXA", "pontos": [[5.0, 0.0]], "quadro": "NADA" })).is_err());
+    assert!(s.execute("eleponto", &json!({ "bloco": "TOM-SIM-BAIXA", "pontos": [[5.0, 0.0]], "quadro": 3 })).is_err());
+    let pontos = s.execute("eletrica.analisar", &json!({})).unwrap()["pontos"].clone();
+    let p = pontos.as_array().unwrap().iter().find(|p| p["handle"].as_str() == Some(a.as_str())).unwrap().clone();
+    assert_eq!(p["quadro"].as_str(), Some(q1.as_str()));
+    // No interativo, pelo modelo, mudando no meio do comando.
+    s.start("eleponto").unwrap();
+    s.execute("eletrica.ponto.modelo", &json!({ "bloco": "TOM-SIM-BAIXA", "quadro": q2, "valores": { "CIRCUITO": "9" } })).unwrap();
+    s.input(Input::Point(Vec2::new(4.0, 5.0))).unwrap();
+    s.input(Input::Enter).unwrap();
+    let pontos = s.execute("eletrica.analisar", &json!({})).unwrap()["pontos"].clone();
+    assert!(pontos.as_array().unwrap().iter().any(|p| p["circuito"] == "9" && p["quadro"].as_str() == Some(q2.as_str())), "{pontos}");
+    assert!(s.execute("eletrica.ponto.modelo", &json!({ "bloco": "TOM-SIM-BAIXA", "quadro": "NADA" })).is_err());
+    s.execute("eletrica.ponto.modelo", &json!({ "bloco": "TOM-SIM-BAIXA", "quadro": null })).unwrap();
+
+    // Cabo por circuito: inválido não grava; muda a linha; null volta ao padrão.
+    let linha = |s: &mut Session, q: &str, id: &str| -> Value {
+        let r = s.execute("eletrica.rotear", &json!({ "quadro": q })).unwrap();
+        r["linhas"].as_array().unwrap().iter().find(|l| l["circuito"]["id"] == id).unwrap().clone()
+    };
+    assert!(s.execute("eletrica.circuito.definir", &json!({ "quadro": q1, "circuito": "1", "cabo": "OURO" })).is_err());
+    assert!(s.execute("eletrica.circuito.definir", &json!({ "quadro": q1, "circuito": "1", "cabo": 3 })).is_err());
+    assert_eq!(linha(&mut s, &q1, "1")["tipoCabo"], "flexivelPvc70");
+    s.execute("eletrica.circuito.definir", &json!({ "quadro": q1, "circuito": "1", "cabo": "HEPR_XLPE_90" })).unwrap();
+    let l = linha(&mut s, &q1, "1");
+    assert_eq!((l["tipoCabo"].as_str(), l["isolacao"].as_str()), (Some("heprXlpe90"), Some("epr")));
+    s.undo().unwrap();
+    assert_eq!(linha(&mut s, &q1, "1")["tipoCabo"], "flexivelPvc70");
+    s.execute("eletrica.circuito.definir", &json!({ "quadro": q1, "circuito": "1", "cabo": "LSZH_HEPR_90" })).unwrap();
+
+    // Eletroduto com tipo: pelo JSON, pelo modelo e pelo prompt; inválido recusa.
+    assert!(s.execute("eleeletroduto", &json!({ "de": q1, "para": a, "tipo": "BAMBU" })).is_err());
+    let e = s.execute("eleeletroduto", &json!({ "de": q1, "para": a, "tipo": "STEEL_HOT_DIP", "flecha": 0 })).unwrap();
+    let e = e["eletroduto"].as_str().unwrap().to_string();
+    let tr = s.execute("eletrica.eletrodutos", &json!({})).unwrap()["trechos"][0].clone();
+    assert_eq!(tr["tipo"], "acoFogo");
+    assert!(s.execute("eletrica.eletroduto.definir", &json!({ "eletroduto": e, "tipo": "BAMBU" })).is_err());
+    s.execute("eletrica.eletroduto.definir", &json!({ "eletroduto": e, "tipo": "PVC_CORR_LIGHT" })).unwrap();
+    assert_eq!(s.execute("eletrica.eletrodutos", &json!({})).unwrap()["trechos"][0]["tipo"], "corrugadoLeve");
+    assert!(s.execute("eletrica.eletroduto.modelo", &json!({ "tipo": "BAMBU" })).is_err());
+    let m = s.execute("eletrica.eletroduto.modelo", &json!({ "tipo": "HDPE_CORR" })).unwrap();
+    assert_eq!(m["tipo"], "peadCorrugado");
+    s.start("eleeletroduto").unwrap();
+    s.input(Input::Keyword("Tipo".into())).unwrap();
+    s.input(Input::Text("bambu".into())).unwrap();
+    s.input(Input::Keyword("Tipo".into())).unwrap();
+    s.input(Input::Text("ag-e".into())).unwrap();
+    assert!(s.prompt_text().contains("AG-E"), "{}", s.prompt_text());
+    s.input(Input::Enter).unwrap();
+
+    // Materiais, dimensionar e equilibrar.
+    let m = s.execute("eletrica.materiais", &json!({})).unwrap();
+    assert!(m["cabos"].as_array().unwrap().iter().any(|c| c["tipo"] == "lszhHepr90"), "{m}");
+    assert!(m["eletrodutos"].as_array().unwrap().iter().any(|c| c["tipo"] == "corrugadoLeve"), "{m}");
+    assert!(m["pontos"].as_array().unwrap().iter().any(|c| c["nome"] == "TUG"), "{m}");
+    let r = s.execute("eletrica.dimensionar", &json!({ "quadro": "QD-1" })).unwrap();
+    assert_eq!(r["circuitos"], 1);
+    assert!(s.execute("eletrica.dimensionar", &json!({ "quadro": "NADA" })).is_err());
+    s.execute("eletrica.circuito.definir", &json!({ "quadro": q1, "circuito": "1", "fases": "T" })).unwrap();
+    assert_eq!(linha(&mut s, &q1, "1")["fasesTravadas"], true);
+    assert_eq!(s.execute("eletrica.quadro.equilibrar", &json!({ "quadro": q1 })).unwrap()["destravados"], 1);
+    assert_eq!(linha(&mut s, &q1, "1")["fasesTravadas"], false);
+
+    // Tudo volta do DXF.
+    let dxf = cadcraft_io::write_dxf(s.doc().unwrap());
+    let volta = cadcraft_io::read_dxf(dxf.as_bytes()).unwrap();
+    let a2 = free_eletrica::analisar(&volta);
+    let setup = free_eletrica::Setup::default();
+    let r = free_eletrica::rotear_quadro(&volta, &a2, &setup, Handle::parse_hex(&q1).unwrap()).unwrap();
+    assert_eq!(r.linhas[0].tipo_cabo, free_eletrica::nbr5410::TipoCabo::LszhHepr90);
+    let rede = free_eletrica::rota::Rede::montar(&volta, &setup, &a2.pontos, 1.0);
+    assert_eq!(rede.arestas[0].tipo, free_eletrica::rota::TipoEletroduto::CorrugadoLeve);
 }
 
 #[test]

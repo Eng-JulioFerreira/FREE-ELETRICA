@@ -7,7 +7,7 @@ use cadcraft_doc::{Drawing, EntityKind, Handle, Insert, RawTag};
 use serde::Serialize;
 
 use crate::demanda::TipoCarga;
-use crate::familia::{self, FamilyCategory, RefAltura};
+use crate::familia::{self, CaixaFisica, FamilyCategory, RefAltura};
 
 /// Atributos que marcam um bloco como ponto elétrico. Um bloco sem nenhum deles (porta, móvel,
 /// carimbo) não entra na análise, mesmo que o nome lembre um ponto elétrico. A primeira tag de
@@ -207,6 +207,8 @@ pub struct PontoEletrico {
     pub cota_fixa: f64,
     /// A categoria da família do bloco.
     pub categoria: Option<FamilyCategory>,
+    /// A caixa física da família do bloco.
+    pub caixa: Option<CaixaFisica>,
     /// O quadro que alimenta o ponto (XDATA gravado pela ferramenta de circuitos, atributo
     /// QUADRO com a TAG do quadro, ou o único quadro do desenho).
     #[serde(serialize_with = "handle_hex_opcional")]
@@ -314,6 +316,7 @@ impl PontoEletrico {
             ref_altura: familia.as_ref().map(|f| f.ref_altura),
             cota_fixa: familia.as_ref().map_or(0.0, |f| f.cota_fixa),
             categoria: familia.as_ref().map(|f| f.categoria),
+            caixa: familia.as_ref().map(|f| f.caixa),
             quadro: None,
             quadro_ref: texto(TAGS_QUADRO),
             fp: valor(TAGS_FP).and_then(fator_potencia).or_else(|| familia.as_ref().and_then(|f| f.fp)),

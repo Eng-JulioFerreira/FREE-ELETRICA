@@ -5,11 +5,11 @@
 
 use cadcraft_doc::{Drawing, EntityKind, Handle};
 
-use crate::nbr5410::{Esquema, Isolacao};
+use crate::nbr5410::{Esquema, Isolacao, TipoCabo};
 use crate::ponto::{CHAVE_ALTURA, TAGS_ALTURA, TAGS_CIRCUITO, TAGS_COMANDO, TAGS_QUADRO, ler_ponto};
 use crate::quadro::{
-    CHAVE_DESCRICAO, CHAVE_DISJUNTOR, CHAVE_ESQUEMA, CHAVE_FASE, CHAVE_ISOLACAO, CHAVE_ISOLACAO_CIRCUITO, CHAVE_SECAO, CHAVE_TENSAO, NOMES_FASES,
-    fases_de_texto,
+    CHAVE_CABO, CHAVE_DESCRICAO, CHAVE_DISJUNTOR, CHAVE_ESQUEMA, CHAVE_FASE, CHAVE_ISOLACAO, CHAVE_ISOLACAO_CIRCUITO, CHAVE_SECAO, CHAVE_TENSAO,
+    NOMES_FASES, fases_de_texto,
 };
 use crate::xdata;
 
@@ -37,7 +37,7 @@ fn pontos_do_circuito(doc: &Drawing, quadro: Handle, circuito: &str) -> Vec<Hand
 /// Apaga do quadro as escolhas e a descrição de um circuito.
 fn esquecer_circuito(doc: &mut Drawing, quadro: Handle, circuito: &str) -> Result<(), String> {
     let id = circuito.trim().to_uppercase();
-    for prefixo in [CHAVE_SECAO, CHAVE_DISJUNTOR, CHAVE_DESCRICAO, CHAVE_ISOLACAO_CIRCUITO, CHAVE_ESQUEMA, CHAVE_TENSAO, CHAVE_FASE] {
+    for prefixo in [CHAVE_SECAO, CHAVE_DISJUNTOR, CHAVE_DESCRICAO, CHAVE_ISOLACAO_CIRCUITO, CHAVE_CABO, CHAVE_ESQUEMA, CHAVE_TENSAO, CHAVE_FASE] {
         gravar_xdata(doc, quadro, &format!("{prefixo}{id}"), None)?;
     }
     Ok(())
@@ -53,7 +53,25 @@ fn chave_do_circuito(prefixo: &str, circuito: &str) -> Result<String, String> {
 
 /// Isolação dos condutores de um circuito; `None` volta à do quadro.
 pub fn definir_isolacao_circuito(doc: &mut Drawing, quadro: Handle, circuito: &str, isolacao: Option<Isolacao>) -> Result<(), String> {
+    gravar_xdata(doc, quadro, &chave_do_circuito(CHAVE_CABO, circuito)?, None)?;
     gravar_xdata(doc, quadro, &chave_do_circuito(CHAVE_ISOLACAO_CIRCUITO, circuito)?, isolacao.map(Isolacao::codigo))
+}
+
+/// Tipo de cabo de um circuito; `None` volta ao padrão.
+pub fn definir_cabo_circuito(doc: &mut Drawing, quadro: Handle, circuito: &str, cabo: Option<TipoCabo>) -> Result<(), String> {
+    gravar_xdata(doc, quadro, &chave_do_circuito(CHAVE_ISOLACAO_CIRCUITO, circuito)?, None)?;
+    gravar_xdata(doc, quadro, &chave_do_circuito(CHAVE_CABO, circuito)?, cabo.map(TipoCabo::codigo))
+}
+
+/// Destrava as fases de todos os circuitos do quadro: o balanceamento automático volta a valer para
+/// todos. Devolve quantos estavam travados.
+pub fn liberar_fases(doc: &mut Drawing, quadro: Handle) -> Result<usize, String> {
+    let p = ler_ponto(doc, quadro).ok_or("quadro não encontrado")?;
+    let chaves: Vec<String> = p.extras.iter().filter(|(k, _)| k.to_uppercase().starts_with(CHAVE_FASE)).map(|(k, _)| k.clone()).collect();
+    for k in &chaves {
+        gravar_xdata(doc, quadro, k, None)?;
+    }
+    Ok(chaves.len())
 }
 
 /// Isolação dos condutores do quadro; `None` volta à das configurações.

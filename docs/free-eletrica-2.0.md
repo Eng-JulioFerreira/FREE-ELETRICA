@@ -176,3 +176,28 @@ O que já existe da 2.0 fica; cada etapa acrescenta ou ajusta.
 - **Marcador de conexão:** fica na camada `Defpoints`, que por convenção de CAD não plota; ele aparece na
   tela dentro de cada inserção.
 - **Barra sobre o desenho:** continua existindo durante o `ELEPONTO`, junto com a lista.
+
+## Correções depois do teste prático
+
+Quatro pedidos depois de usar a versão no CADCraft, que mudam parte do que está acima:
+
+- **`ELEPONTOS` voltou à mini-barra:** categoria, bloco, potência, altura e quadro pai. O comando já começa
+  com um bloco escolhido, então o primeiro clique insere. A janela de pontos só lista e edita.
+- **Painel de baixo removido:** tudo virou janela independente, aberta só quando pedida, com X e Esc. Esc
+  fecha a última aberta, e não age com um comando em andamento, que usa Esc para cancelar.
+- **Tipo de cabo por circuito**, com cinco tipos e a tabela de 70 °C ou 90 °C de cada um. Na lista de
+  materiais, os cabos saem por seção e tipo.
+- **Tipo de eletroduto**, com seis tipos, gravado em cada trecho, usado na ocupação e separado por tipo e
+  diâmetro na lista de materiais.
+
+Limites:
+
+- **Dimensionar** refaz o cálculo do quadro e atualiza tags e tabelas. Os valores continuam visíveis antes
+  do botão: a separação completa entre lançar e dimensionar segue para a Etapa 2.
+- **Equilibrar fases** destrava as fases de todos os circuitos; o balanceamento em si é o automático que já
+  existia.
+- **Diâmetros internos** dos tipos que não são PVC rígido são valores típicos, sem conferência em catálogo,
+  e não são editáveis nas Configurações.
+- **Legenda:** a metragem por tipo e diâmetro está na lista de materiais. Ainda não existe uma legenda
+  desenhada na planta.
+- **Cabos de 0,6/1 kV:** usam a mesma coluna de diâmetro; LSZH segue a coluna da tensão dele.

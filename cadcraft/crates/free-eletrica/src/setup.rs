@@ -7,7 +7,7 @@ use std::sync::{LazyLock, RwLock};
 
 use serde::{Deserialize, Serialize};
 
-use crate::nbr5410::{Config, Isolacao};
+use crate::nbr5410::{Config, Isolacao, TipoCabo};
 
 /// As configurações em uso no processo. Ficam no motor, e não na interface: os comandos
 /// (linha de comando, scripts, canal de controle, MCP) e a paleta leem a mesma fonte. A
@@ -391,8 +391,8 @@ pub struct Setup {
     /// Distância máxima (m) entre um ponto e o eletroduto que chega nele.
     pub raio_captura: f64,
     pub cabos_telecom: Vec<CaboTelecom>,
-    /// Isolação padrão dos condutores (cada quadro pode trocar em Rotear fiação).
-    pub isolacao: Isolacao,
+    /// O cabo de um circuito novo; cada circuito pode ter o seu.
+    pub cabo_padrao: TipoCabo,
     /// Diâmetros externos dos condutores, por seção.
     pub diametros_condutor: Vec<DiametroCondutor>,
     /// Nome do tipo de eletroduto do projeto.
@@ -427,7 +427,7 @@ impl Default for Setup {
             camadas_piso: "*PISO*".into(),
             raio_captura: 0.30,
             cabos_telecom: cabos_padrao(),
-            isolacao: Isolacao::Pvc,
+            cabo_padrao: TipoCabo::default(),
             diametros_condutor: diametros_padrao(),
             tipo_eletroduto: "PVC rígido roscável, linha média".into(),
             eletrodutos: eletrodutos_padrao(),
@@ -464,13 +464,13 @@ impl Setup {
 
     /// Fator de correção de temperatura (tabela 40) da isolação padrão.
     pub fn fct(&self) -> f64 {
-        self.isolacao.fct(self.temperatura_ambiente)
+        self.cabo_padrao.isolacao().fct(self.temperatura_ambiente)
     }
 
     /// Os parâmetros do dimensionamento com a isolação padrão. O FCA de cada circuito vem do
     /// roteamento.
     pub fn config(&self) -> Config {
-        self.config_com(self.isolacao)
+        self.config_com(self.cabo_padrao.isolacao())
     }
 
     /// Os parâmetros do dimensionamento com outra isolação (a de um quadro).
@@ -492,6 +492,40 @@ impl Setup {
         let d = self.diametros_condutor.iter().find(|d| (d.secao - secao).abs() < 1e-6)?;
         let v = if isolacao == Isolacao::Pvc { d.pvc } else { d.epr_xlpe };
         (v > 0.0).then_some(v)
+    }
+
+    /// Diâmetro externo (mm) de um condutor pela seção e pelo tipo de cabo: 450/750 V ou 0,6/1 kV.
+    pub fn diametro_do_cabo(&self, secao: f64, cabo: TipoCabo) -> Option<f64> {
+        let d = self.diametros_condutor.iter().find(|d| (d.secao - secao).abs() < 1e-6)?;
+        let v = if cabo.de_06_1kv() { d.epr_xlpe } else { d.pvc };
+        (v > 0.0).then_some(v)
+    }
+
+    /// Os tamanhos de um tipo de eletroduto. O PVC rígido usa a tabela editável das configurações.
+    pub fn tamanhos_de(&self, tipo: crate::rota::TipoEletroduto) -> Vec<TamanhoEletroduto> {
+        match tipo.tamanhos_tipicos() {
+            Some(lista) => lista
+                .iter()
+                .map(|(nominal, pol, interno)| TamanhoEletroduto { nominal: *nominal, polegadas: (*pol).into(), interno: *interno })
+                .collect(),
+            None => self.eletrodutos.clone(),
+        }
+    }
+
+    /// O menor eletroduto do tipo (a partir do mínimo) que comporta condutores com estes diâmetros
+    /// externos (mm), com a ocupação máxima da NBR 5410. Devolve o tamanho e a ocupação (0-1).
+    pub fn eletroduto_do_tipo(&self, diametros: &[f64], tipo: crate::rota::TipoEletroduto) -> Option<(TamanhoEletroduto, f64)> {
+        let area = |d: f64| std::f64::consts::PI * d * d / 4.0;
+        let ocupada: f64 = diametros.iter().map(|d| area(*d)).sum();
+        let limite = ocupacao_maxima(diametros.len());
+        self.tamanhos_de(tipo)
+            .into_iter()
+            .filter(|e| e.nominal + 1e-9 >= self.eletroduto_minimo && e.interno > 0.0)
+            .map(|e| {
+                let oc = ocupada / area(e.interno);
+                (e, oc)
+            })
+            .find(|(_, oc)| *oc <= limite + 1e-9)
     }
 
     /// O menor eletroduto (a partir do mínimo) que comporta condutores com estes diâmetros

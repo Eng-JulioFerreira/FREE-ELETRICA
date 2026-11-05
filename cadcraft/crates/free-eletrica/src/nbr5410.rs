@@ -100,6 +100,77 @@ impl Isolacao {
     }
 }
 
+/// O tipo de cabo de um circuito. A temperatura da isolação escolhe a tabela de capacidade de
+/// condução e o FCT (NBR 5410, tabelas 36, 37 e 40): 70 °C ou 90 °C.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TipoCabo {
+    #[default]
+    FlexivelPvc70,
+    UnipolarPvc70,
+    HeprXlpe90,
+    Lszh70,
+    LszhHepr90,
+}
+
+impl TipoCabo {
+    pub const TODOS: [TipoCabo; 5] = [Self::FlexivelPvc70, Self::UnipolarPvc70, Self::HeprXlpe90, Self::Lszh70, Self::LszhHepr90];
+
+    /// O código gravado no XDATA.
+    pub fn codigo(self) -> &'static str {
+        match self {
+            Self::FlexivelPvc70 => "FLEX_PVC_70",
+            Self::UnipolarPvc70 => "UNI_PVC_70",
+            Self::HeprXlpe90 => "HEPR_XLPE_90",
+            Self::Lszh70 => "LSZH_70",
+            Self::LszhHepr90 => "LSZH_HEPR_90",
+        }
+    }
+
+    pub fn nome(self) -> &'static str {
+        match self {
+            Self::FlexivelPvc70 => "Cabo flexível PVC 70 °C (450/750 V)",
+            Self::UnipolarPvc70 => "Cabo unipolar PVC 70 °C (0,6/1 kV)",
+            Self::HeprXlpe90 => "Cabo HEPR / XLPE 90 °C (0,6/1 kV)",
+            Self::Lszh70 => "Cabo livre de halogênio LSZH 70 °C",
+            Self::LszhHepr90 => "Cabo livre de halogênio LSZH/HEPR 90 °C",
+        }
+    }
+
+    /// O nome curto, para tabelas.
+    pub fn abreviado(self) -> &'static str {
+        match self {
+            Self::FlexivelPvc70 => "PVC flex. 70°",
+            Self::UnipolarPvc70 => "PVC unip. 70°",
+            Self::HeprXlpe90 => "HEPR/XLPE 90°",
+            Self::Lszh70 => "LSZH 70°",
+            Self::LszhHepr90 => "LSZH/HEPR 90°",
+        }
+    }
+
+    pub fn de_codigo(t: &str) -> Option<Self> {
+        Self::TODOS.into_iter().find(|c| c.codigo().eq_ignore_ascii_case(t.trim()))
+    }
+
+    /// A isolação que escolhe a tabela de cálculo: a de 70 °C ou a de 90 °C.
+    pub fn isolacao(self) -> Isolacao {
+        match self {
+            Self::FlexivelPvc70 | Self::UnipolarPvc70 | Self::Lszh70 => Isolacao::Pvc,
+            Self::HeprXlpe90 | Self::LszhHepr90 => Isolacao::Epr,
+        }
+    }
+
+    /// O cabo equivalente a uma isolação gravada antes de existir o tipo de cabo.
+    pub fn de_isolacao(i: Isolacao) -> Self {
+        if i == Isolacao::Pvc { Self::FlexivelPvc70 } else { Self::HeprXlpe90 }
+    }
+
+    /// É um cabo de 0,6/1 kV: o diâmetro externo vem dessa coluna da tabela de condutores.
+    pub fn de_06_1kv(self) -> bool {
+        matches!(self, Self::UnipolarPvc70 | Self::HeprXlpe90 | Self::LszhHepr90)
+    }
+}
+
 /// O esquema de condutores de um circuito.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

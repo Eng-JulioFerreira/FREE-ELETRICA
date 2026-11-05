@@ -162,8 +162,10 @@ pub struct Condutores {
     pub retornos: BTreeSet<String>,
     /// Seção do circuito (mm²), a escolhida no quadro de cargas.
     pub secao: Option<f64>,
-    /// Isolação dos condutores do circuito (entra no diâmetro externo).
+    /// Isolação dos condutores do circuito.
     pub isolacao: Isolacao,
+    /// Tipo de cabo do circuito (entra no diâmetro externo).
+    pub tipo_cabo: crate::nbr5410::TipoCabo,
 }
 
 impl Condutores {
@@ -211,6 +213,7 @@ pub struct Trecho {
     #[serde(serialize_with = "hex")]
     pub para: Handle,
     pub instalacao: Instalacao,
+    pub tipo: rota::TipoEletroduto,
     /// Comprimento com subidas e descidas (m).
     pub comprimento: f64,
     /// Meio do eletroduto e o ângulo dele ali.
@@ -246,8 +249,8 @@ fn diametros(t: &Trecho, setup: &Setup, avisos: &mut Vec<String>) -> Option<Vec<
             avisos.push(format!("circuito {}: sem seção, eletroduto não dimensionado", k.circuito));
             return None;
         };
-        let Some(d) = setup.diametro_condutor(secao, k.isolacao) else {
-            avisos.push(format!("sem diâmetro externo para {} mm² ({}) nas configurações", br(secao), k.isolacao.codigo()));
+        let Some(d) = setup.diametro_do_cabo(secao, k.tipo_cabo) else {
+            avisos.push(format!("sem diâmetro externo para {} mm² ({}) nas configurações", br(secao), k.tipo_cabo.abreviado()));
             return None;
         };
         v.extend(std::iter::repeat_n(d, k.marcas().len()));
@@ -261,9 +264,9 @@ fn dimensionar_eletroduto(t: &mut Trecho, travado: Option<f64>, setup: &Setup, a
     t.eletroduto = None;
     t.ocupacao = None;
     t.diametro_travado = false;
-    let tamanho = travado.and_then(|n| setup.eletrodutos.iter().find(|e| (e.nominal - n).abs() < 1e-6).cloned());
+    let tamanho = travado.and_then(|n| setup.tamanhos_de(t.tipo).into_iter().find(|e| (e.nominal - n).abs() < 1e-6));
     if let (Some(n), None) = (travado, &tamanho) {
-        avisos.push(format!("diâmetro travado Ø{} não está na tabela de eletrodutos", br(n)));
+        avisos.push(format!("diâmetro travado Ø{} não existe no tipo {}", br(n), t.tipo.abreviado()));
     }
     if let Some(e) = &tamanho {
         t.eletroduto = Some(e.clone());
@@ -280,12 +283,12 @@ fn dimensionar_eletroduto(t: &mut Trecho, travado: Option<f64>, setup: &Setup, a
         }
         return;
     }
-    match setup.eletroduto_para(&d) {
+    match setup.eletroduto_do_tipo(&d, t.tipo) {
         Some((e, oc)) => {
             t.eletroduto = Some(e);
             t.ocupacao = Some(oc);
         }
-        None => avisos.push(format!("{} condutores num trecho: nenhum eletroduto do tipo do projeto comporta", d.len())),
+        None => avisos.push(format!("{} condutores num trecho: nenhum eletroduto {} comporta", d.len(), t.tipo.abreviado())),
     }
 }
 
@@ -329,6 +332,7 @@ fn trecho_de(rede: &Rede, e: usize, circuitos: Vec<Condutores>) -> Option<Trecho
         de: rede.nos.get(a.de)?.handle,
         para: rede.nos.get(a.para)?.handle,
         instalacao: a.instalacao,
+        tipo: a.tipo,
         comprimento: a.comprimento,
         meio: a.meio,
         angulo: a.angulo,
@@ -353,7 +357,13 @@ pub fn calcular(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle)
     for (ic, linha) in resumo.linhas.iter().enumerate() {
         let c = &linha.circuito;
         let membros: Vec<&PontoEletrico> = analise.pontos.iter().filter(|p| c.pontos.contains(&p.handle)).collect();
-        let novo = || Condutores { circuito: c.id.clone(), secao: linha.escolha.secao, isolacao: linha.isolacao, ..Condutores::default() };
+        let novo = || Condutores {
+            circuito: c.id.clone(),
+            secao: linha.escolha.secao,
+            isolacao: linha.isolacao,
+            tipo_cabo: linha.tipo_cabo,
+            ..Condutores::default()
+        };
         let mut marcar = |arestas: &[usize], f: &dyn Fn(&mut Condutores)| {
             for e in arestas {
                 f(por_aresta.entry(*e).or_default().entry(ic).or_insert_with(novo));

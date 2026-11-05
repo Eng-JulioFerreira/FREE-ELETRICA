@@ -67,7 +67,7 @@ fn linhas_da_tabela(r: &ResumoQuadro) -> Vec<Vec<String>> {
             e.disjuntor.map_or("-".to_string(), br),
         ];
         c.extend((0..fases).map(|f| l.carga_fase.get(f).copied().filter(|p| *p > 0.0).map_or(String::new(), |p| fixo(p, 0))));
-        c.push(l.isolacao.codigo().to_string());
+        c.push(l.tipo_cabo.abreviado().to_string());
         v.push(c);
     }
     v

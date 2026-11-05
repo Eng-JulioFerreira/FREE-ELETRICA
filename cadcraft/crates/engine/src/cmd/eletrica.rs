@@ -45,10 +45,10 @@ pub fn specs() -> Vec<CommandSpec> {
             .params("{quadro?: hex | TAG, ponto: [x, y]} → draws the load schedule as a block at the point (moves it if the board already has one): {tabela}")
             .interactive(|_| Ok(Box::new(TabelaM::default()))),
         CommandSpec::new("eleeletroduto", "Insert Conduit", run_eletroduto)
-            .params("{de: hex | [x, y], para: hex | [x, y], instalacao?: \"CEILING\" | \"FLOOR\" | \"WALL\", flecha?: number (arc bulge as a fraction of the chord: + left, - right, 0 straight; default 0.15)} (a point on a conduit splits it with a pull box) → {eletroduto}")
+            .params("{de: hex | [x, y], para: hex | [x, y], instalacao?: \"CEILING\" | \"FLOOR\" | \"WALL\", tipo?: PVC_CORR_LIGHT | PVC_CORR_HEAVY | PVC_RIGID | HDPE_CORR | STEEL_ELECTRO | STEEL_HOT_DIP, flecha?: number (arc bulge as a fraction of the chord: + left, - right, 0 straight; default 0.15)} (a point on a conduit splits it with a pull box) → {eletroduto}")
             .interactive(|_| Ok(Box::new(EletrodutoM::default()))),
         CommandSpec::new("eleponto", "Insert Electrical Point", run_ponto)
-            .params("{bloco, pontos: [[x, y]], rotacao?: degrees, rotacaoAuto?: bool (align to the nearest wall), altura?: m, valores?: {TAG: value}} → {pontos: [hex]}")
+            .params("{bloco, pontos: [[x, y]], rotacao?: degrees, rotacaoAuto?: bool (align to the nearest wall), altura?: m, quadro?: hex | TAG, valores?: {TAG: value}} → {pontos: [hex]}")
             .interactive(|_| Ok(Box::new(PontoM::default()))),
         CommandSpec::new("eletrica.ponto.altura", "Point Elevation", run_altura)
             .params("{pontos: [hex], altura: m | null} (at the project's standard height or null: the visible ALTURA stays empty; otherwise the exact value goes to XDATA and the plan shows h=1,45m) → {pontos}"),
@@ -67,20 +67,27 @@ pub fn specs() -> Vec<CommandSpec> {
             .params("{ponto: [x, y]} → moves the block being edited so the point is its origin, the insertion and conduit connection point: {conector}")
             .enabled(no_editor_de_blocos)
             .interactive(|_| Ok(Box::new(ConectorM))),
+        CommandSpec::new("eletrica.materiais", "Materials List", run_materiais)
+            .params("{} → {cabos: [{secao, tipo, metros}], eletrodutos: [{tipo, diametro, metros}], caixas, pontos, disjuntores, pontosSemCaixa, eletrodutosSoltos, avisos}")
+            .noundo(),
+        CommandSpec::new("eletrica.dimensionar", "Size Board", run_dimensionar)
+            .params("{quadro?: hex | TAG} → sizes the board's circuits and updates tags and tables: {circuitos, avisos}"),
+        CommandSpec::new("eletrica.quadro.equilibrar", "Balance Phases", run_equilibrar)
+            .params("{quadro?: hex | TAG} → unlocks the phases of every circuit, so the balancing applies to all: {destravados, desequilibrio}"),
         CommandSpec::new("eletrica.bootstrap", "Prepare Electrical Drawing", run_bootstrap).params("{} → creates the missing base layers and blocks: {mudou}"),
         CommandSpec::new("eletrica.blocos", "Electrical Point Blocks", run_blocos)
             .params("{} → [{nome, tipo, inseridos, atributos: [{tag, padrao, prompt, constante}]}]")
             .noundo(),
         CommandSpec::new("eletrica.ponto.modelo", "Point Template", run_modelo)
-            .params("{bloco, rotacao?: degrees, rotacaoAuto?: bool (default true), altura?: m, valores?: {TAG: value}} → what ELEPONTO inserts, also while it runs")
+            .params("{bloco, rotacao?: degrees, rotacaoAuto?: bool (default true), altura?: m, quadro?: hex | TAG | null, valores?: {TAG: value}} → what ELEPONTO inserts, also while it runs")
             .noundo(),
         CommandSpec::new("eletrica.ponto.excluir", "Delete Electrical Points", run_excluir_pontos).params("{pontos: [hex]} → {excluidos}"),
         CommandSpec::new("eletrica.eletroduto.modelo", "Conduit Template", run_modelo_eletroduto)
-            .params("{instalacao?: \"CEILING\" | \"FLOOR\" | \"WALL\", flecha?: number} → what ELEELETRODUTO uses, also while it runs")
+            .params("{instalacao?: \"CEILING\" | \"FLOOR\" | \"WALL\", tipo?: PVC_CORR_LIGHT | PVC_CORR_HEAVY | PVC_RIGID | HDPE_CORR | STEEL_ELECTRO | STEEL_HOT_DIP, flecha?: number} → what ELEELETRODUTO uses, also while it runs")
             .noundo(),
         CommandSpec::new("eletrica.eletroduto.dividir", "Split Conduit", run_dividir).params("{eletroduto: hex, ponto: [x, y]} → splits it with a pull box: {caixa}"),
         CommandSpec::new("eletrica.eletroduto.definir", "Conduit Properties", run_definir_eletroduto)
-            .params("{eletroduto: hex, diametro?: mm | null (a number locks it; null: back to automatic), instalacao?: \"CEILING\" | \"FLOOR\" | \"WALL\"} → {eletroduto}"),
+            .params("{eletroduto: hex, diametro?: mm | null (a number locks it; null: back to automatic), instalacao?: \"CEILING\" | \"FLOOR\" | \"WALL\", tipo?: conduit type code} → {eletroduto}"),
         CommandSpec::new("eletrica.eletrodutos", "Conduit Summary", run_eletrodutos).params("{} → {trechos, soltos, avisos}").noundo(),
         CommandSpec::new("eletrica.inspecionar", "Inspect Electrical Project", run_inspecionar)
             .params("{} → [{handle, pos, nivel: vermelho | laranja | amarelo | verde, motivo, eletroduto}]")
@@ -104,7 +111,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("eletrica.circuito.juntar", "Merge Circuits", run_juntar)
             .params("{quadro?: hex | TAG, de, para} (the points of `de` go to `para`) → {quadro, de, para, pontos}"),
         CommandSpec::new("eletrica.circuito.definir", "Circuit Properties", run_definir).params(
-            "{quadro?: hex | TAG, circuito, isolacao?: \"PVC\" | \"EPR\" | \"XLPE\" | null, esquema?: \"F+N\" | \"F+N+T\" | \"2F+T\" | \"3F+N+T\" | null, tensao?: V | null, fases?: \"R\" | \"RS\" ... | null (a value locks the phases), descricao?} (null: back to automatic) → {quadro, circuito}. Load type and power factor come from the block attributes TIPO_CARGA and FP.",
+            "{quadro?: hex | TAG, circuito, cabo?: FLEX_PVC_70 | UNI_PVC_70 | HEPR_XLPE_90 | LSZH_70 | LSZH_HEPR_90 | null, isolacao?: \"PVC\" | \"EPR\" | \"XLPE\" | null, esquema?: \"F+N\" | \"F+N+T\" | \"2F+T\" | \"3F+N+T\" | null, tensao?: V | null, fases?: \"R\" | \"RS\" ... | null (a value locks the phases), descricao?} (null: back to automatic) → {quadro, circuito}. Load type and power factor come from the block attributes TIPO_CARGA and FP.",
         ),
         CommandSpec::new("eletrica.demanda.tabelas", "Demand Tables", run_tabelas_demanda)
             .params("{} → the utilities' demand tables (id, nome, fonte, edificacoes, aparelhos, arCondicionado, bombas)")
@@ -202,6 +209,12 @@ fn ponto_de(v: &Value) -> Option<[f64; 2]> {
 
 fn instalacao_de(cmd: &str, v: &Value) -> Result<Instalacao> {
     v.as_str().and_then(Instalacao::de_codigo).ok_or_else(|| bad(cmd, "`instalacao` must be \"CEILING\", \"FLOOR\" or \"WALL\""))
+}
+
+fn tipo_de(cmd: &str, v: &Value) -> Result<ele::rota::TipoEletroduto> {
+    v.as_str()
+        .and_then(ele::rota::TipoEletroduto::de_codigo)
+        .ok_or_else(|| bad(cmd, "`tipo` must be PVC_CORR_LIGHT, PVC_CORR_HEAVY, PVC_RIGID, HDPE_CORR, STEEL_ELECTRO or STEEL_HOT_DIP"))
 }
 
 fn numero_finito(cmd: &str, v: &Value, k: &str) -> Result<f64> {
@@ -314,6 +327,7 @@ fn run_juntar(s: &mut Session, p: &Value) -> Result<Value> {
 #[derive(Default)]
 struct Propriedades {
     isolacao: Option<Option<ele::nbr5410::Isolacao>>,
+    cabo: Option<Option<ele::nbr5410::TipoCabo>>,
     esquema: Option<Option<ele::nbr5410::Esquema>>,
     tensao: Option<Option<f64>>,
     fases: Option<Option<String>>,
@@ -330,6 +344,16 @@ impl Propriedades {
                     v.as_str()
                         .and_then(ele::nbr5410::Isolacao::de_codigo)
                         .ok_or_else(|| bad(cmd, "`isolacao` must be \"PVC\", \"EPR\" or \"XLPE\""))?,
+                ),
+            });
+        }
+        if let Some(v) = p.get("cabo") {
+            d.cabo = Some(match v {
+                Value::Null => None,
+                v => Some(
+                    v.as_str()
+                        .and_then(ele::nbr5410::TipoCabo::de_codigo)
+                        .ok_or_else(|| bad(cmd, "`cabo` must be FLEX_PVC_70, UNI_PVC_70, HEPR_XLPE_90, LSZH_70 or LSZH_HEPR_90"))?,
                 ),
             });
         }
@@ -364,13 +388,21 @@ impl Propriedades {
     }
 
     fn vazio(&self) -> bool {
-        self.isolacao.is_none() && self.esquema.is_none() && self.tensao.is_none() && self.fases.is_none() && self.descricao.is_none()
+        self.isolacao.is_none()
+            && self.cabo.is_none()
+            && self.esquema.is_none()
+            && self.tensao.is_none()
+            && self.fases.is_none()
+            && self.descricao.is_none()
     }
 
     fn gravar(&self, s: &mut Session, q: Handle, id: &str) -> Result<()> {
         let doc = s.doc_mut()?;
         if let Some(i) = self.isolacao {
             ele::editar::definir_isolacao_circuito(doc, q, id, i).map_err(erro)?;
+        }
+        if let Some(c) = self.cabo {
+            ele::editar::definir_cabo_circuito(doc, q, id, c).map_err(erro)?;
         }
         if let Some(e) = self.esquema {
             ele::editar::definir_esquema(doc, q, id, e).map_err(erro)?;
@@ -398,11 +430,33 @@ fn run_definir(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let d = Propriedades::ler(CMD, p)?;
     if d.vazio() {
-        return Err(bad(CMD, "give `isolacao`, `esquema`, `tensao`, `fases` or `descricao`"));
+        return Err(bad(CMD, "give `cabo`, `isolacao`, `esquema`, `tensao`, `fases` or `descricao`"));
     }
     d.gravar(s, q, &id)?;
     atualizar_gerados(s)?;
     Ok(json!({ "quadro": q.hex(), "circuito": id }))
+}
+
+fn run_materiais(s: &mut Session, _p: &Value) -> Result<Value> {
+    json_de(&ele::materiais::levantar(s.doc()?, &analise(s)?, &ele::setup::atual()))
+}
+
+fn run_dimensionar(s: &mut Session, p: &Value) -> Result<Value> {
+    let a = analise(s)?;
+    let q = achar_quadro(&a, p.get("quadro"))?;
+    let r = ele::rotear_quadro(s.doc()?, &a, &ele::setup::atual(), q).map_err(erro)?;
+    let avisos: usize = r.avisos.len() + r.linhas.iter().map(|l| l.escolha.avisos.len()).sum::<usize>();
+    atualizar_gerados(s)?;
+    Ok(json!({ "quadro": q.hex(), "circuitos": r.linhas.len(), "avisos": avisos }))
+}
+
+fn run_equilibrar(s: &mut Session, p: &Value) -> Result<Value> {
+    let q = achar_quadro(&analise(s)?, p.get("quadro"))?;
+    let n = ele::editar::liberar_fases(s.doc_mut()?, q).map_err(erro)?;
+    atualizar_gerados(s)?;
+    let a = analise(s)?;
+    let r = ele::rotear_quadro(s.doc()?, &a, &ele::setup::atual(), q).map_err(erro)?;
+    Ok(json!({ "quadro": q.hex(), "destravados": n, "desequilibrio": r.desequilibrio }))
 }
 
 fn run_tabelas_demanda(_s: &mut Session, _p: &Value) -> Result<Value> {
@@ -1062,6 +1116,10 @@ fn run_eletroduto(s: &mut Session, p: &Value) -> Result<Value> {
         },
         Some(v) => instalacao_de(CMD, v)?,
     };
+    let tipo = match p.get("tipo").filter(|v| !v.is_null()) {
+        Some(v) => tipo_de(CMD, v)?,
+        None => modelo.tipo,
+    };
     let flecha = match p.get("flecha") {
         None | Some(Value::Null) => modelo.flecha,
         Some(v) => numero_finito(CMD, v, "flecha")?,
@@ -1072,7 +1130,7 @@ fn run_eletroduto(s: &mut Session, p: &Value) -> Result<Value> {
     preparar(s)?;
     let de = ponta(s, CMD, p, "de")?;
     let para = ponta(s, CMD, p, "para")?;
-    let h = ele::eletroduto::inserir(s.doc_mut()?, de, para, instalacao, flecha).map_err(erro)?;
+    let h = ele::eletroduto::inserir_com_tipo(s.doc_mut()?, de, para, instalacao, flecha, tipo).map_err(erro)?;
     atualizar_gerados(s)?;
     Ok(json!({ "eletroduto": h.hex(), "de": de.hex(), "para": para.hex() }))
 }
@@ -1083,6 +1141,9 @@ fn run_modelo_eletroduto(s: &mut Session, p: &Value) -> Result<Value> {
     let mut m = ele::eletroduto::modelo(uid);
     if let Some(v) = p.get("instalacao").filter(|v| !v.is_null()) {
         m.instalacao = instalacao_de(CMD, v)?;
+    }
+    if let Some(v) = p.get("tipo").filter(|v| !v.is_null()) {
+        m.tipo = tipo_de(CMD, v)?;
     }
     if let Some(v) = p.get("flecha").filter(|v| !v.is_null()) {
         m.flecha = numero_finito(CMD, v, "flecha")?.clamp(-ele::eletroduto::FLECHA_MAXIMA, ele::eletroduto::FLECHA_MAXIMA);
@@ -1113,8 +1174,12 @@ fn run_definir_eletroduto(s: &mut Session, p: &Value) -> Result<Value> {
         Some(v) => Some(Some(v.as_f64().filter(|d| d.is_finite() && *d > 0.0).ok_or_else(|| bad(CMD, "`diametro` must be a positive number"))?)),
     };
     let instalacao = p.get("instalacao").filter(|v| !v.is_null()).map(|v| instalacao_de(CMD, v)).transpose()?;
-    if diametro.is_none() && instalacao.is_none() {
-        return Err(bad(CMD, "give `diametro` or `instalacao`"));
+    let tipo = p.get("tipo").filter(|v| !v.is_null()).map(|v| tipo_de(CMD, v)).transpose()?;
+    if diametro.is_none() && instalacao.is_none() && tipo.is_none() {
+        return Err(bad(CMD, "give `diametro`, `instalacao` or `tipo`"));
+    }
+    if let Some(t) = tipo {
+        ele::eletroduto::definir_tipo(s.doc_mut()?, e, t).map_err(erro)?;
     }
     if let Some(d) = diametro {
         ele::eletroduto::travar_diametro(s.doc_mut()?, e, d).map_err(erro)?;
@@ -1129,6 +1194,7 @@ fn run_definir_eletroduto(s: &mut Session, p: &Value) -> Result<Value> {
 /// ELEELETRODUTO digitado: um clique em cada bloco (ou no meio de um eletroduto, que recebe uma
 /// caixa de passagem); cada um é ligado ao anterior, até Enter.
 struct EletrodutoM {
+    pedindo_tipo: bool,
     anterior: Option<Handle>,
     /// Lado do arco: 1 à esquerda de quem vai do anterior ao próximo, -1 à direita.
     lado: f64,
@@ -1138,7 +1204,7 @@ struct EletrodutoM {
 
 impl Default for EletrodutoM {
     fn default() -> Self {
-        EletrodutoM { anterior: None, lado: 1.0, pedindo_flecha: false, feitos: 0 }
+        EletrodutoM { pedindo_tipo: false, anterior: None, lado: 1.0, pedindo_flecha: false, feitos: 0 }
     }
 }
 
@@ -1147,7 +1213,7 @@ impl EletrodutoM {
     fn clicar(&mut self, s: &mut Session, h: Handle) -> Result<Step> {
         if let Some(a) = self.anterior {
             let m = ele::eletroduto::modelo(s.state()?.uid);
-            match ele::eletroduto::inserir(s.doc_mut()?, a, h, m.instalacao, self.lado * m.flecha) {
+            match ele::eletroduto::inserir_com_tipo(s.doc_mut()?, a, h, m.instalacao, self.lado * m.flecha, m.tipo) {
                 Ok(_) => self.feitos += 1,
                 Err(e) => {
                     s.echo(e);
@@ -1171,16 +1237,22 @@ impl Interactive for EletrodutoM {
     }
     fn prompt(&self, s: &Session) -> Prompt {
         let m = s.state().map(|st| ele::eletroduto::modelo(st.uid)).unwrap_or_default();
+        if self.pedindo_tipo {
+            return Prompt::new("Tipo de eletroduto (PVC-CL, PVC-CR, PVC-R, PEAD, AG-E, AG-F)", Accept::TEXT);
+        }
         if self.pedindo_flecha {
             return Prompt::new("Flecha do arco (fração da corda, de 0 a 0,5)", Accept::TEXT).default(ele::ponto::br(m.flecha));
         }
-        let onde = m.instalacao.nome().to_lowercase();
+        let onde = format!("{}, {}", m.instalacao.nome().to_lowercase(), m.tipo.abreviado());
         let msg = match self.anterior {
             None => format!("Clique no primeiro bloco ou no meio de um eletroduto ({onde})"),
             Some(_) => format!("Clique no próximo bloco ou no meio de um eletroduto ({onde}; Enter termina)"),
         };
-        let chaves: &[&str] =
-            if self.anterior.is_some() { &["Teto", "Piso", "Parede", "Inverter", "Flecha"] } else { &["Teto", "Piso", "Parede", "Flecha"] };
+        let chaves: &[&str] = if self.anterior.is_some() {
+            &["Teto", "Piso", "Parede", "Tipo", "Inverter", "Flecha"]
+        } else {
+            &["Teto", "Piso", "Parede", "Tipo", "Flecha"]
+        };
         Prompt::new(msg, Accept::POINT).kw(chaves)
     }
     fn preview(&self, s: &Session, cursor: Vec2) -> Vec<EntityKind> {
@@ -1195,6 +1267,17 @@ impl Interactive for EletrodutoM {
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
         let uid = s.state()?.uid;
+        if self.pedindo_tipo {
+            self.pedindo_tipo = false;
+            if let Input::Text(t) | Input::Keyword(t) = &i {
+                match ele::rota::TipoEletroduto::de_codigo(t) {
+                    Some(tipo) => ele::eletroduto::definir_modelo(uid, ele::eletroduto::ModeloEletroduto { tipo, ..ele::eletroduto::modelo(uid) }),
+                    None if t.trim().is_empty() => {}
+                    None => s.echo("Tipo inválido."),
+                }
+            }
+            return Ok(Step::Continue);
+        }
         if self.pedindo_flecha {
             self.pedindo_flecha = false;
             if let Input::Text(t) | Input::Keyword(t) = &i
@@ -1222,6 +1305,7 @@ impl Interactive for EletrodutoM {
                     "parede" => m.instalacao = Instalacao::Parede,
                     "inverter" => self.lado = -self.lado,
                     "flecha" => self.pedindo_flecha = true,
+                    "tipo" => self.pedindo_tipo = true,
                     _ => s.echo("Opção inválida."),
                 }
                 ele::eletroduto::definir_modelo(uid, m);
@@ -1265,6 +1349,25 @@ fn valores_de(cmd: &str, p: &Value) -> Result<Vec<(String, String)>> {
             .collect(),
         Some(_) => Err(bad(cmd, "`valores` must be an object {TAG: value}")),
     }
+}
+
+/// O quadro pai pedido: handle ou TAG de um quadro; sem ele ou `null`, nenhum.
+fn quadro_pai(s: &Session, cmd: &str, p: &Value) -> Result<Option<Handle>> {
+    match p.get("quadro") {
+        None | Some(Value::Null) => Ok(None),
+        Some(v) if v.is_string() => achar_quadro(&analise(s)?, Some(v)).map(Some).map_err(|_| bad(cmd, "`quadro` is not a board of the drawing")),
+        Some(_) => Err(bad(cmd, "`quadro` must be a handle or a TAG")),
+    }
+}
+
+/// Liga o ponto recém-inserido ao quadro pai; um quadro não tem quadro pai.
+fn ligar_ao_quadro_pai(s: &mut Session, h: Handle, pai: Option<Handle>) -> Result<()> {
+    if let Some(q) = pai
+        && ele::ponto::ler_ponto(s.doc()?, h).is_some_and(|p| p.tipo != TipoPonto::Quadro)
+    {
+        ele::editar::ligar_ao_quadro(s.doc_mut()?, h, q).map_err(erro)?;
+    }
+    Ok(())
 }
 
 /// Os valores, com `altura` (m) no lugar do atributo ALTURA quando vier.
@@ -1463,12 +1566,15 @@ fn run_ponto(s: &mut Session, p: &Value) -> Result<Value> {
         }
     }
     preparar(s)?;
+    let pai = quadro_pai(s, CMD, p)?;
     let setup = ele::setup::atual();
     let m = metros(s)?;
     let mut feitos = Vec::new();
     for pos in posicoes {
         let r = if auto { ele::biblioteca::alinhar_a_parede(s.doc()?, &setup, pos, m).unwrap_or(rotacao) } else { rotacao };
-        feitos.push(ele::biblioteca::inserir_ponto(s.doc_mut()?, &bloco, pos, r, &valores, &setup).map_err(erro)?.hex());
+        let h = ele::biblioteca::inserir_ponto(s.doc_mut()?, &bloco, pos, r, &valores, &setup).map_err(erro)?;
+        ligar_ao_quadro_pai(s, h, pai)?;
+        feitos.push(h.hex());
     }
     atualizar_gerados(s)?;
     Ok(json!({ "pontos": feitos }))
@@ -1489,6 +1595,7 @@ fn run_modelo(s: &mut Session, p: &Value) -> Result<Value> {
         rotacao: rotacao_de(CMD, p)?,
         rotacao_auto: p.get("rotacaoAuto").and_then(Value::as_bool).unwrap_or(true),
         valores: valores_com_altura(CMD, p)?,
+        quadro: quadro_pai(s, CMD, p)?,
     };
     ele::biblioteca::definir_modelo(s.state()?.uid, Some(modelo.clone()));
     json_de(&modelo)
@@ -1505,6 +1612,7 @@ fn run_excluir_pontos(s: &mut Session, p: &Value) -> Result<Value> {
 /// comando corre), um ponto por clique, até Enter. Sem modelo, pergunta o bloco.
 #[derive(Default)]
 struct PontoM {
+    pedindo_bloco: bool,
     pedindo_rotacao: bool,
     /// O que Girar somou à rotação, nesta execução.
     giro: f64,
@@ -1533,17 +1641,27 @@ impl Interactive for PontoM {
     }
     fn begin(&mut self, s: &mut Session) -> Result<Step> {
         preparar(s)?;
+        // Sem nada escolhido, começa pelo primeiro bloco base: o clique já insere.
+        if Self::modelo(s).is_none() {
+            let primeiro = ele::biblioteca::BLOCOS_BASE[0].to_string();
+            let nome = ele::biblioteca::blocos(s.doc()?).into_iter().map(|b| b.nome).find(|n| n.eq_ignore_ascii_case(&primeiro));
+            let Some(bloco) = nome.or_else(|| ele::biblioteca::blocos(s.doc().ok()?).into_iter().next().map(|b| b.nome)) else {
+                s.echo("O desenho não tem blocos de ponto elétrico.");
+                return Ok(Step::Done);
+            };
+            ele::biblioteca::definir_modelo(s.state()?.uid, Some(ele::biblioteca::Modelo { bloco, rotacao_auto: true, ..Default::default() }));
+        }
         Ok(Step::Continue)
     }
     fn prompt(&self, s: &Session) -> Prompt {
-        match Self::modelo(s) {
-            None => {
-                let primeiro = s.doc().ok().and_then(|d| ele::biblioteca::blocos(d).into_iter().next()).map(|b| b.nome).unwrap_or_default();
-                Prompt::new("Nome do bloco do ponto", Accept::TEXT).default(primeiro)
-            }
-            Some(_) if self.pedindo_rotacao => Prompt::new("Rotação (graus)", Accept::TEXT),
-            Some(m) => Prompt::new(format!("Ponto de inserção de {} (Tab gira; Enter termina)", m.bloco), Accept::POINT).kw(&["Rotacao", "Girar"]),
+        if self.pedindo_bloco {
+            return Prompt::new("Nome do bloco do ponto", Accept::TEXT);
         }
+        if self.pedindo_rotacao {
+            return Prompt::new("Rotação (graus)", Accept::TEXT);
+        }
+        let nome = Self::modelo(s).map_or(String::new(), |m| m.bloco);
+        Prompt::new(format!("Ponto de inserção de {nome} (Tab gira; Enter termina)"), Accept::POINT).kw(&["Bloco", "Rotacao", "Girar"])
     }
     fn preview(&self, s: &Session, cursor: Vec2) -> Vec<EntityKind> {
         let Some(m) = Self::modelo(s) else { return Vec::new() };
@@ -1567,21 +1685,25 @@ impl Interactive for PontoM {
             atualizar_gerados(s)?;
             return Ok(Step::Done);
         }
-        let Some(m) = Self::modelo(s) else {
-            let nome = match &i {
-                Input::Text(t) | Input::Keyword(t) if !t.trim().is_empty() => t.trim().to_string(),
-                Input::Enter | Input::Text(_) => ele::biblioteca::blocos(s.doc()?).into_iter().next().map(|b| b.nome).unwrap_or_default(),
-                _ => return Ok(Step::Continue),
-            };
-            match ele::biblioteca::blocos(s.doc()?).into_iter().find(|b| b.nome.eq_ignore_ascii_case(&nome)) {
-                Some(b) => ele::biblioteca::definir_modelo(
-                    s.state()?.uid,
-                    Some(ele::biblioteca::Modelo { bloco: b.nome, rotacao_auto: true, ..Default::default() }),
-                ),
-                None => s.echo(format!("O desenho não tem o bloco de ponto \"{nome}\".")),
+        if self.pedindo_bloco {
+            self.pedindo_bloco = false;
+            if let Input::Text(n) | Input::Keyword(n) = &i {
+                let n = n.trim();
+                match ele::biblioteca::blocos(s.doc()?).into_iter().find(|b| b.nome.eq_ignore_ascii_case(n)) {
+                    Some(b) => {
+                        let quadro = Self::modelo(s).and_then(|m| m.quadro);
+                        ele::biblioteca::definir_modelo(
+                            s.state()?.uid,
+                            Some(ele::biblioteca::Modelo { bloco: b.nome, rotacao_auto: true, quadro, ..Default::default() }),
+                        );
+                    }
+                    None if n.is_empty() => {}
+                    None => s.echo(format!("O desenho não tem o bloco de ponto \"{n}\".")),
+                }
             }
             return Ok(Step::Continue);
-        };
+        }
+        let Some(m) = Self::modelo(s) else { return Ok(Step::Done) };
         if self.pedindo_rotacao {
             self.pedindo_rotacao = false;
             if let Input::Text(t) | Input::Keyword(t) = &i
@@ -1597,13 +1719,17 @@ impl Interactive for PontoM {
             Input::Point(p) => {
                 let r = self.rotacao(s, &m, [p.x, p.y]);
                 match ele::biblioteca::inserir_ponto(s.doc_mut()?, &m.bloco, [p.x, p.y], r, &m.valores, &ele::setup::atual()) {
-                    Ok(_) => self.feitos += 1,
+                    Ok(h) => {
+                        ligar_ao_quadro_pai(s, h, m.quadro)?;
+                        self.feitos += 1;
+                    }
                     Err(e) => s.echo(e),
                 }
                 Ok(Step::Continue)
             }
             Input::Keyword(k) | Input::Text(k) => {
                 match k.trim().to_ascii_lowercase().as_str() {
+                    "bloco" | "b" => self.pedindo_bloco = true,
                     "rotacao" | "rotação" | "r" => self.pedindo_rotacao = true,
                     "girar" | "g" => self.giro = (self.giro + 90.0) % 360.0,
                     _ => s.echo("Opção inválida."),

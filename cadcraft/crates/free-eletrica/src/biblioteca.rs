@@ -709,6 +709,10 @@ pub struct Modelo {
     /// Alinhar à parede mais próxima, quando houver uma sob o cursor.
     pub rotacao_auto: bool,
     pub valores: Vec<(String, String)>,
+    /// O quadro que alimenta os pontos inseridos. `None`: o único do desenho, ou definido ao criar
+    /// o circuito.
+    #[serde(serialize_with = "crate::ponto::handle_hex_opcional")]
+    pub quadro: Option<Handle>,
 }
 
 /// O modelo de cada desenho aberto (`uid` do desenho): outro desenho ou outra sessão no mesmo
