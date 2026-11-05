@@ -17,12 +17,12 @@ clean-room, assets) são obrigatórias. As exceções estão no fim deste arquiv
 | :--- | :--- |
 | `cadcraft/crates/free-eletrica/` | **Motor do Free Elétrica**: pontos, circuitos, NBR 5410, roteamento, fiação, setup. Sem interface. |
 | `cadcraft/crates/engine/src/cmd/eletrica.rs` | **Comandos** do motor: `elecircuito`, `elecomando`, `elefiacao`, `eletrica.*`. |
-| `cadcraft/crates/ui-egui/src/eletrica.rs` | **Interface**: a paleta Elétrica e as janelas. Só lê e chama comandos. |
+| `cadcraft/crates/ui-egui/src/eletrica.rs` | **Interface**: a paleta Elétrica, a barra de contexto, o painel de baixo e a sobreposição. Só lê e chama comandos. |
 | `cadcraft/crates/free-eletrica/src/tests.rs` | Testes do motor. |
 | `cadcraft/crates/engine/tests/eletrica_comandos.rs` | Testes dos comandos, sem interface. |
-| `cadcraft/crates/ui-egui/tests/eletrica_painel.rs` | Testes da paleta e das janelas. |
-| `docs/` | Padrão de blocos, arquitetura do fork. |
-| `templates/` | Template de blocos e camadas (`FREE_ELETRICA_BLOCOS.dxf`) e a fonte dos símbolos. |
+| `cadcraft/crates/ui-egui/tests/eletrica_painel.rs` | Testes da paleta, da barra e do painel. |
+| `docs/` | Padrão de blocos, arquitetura do fork, registro da versão 2.0. |
+| `templates/` | Template opcional de blocos e camadas (`FREE_ELETRICA_BLOCOS.dxf`) e a fonte dos símbolos. Os blocos base nascem no motor (`ele::biblioteca`). |
 | `scripts/` | `compilar.bat`, `iniciar.bat`, `testar.bat`, `publicar_fork.bat`, `gerar_template.py`. |
 
 Pontos de registro no código do CADCraft (as únicas linhas nossas fora dos nossos arquivos)
@@ -43,14 +43,15 @@ nessa lista e precisa ser pequena.
    desenho, o prompt interativo (`interactive`). Cada comando tem teste em
    `eletrica_comandos.rs` rodando **sem interface**. Assim a linha de comando, scripts, o canal de
    controle, o `cadcraft-cli` e o MCP alcançam tudo. Chamadas programáticas nunca abrem janela.
-4. **Interface fina.** A paleta e as janelas leem o estado e agem por `app.run(id, params)` /
-   `app.start(id)`. Comandos só de interface (abrir paleta e janelas) ficam em `route()` de
-   `ui-egui/src/eletrica.rs`. A paleta só tem ferramentas; dados aparecem em janelas.
+4. **Interface fina.** A paleta, a barra e o painel leem o estado e agem por `app.run(id, params)` /
+   `app.start(id)`. Comandos só de interface (abrir paleta e painel) ficam em `route()` de
+   `ui-egui/src/eletrica.rs`. A paleta só tem ferramentas; dados aparecem no painel de baixo. Nada de
+   janela bloqueante.
 5. **Nunca travar** (padrão do CADCraft): sem `unwrap`/`expect`/`panic!`/`todo!` fora de testes
    (`#![deny]` na raiz de `ele`), erros por `Result`, entrada do desenho e de parâmetros JSON é
    hostil (`get()`, nada de índice vindo de fora, NaN e infinitos tratados).
 6. **Dados no desenho.** Valores vão para o atributo do bloco quando ele existe e, senão, para o
-   XDATA `FREEELETRICA` (`ele::editar`, `ele::xdata`). O que é gerado (marcas de fiação) leva XDATA
+   XDATA `FREE_ELETRICA` (`ele::editar`, `ele::xdata`). O que é gerado (tags de fiação, tabelas) leva XDATA
    próprio para poder ser apagado e refeito.
 7. **Clean-room.** Programas de referência (OFE Elétrico, PRO-Elétrica, Lumine, AutoCAD) podem
    ser **observados** em uso; nunca descompilados, nunca copiados (código, símbolos, tabelas

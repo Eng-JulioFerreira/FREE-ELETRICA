@@ -15,8 +15,8 @@ Atualizar o CADCraft é um `git subtree pull` (ver `CLAUDE.md`).
 
 ```
 crates/free-eletrica            L2  motor do Free Elétrica (só depende de cadcraft-doc)
-crates/engine         L4  comandos: cmd/eletrica.rs registra ELECIRCUITO, ELECOMANDO, ELEFIACAO, eletrica.*
-crates/ui-egui        L5  paleta e janelas: eletrica.rs (só lê e chama comandos)
+crates/engine         L4  comandos: cmd/eletrica.rs registra ELEPONTO, ELECIRCUITO, ELECOMANDO, ELEELETRODUTO, ELEFIACAO, eletrica.*
+crates/ui-egui        L5  paleta, barra, painel e sobreposição: eletrica.rs (só lê e chama comandos)
 apps/cadcraft             carrega/grava as configurações e abre a paleta na primeira vez
 ```
 
@@ -34,9 +34,11 @@ aqui é um possível conflito ao atualizar o CADCraft.
 | `crates/engine/src/cmd/mod.rs` | `mod eletrica;` e `v.extend(eletrica::specs())` |
 | `crates/ui-egui/Cargo.toml` | dependência de `free-eletrica` |
 | `crates/ui-egui/src/lib.rs` | `pub mod eletrica;` e `eletrica::janelas(...)` no desenho da janela |
-| `crates/ui-egui/src/docking.rs` | `Panel::Eletrica` (id, rótulo, lado, sob demanda, desenho, limites) |
+| `crates/ui-egui/src/docking.rs` | `Panel::Eletrica` e `Panel::QuadroCargas` (id, rótulo, lado, sob demanda, desenho, limites) |
+| `crates/ui-egui/src/canvas.rs` | `eletrica::sobre_canvas(...)` depois de desenhar o espaço do modelo |
+| `crates/ui-egui/src/cmdline.rs` | `eletrica::tab(app)` no início de `tab`: Tab gira o ponto durante ELEPONTO |
 | `crates/ui-egui/src/menus.rs` | item Janela > Elétrica e `eletrica::route(...)` |
-| `crates/ui-egui/src/i18n/uk.tsv`, `pt_br.tsv` | rótulos dos comandos e do painel |
+| `crates/ui-egui/src/i18n/uk.tsv`, `pt_br.tsv` | rótulos dos comandos e dos painéis |
 | `apps/cadcraft/src/main.rs` | carregar/gravar `freeeletrica.setup` e abrir a paleta ao iniciar |
 | `xtask/src/layers.rs` | `free-eletrica` na tabela de camadas |
 

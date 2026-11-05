@@ -29,29 +29,38 @@ aqui.
 
 ## O que faz
 
+A paleta **Elétrica** segue o fluxo de trabalho. Nada bloqueia o desenho: enquanto um comando espera
+cliques, uma barra sobre o desenho muda o que ele usa, e os dados ficam num painel embaixo do desenho.
+
 | Ferramenta | Comando | O quê |
 | :--- | :--- | :--- |
-| Configurações | `ELECONFIG` | Setup do projeto: sistema (380/220 V padrão), pé-direito, temperatura (FCT), isolação padrão (PVC, EPR ou XLPE), queda admissível, cores das fases, seções omitidas, diâmetros externos dos condutores, tamanhos de eletroduto, camadas de eletroduto de teto e piso, catálogo de cabos de telecom com diâmetro, tabela de demanda da concessionária e tipo de edificação. |
-| Inserir pontos | `ELEPONTOS` | Janela com os blocos de ponto do desenho, filtrados por tipo (iluminação, TUG, TUE, interruptor, quadro, caixa): escolha o bloco, preencha os atributos e clique no desenho para cada ponto (`ELEPONTO`). Lista os pontos já inseridos do tipo, para selecionar ou excluir. |
-| Inserir eletroduto | `ELEELETRODUTO` | Selecione os objetos em sequência (pontos, quadros, caixas): cada par é ligado por um eletroduto em arco (spline). Opções: Piso/Teto, Inverter (lado do arco) e Flecha (curvatura). O roteamento e a fiação leem as curvas. |
-| Quadro de cargas | `ELECARGAS` (ou `ELEROTEAR`) | O menu central de um quadro, com a fiação já roteada pelos eletrodutos. Por circuito: descrição, pontos (adicionar, selecionar, juntar, excluir), tipo de carga e FP (lidos dos atributos TIPO_CARGA e FP dos blocos), tipo de cabo (PVC, EPR, XLPE), seção e disjuntor pré-selecionados (com sobrescrita), corrente, queda de tensão e potência por fase. Embaixo, a demanda pela tabela da concessionária (Equatorial NT.001 rev. 07), correntes instalada e demandada e o levantamento de cabos. |
-| Criar circuito | `ELECIRCUITO` | Clique no quadro, aceite o número do circuito e clique nos pontos. |
-| Comandos e luminárias | `ELECOMANDO` | Clique no interruptor e nas luminárias que ele comanda. |
-| Conferir pontos e circuitos | `ELECONFERIR` | Pontos, circuitos e atributos que faltam. |
-| Ajustar fiação | `ELEFIACAO` | Desenha as marcas de fase, neutro, retorno e proteção, com circuito, seção e diâmetro do eletroduto (pela taxa de ocupação), sobre cada trecho. |
+| 1. Inserir pontos | `ELEPONTOS` | Clique onde vai cada ponto. A barra escolhe o tipo (TUG, TUE, iluminação, interruptores, quadros, caixa), a altura, a potência e o FP. O ponto alinha à parede mais próxima, e Tab gira. |
+| 2. Criar circuito | `ELECIRCUITO` | Quadro, número e pontos; a barra edita descrição, esquema (F+N, F+N+T, 2F+T, 3F+N+T) e tensão. O atributo CIRCUITO muda na hora. |
+| 2. Comandos e luminárias | `ELECOMANDO` | Interruptor e luminárias. A letra é a próxima livre, respeitando as teclas do interruptor, ou a que você digitar. |
+| 3. Quadro de cargas | `ELECARGAS` (ou `ELEROTEAR`) | Planilha no painel de baixo: Ib, I'b, queda, seção, disjuntor, isolação e fases R, S, T, com cadeado para travar o que foi escolhido à mão (vermelho se viola a NBR 5410). Clicar no circuito o destaca no desenho. Embaixo, demanda, alimentador, DR, DPS e cabos. |
+| 4. Inserir eletroduto | `ELEELETRODUTO` | Clique nos blocos em sequência. Clicar no meio de um eletroduto divide o trecho com uma caixa de passagem. Cota de teto, piso ou parede. |
+| 5. Tags de fiação | `ELEFIACAO` | Simbologia, circuito, seção e diâmetro em cada eletroduto. A posição que você der à tag fica guardada, e ela acompanha as mudanças do projeto. |
+| 5. Tabela do quadro | `ELEQUADRO_TABELA` | Desenha o quadro de cargas num ponto da planta e o refaz no mesmo lugar. |
+| 5. Atualizar | `ELEREGEN` | Refaz tags e tabelas sem mudar as posições. |
+| Inspecionar projeto | `ELEINSPECAO`, `ELECONFERIR` | Halos no desenho: vermelho falta circuito ou comando, laranja sem caminho até o quadro, amarelo acima do limite, verde válido. |
+| Configurações | `ELECONFIG` | Sistema, pé-direito, temperatura (FCT), isolação, queda admissível, cores, diâmetros, eletrodutos, telecom e demanda da concessionária. |
 
-Tudo também responde em JSON pelo canal de controle e pelo `cadcraft-cli`:
-`eletrica.analisar`, `eletrica.rotear` (com a demanda), `eletrica.sobrescrever`,
-`eletrica.circuito.*` (criar, descrever, definir, juntar, excluir), `eletrica.quadro`,
+Os eletrodutos formam um **grafo estrito**: cada um liga exatamente dois blocos elétricos. Cruzamentos
+e derivações sem caixa não conectam. Veja `docs/free-eletrica-2.0.md`.
+
+Tudo também responde em JSON pelo canal de controle e pelo `cadcraft-cli`: `eletrica.analisar`,
+`eletrica.rotear`, `eletrica.sobrescrever`, `eletrica.circuito.*`, `eletrica.quadro`,
+`eletrica.eletroduto.*`, `eletrica.eletrodutos`, `eletrica.inspecionar`, `eletrica.bootstrap`,
 `eletrica.demanda.tabelas`, `eletrica.blocos`, `eletrica.ponto.modelo`, `eletrica.ponto.excluir`,
-`eletrica.setup`, `elecircuito`, `elecomando`, `elefiacao`, `eleeletroduto`, `eleponto`.
+`eletrica.setup`, `eleponto`, `elecircuito`, `eleremoverponto`, `elecomando`, `eleeletroduto`,
+`elefiacao`, `eleregen`, `elequadro_tabela`.
 
 ## Começar
 
 1. `scripts\compilar.bat` compila (`release` para a versão otimizada).
 2. `scripts\iniciar.bat` abre o CADCraft com a paleta Elétrica.
-3. Abra `templates\FREE_ELETRICA_BLOCOS.dxf` e use "Salvar como" para começar um projeto: ele traz os
-   blocos INT-SIM, TOM-SIM-BAIXA, QDG e ILU-OCT e as camadas de eletroduto PVC linha média.
+3. Abra ou crie um desenho e use as ferramentas: as camadas e os blocos entram na primeira vez.
+   O template `templates\FREE_ELETRICA_BLOCOS.dxf` é opcional.
 
 Pré-requisitos (uma vez): Rust e MinGW em `C:\rust`, como descrito em `CLAUDE.md`.
 
@@ -60,7 +69,7 @@ Pré-requisitos (uma vez): Rust e MinGW em `C:\rust`, como descrito em `CLAUDE.m
 ```
 CLAUDE.md     regras do projeto (test-driven, motor desacoplado, tudo é comando)
 cadcraft/     o CADCraft com o Free Elétrica (crates/free-eletrica, cmd/eletrica.rs, ui-egui/eletrica.rs)
-docs/         padrão de blocos e arquitetura do fork
+docs/         padrão de blocos, arquitetura do fork e o registro da versão 2.0
 templates/    template de blocos e camadas
 scripts/      compilar, iniciar, testar, gerar o template
 ```

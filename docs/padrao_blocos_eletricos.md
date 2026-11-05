@@ -36,7 +36,15 @@ como aquecimento e o resto como iluminação e TUG. Sem `FP`, vale 1,00 em aquec
 no resto. O Quadro de cargas mostra o resultado por circuito: os tipos dos pontos e o FP do
 circuito (W / VA).
 
-### Blocos do template (`templates/FREE_ELETRICA_BLOCOS.dxf`)
+### Blocos base
+
+Na primeira ferramenta usada num desenho, entram sem perguntar as camadas e os blocos que faltam:
+`TOM-SIM-BAIXA`, `TOM-TUE`, `ILU-OCT`, `INT-SIM`, `INT-2S`, `INT-3S`, `INT-PAR`, `INT-INT`, `QDG`,
+`QDC`, `CX-PASSAGEM`. Um bloco com o mesmo nome já no desenho fica como está: é assim que se usa outro
+símbolo. Interruptores têm `TIPO_INTERRUPTOR` constante (`1S`, `2S`, `3S`, `PARALELO`,
+`INTERMEDIARIO`), que diz quantas teclas têm e como a fiação os liga.
+
+### Blocos do template (opcional: `templates/FREE_ELETRICA_BLOCOS.dxf`)
 
 | Bloco | Símbolo | Inserção | TIPO_PONTO (constante) | Padrões | Visíveis |
 | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -48,14 +56,14 @@ circuito (W / VA).
 `TOM-SIM-BAIXA` e `ILU-OCT` trazem também `TIPO_CARGA` = `ILUM_TUG` e `FP` = `0,92`,
 invisíveis.
 
-Camadas: `ELE-PONTOS`, `ELE-QUADROS`, `ELE-ELETRODUTO-PVC-MEDIA-TETO` (contínua) e
-`ELE-ELETRODUTO-PVC-MEDIA-PISO` (tracejada `ELE_PISO`). Para limpar blocos que não são mais
-usados num desenho, use o comando `PURGE` (ou `PU`).
+Camadas: `ELE-PONTOS`, `ELE-QUADROS`, `ELE-FIACAO`, `ELE-ELETRODUTO-TETO`, `ELE-ELETRODUTO-PISO`
+e `ELE-ELETRODUTO-PAREDE`. Camadas antigas com `ELETRODUTO` no nome continuam valendo. Para limpar
+blocos que não são mais usados num desenho, use o comando `PURGE` (ou `PU`).
 
-### Marcas de fiação (Ajustar fiação)
+### Tags de fiação
 
-`ELEFIACAO` desenha, em cada trecho de eletroduto, uma marca por condutor, perpendicular ao
-trecho e agrupadas por circuito:
+`ELEFIACAO` põe em cada eletroduto escolhido uma tag, um bloco `ELE_TAG_FIACAO_<handle>` com uma
+marca por condutor, perpendicular ao trecho e agrupadas por circuito:
 
 - em cima, o número do circuito sobre a primeira marca e a letra sobre cada retorno (lado a
   lado leem `1b`);
@@ -63,7 +71,7 @@ trecho e agrupadas por circuito:
 - na linha de baixo, centrado sob toda a simbologia, o diâmetro do eletroduto do trecho
   (`Ø20`).
 
-As marcas são blocos na camada `ELE-FIACAO`, em cor 7 (preto no fundo claro, branco no
+As tags ficam na camada `ELE-FIACAO` e as marcas são blocos em cor 7 (preto no fundo claro, branco no
 escuro):
 
 | Bloco | Condutor | Desenho |
@@ -75,27 +83,34 @@ escuro):
 
 Se o desenho não tem esses blocos, eles são criados com esse desenho padrão. Blocos padrão de
 versões anteriores do Free Elétrica são trocados pelo atual. Para usar outro símbolo, redesenhe o
-bloco no seu template: um bloco redesenhado fica como está. Rodar de novo apaga e refaz as
-marcas do quadro.
+bloco no seu template: um bloco redesenhado fica como está.
 
-O diâmetro do eletroduto é o menor tamanho, a partir do mínimo das Configurações, cuja área
-interna comporta os condutores do trecho: ocupação máxima de 53 % com um condutor, 31 % com
+A tag é ligada ao eletroduto pelo XDATA (`parent_conduit_handle`) e guarda onde você a deixou. Mover
+a tag no desenho é um ajuste permanente: a regeneração atualiza o conteúdo e mantém o deslocamento, e
+uma tag afastada ganha uma linha de chamada até o eletroduto. Tag sem dados mostra `?`. A tag de um
+eletroduto apagado some junto. Edições feitas pelas ferramentas elétricas regeneram sozinhas; depois
+de mover objetos com os comandos do CAD, use `ELEREGEN`.
+
+O diâmetro do eletroduto, se não foi travado à mão na aba Eletrodutos, é o menor tamanho, a partir do
+mínimo das Configurações, cuja área interna comporta os condutores do trecho: ocupação máxima de 53 % com um condutor, 31 % com
 dois e 40 % com três ou mais (NBR 5410, 6.2.11.1.6). Os diâmetros externos dos condutores
 (por isolação) e os internos dos eletrodutos ficam nas abas Condutores e Eletrodutos das
 Configurações. Os cabos de telecom têm diâmetro externo obrigatório no cadastro.
 
 Condutores por trecho: fase do quadro às tomadas, interruptores e luminárias sem interruptor;
-neutro e proteção do quadro às cargas (sem neutro em circuito de duas fases); retorno de cada
-interruptor às luminárias com a letra dele.
+neutro e proteção do quadro às cargas, conforme o esquema do circuito; retorno de cada interruptor
+às luminárias com a letra dele; dois retornos paralelos (`a'` e `a`") entre interruptores paralelos
+ou intermediários da mesma letra.
 
 `ALTURA`, junto com o pé-direito das Configurações, dá o comprimento real do cabo: os
-eletrodutos correm no teto e cada ponto desce até a sua altura. Sem `ALTURA`, valem: TUG/TUE
+eletrodutos correm no teto, no piso ou na parede, e cada ponta desce ou sobe até a altura do bloco:
+comprimento = 2D + |cota - Z de A| + |cota - Z de B|. Sem `ALTURA`, valem: TUG/TUE
 0,30 m, interruptor 1,10 m, quadro 1,50 m, iluminação no teto (sem aviso). Um número sem unidade acima de
 10 é lido em centímetros (`30` = 0,30 m).
 
 `CIRCUITO`, `COMANDO` e `QUADRO` não precisam existir no bloco: as ferramentas **Criar
 circuito** e **Comandos e luminárias** gravam no atributo quando ele existe e, senão, no XDATA
-do bloco (aplicativo `FREEELETRICA`), que viaja com o DWG/DXF e é copiado junto com o bloco. Com um
+do bloco (aplicativo `FREE_ELETRICA`), que viaja com o DWG/DXF e é copiado junto com o bloco. Com um
 só quadro no desenho, todo ponto é dele sem precisar de `QUADRO`.
 
 > [!IMPORTANT]
@@ -107,15 +122,17 @@ só quadro no desenho, todo ponto é dele sem precisar de `QUADRO`.
 
 ### C. Quadros de Distribuição (`QD`)
 Ponto de origem e alimentação dos circuitos terminais. Ficam no XDATA do bloco do quadro
-(aplicativo `FREEELETRICA`):
+(aplicativo `FREE_ELETRICA`; o nome antigo `FREEELETRICA` continua sendo lido):
 
-- as escolhas feitas à mão na tabela de Rotear fiação (`SECAO.<circuito>` e
+- as escolhas travadas no Quadro de cargas (`SECAO.<circuito>` e
   `DISJ.<circuito>`);
 - as descrições do Quadro de cargas (`DESC.<circuito>`), que também guardam os circuitos
   criados ainda sem pontos;
 - a isolação dos condutores do quadro (`ISOLACAO` = `PVC`, `EPR` ou `XLPE`); sem ela, vale a
   isolação padrão das Configurações;
-- a isolação de um circuito (`ISOL.<circuito>`), que vale sobre a do quadro.
+- a isolação de um circuito (`ISOL.<circuito>`), que vale sobre a do quadro;
+- o esquema (`ESQUEMA.<circuito>`), a tensão (`TENSAO.<circuito>`) e as fases travadas
+  (`FASE.<circuito>`) de um circuito.
 
 `TENSAO` do quadro no formato `220/127V` dá as tensões fase-fase e fase-neutro do quadro e dos
 circuitos sem `TENSAO`; sem ela, valem as do sistema das Configurações.
