@@ -34,7 +34,8 @@ aqui é um possível conflito ao atualizar o CADCraft.
 | `crates/engine/src/cmd/mod.rs` | `mod eletrica;` e `v.extend(eletrica::specs())` |
 | `crates/ui-egui/Cargo.toml` | dependência de `free-eletrica` |
 | `crates/ui-egui/src/lib.rs` | `pub mod eletrica;` e `eletrica::janelas(...)` no desenho da janela |
-| `crates/ui-egui/src/docking.rs` | `Panel::Eletrica` (que vira as propriedades da família no editor de blocos) e `Panel::QuadroCargas`, vazio, só para um workspace salvo com ele continuar abrindo (id, rótulo, lado, sob demanda, desenho, limites) |
+| `crates/ui-egui/src/docking.rs` | `Panel::QuadroCargas`, o quadro de cargas acoplado embaixo do desenho enquanto está aberto (`eletrica::quadro_acoplado`), e `Panel::Eletrica`, a coluna das versões anteriores, que `eletrica::janelas` fecha; o nome fica para um workspace salvo continuar abrindo (id, rótulo, lado, sob demanda, desenho, limites) |
+| `crates/ui-egui/src/palettes.rs` | a terceira aba das Tool Sets, `eletrica::ABA_FERRAMENTAS` (Installations), com a largura das abas dividida, e o corpo dela em `eletrica::show` |
 | `crates/ui-egui/src/canvas.rs` | `eletrica::sobre_canvas(...)` depois de desenhar o espaço do modelo |
 | `crates/ui-egui/src/cmdline.rs` | `eletrica::tab(app)` no início de `tab`: Tab gira o ponto durante ELEPONTO |
 | `crates/ui-egui/src/menus.rs` | item Janela > Elétrica e `eletrica::route(...)` |

@@ -50,8 +50,9 @@ divulgado para engenheiros e usuários finais: código em teste ou incompleto n�
   nele, sem deformar. Um módulo empilhado (`host_point_handle`) não é nó: o caminho até ele é o da caixa base. Comprimento =
   traçado + desníveis até os blocos.
 - **Etapas separadas:** lançar não dimensiona. O cálculo, as tags e as tabelas só mudam com `ELEDIMENSIONAR` e `ELEREGEN`.
-- **Interface em janelas `egui` independentes, sem painel inferior fixo:** paleta no padrão das Tool Sets (abas Elétrica e
-  Telecom, seções recolhíveis, ferramentas planas com ícone), mini-barra só enquanto um comando espera cliques, janelas sem
+- **Interface sem coluna nem painel fixos a mais:** a paleta é a aba Installations das Tool Sets, à esquerda (seletor Elétrica |
+  Telecom no topo, seções recolhíveis, ferramentas planas com ícone); o quadro de cargas, quando aberto, fica acoplado embaixo do
+  desenho, entre as Tool Sets e as Camadas, e sai do layout ao fechar (X ou Esc); mini-barra só enquanto um comando espera cliques, janelas sem
   barra de título abertas sob demanda (X do cabeçalho interno ou Esc) e sobreposição de inspeção.
 - **Decisões por quadro e por circuito:** sistema, tensão nominal, cabo padrão e alimentação ficam em cada quadro; esquema,
   cabo, curva e grupo DR em cada circuito; classe e fator de demanda na família e no ponto. As Configurações guardam o que vale
@@ -99,8 +100,8 @@ nessa lista e precisa ser pequena.
    controle, o `cadcraft-cli` e o MCP alcançam tudo. Chamadas programáticas nunca abrem janela.
 4. **Interface fina.** A paleta, a mini-barra e as janelas leem o estado e agem por `app.run(id, params)` /
    `app.start(id)`. Comandos só de interface (abrir paleta e janelas) ficam em `route()` de
-   `ui-egui/src/eletrica.rs`. A paleta só tem ferramentas; dados aparecem em janelas independentes,
-   abertas só quando pedidas, que fecham no X do cabeçalho interno ou com Esc. Inserir fica na mini-barra.
+   `ui-egui/src/eletrica.rs`. A paleta só tem ferramentas; dados aparecem em janelas independentes (o quadro de
+   cargas, acoplado embaixo), abertas só quando pedidas, que fecham no X ou com Esc. Inserir fica na mini-barra.
 5. **Nunca travar** (padrão do CADCraft): sem `unwrap`/`expect`/`panic!`/`todo!` fora de testes
    (`#![deny]` na raiz de `ele`), erros por `Result`, entrada do desenho e de parâmetros JSON é
    hostil (`get()`, nada de índice vindo de fora, NaN e infinitos tratados).

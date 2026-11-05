@@ -2775,6 +2775,143 @@ fn familias_de_fabrica_de_tomadas_e_interruptores() {
     assert!(!biblioteca::falta_base(&d));
 }
 
+/// Os textos de uma inserção: (tag, texto).
+fn textos_da_insercao(d: &Drawing, h: Handle) -> Vec<(String, Text)> {
+    let EntityKind::Insert(i) = &d.model.get(h).unwrap().kind else { panic!("não é bloco") };
+    i.attribs.iter().map(|a| (a.tag.clone(), a.text.clone())).collect()
+}
+
+/// O retângulo (x0, x1, y0, y1) de um texto centralizado, em relação a `origem`.
+fn caixa_do_texto(t: &Text, origem: [f64; 2]) -> (f64, f64, f64, f64) {
+    let p = t.align_pt.unwrap();
+    let w = t.value.chars().count() as f64 * t.height * tabela::LARGURA_CARACTERE;
+    (p.x - origem[0] - w / 2.0, p.x - origem[0] + w / 2.0, p.y - origem[1] - t.height / 2.0, p.y - origem[1] + t.height / 2.0)
+}
+
+#[test]
+fn pontos_de_luz_da_nbr5444_com_os_textos_dentro_das_divisoes() {
+    let setup = Setup::default();
+    let mut d = metros();
+    assert!(biblioteca::garantir_base(&mut d, &setup, 1.0));
+    let r = biblioteca::RAIO_LUZ;
+    let desenho = |d: &Drawing, n: &str| -> Vec<EntityKind> {
+        d.blocks[n].entities.iter().map(|e| e.kind.clone()).filter(|k| !matches!(k, EntityKind::AttDef(_))).collect()
+    };
+    // Teto: o círculo de traço normal (sem o anel cheio), o diâmetro horizontal e o raio que divide a metade de baixo.
+    let teto = desenho(&d, "ILU-OCT");
+    assert!(
+        matches!(&teto[..], [EntityKind::Circle(c), EntityKind::Line(h), EntityKind::Line(v)]
+            if perto(c.radius, r, 1e-9) && perto(h.a.x, -r, 1e-9) && perto(h.b.x, r, 1e-9) && h.a.y == 0.0 && h.b.y == 0.0
+                && v.a.x == 0.0 && v.a.y == 0.0 && v.b.x == 0.0 && perto(v.b.y, -r, 1e-9)),
+        "{teto:?}"
+    );
+    // Parede: o D com a face reta na parede e a divisória do meio da face até a borda curva.
+    let parede = desenho(&d, "ILU-PAR");
+    assert!(
+        matches!(&parede[..], [EntityKind::Arc(a), EntityKind::Line(f), EntityKind::Line(v)]
+            if perto(a.radius, r, 1e-9) && perto(a.end - a.start, std::f64::consts::PI, 1e-9)
+                && f.a.y == 0.0 && f.b.y == 0.0 && v.a.y == 0.0 && perto(v.b.y, r, 1e-9)),
+        "{parede:?}"
+    );
+    assert_eq!(familia::ler(&d, "ILU-PAR").unwrap().categoria, familia::FamilyCategory::Luminaria);
+    let dentro = |(x0, x1, y0, y1): (f64, f64, f64, f64)| [(x0, y0), (x0, y1), (x1, y0), (x1, y1)].iter().all(|(x, y)| x * x + y * y <= r * r);
+    let de = |v: &[(String, Text)], t: &str| v.iter().find(|(k, _)| k == t).unwrap().1.clone();
+
+    // No teto: a potência em cima, o comando embaixo à esquerda e o circuito (-1-) embaixo à direita.
+    let valores =
+        |p: &str, c: &str, k: &str| vec![("POTENCIA".to_string(), p.to_string()), ("COMANDO".into(), c.into()), ("CIRCUITO".into(), k.into())];
+    let h = biblioteca::inserir_ponto(&mut d, "ILU-OCT", [5.0, 5.0], 0.0, &valores("100VA", "a", "1"), &setup).unwrap();
+    let v = textos_da_insercao(&d, h);
+    assert_eq!((de(&v, "POTENCIA").value.as_str(), de(&v, "COMANDO").value.as_str(), de(&v, "CIRCUITO").value.as_str()), ("100VA", "a", "-1-"));
+    assert_eq!(ponto::ler_ponto(&d, h).unwrap().circuito.as_deref(), Some("1"), "o circuito é o que está entre os traços");
+    for t in ["POTENCIA", "COMANDO", "CIRCUITO"] {
+        assert!(de(&v, t).halign == HAlign::Center && de(&v, t).valign == VAlign::Middle, "{t}");
+    }
+    let pot = caixa_do_texto(&de(&v, "POTENCIA"), [5.0, 5.0]);
+    assert!(pot.2 > 0.0 && dentro(pot), "{pot:?}");
+    let com = caixa_do_texto(&de(&v, "COMANDO"), [5.0, 5.0]);
+    assert!(com.1 < 0.0 && com.3 < 0.0 && dentro(com), "{com:?}");
+    let cir = caixa_do_texto(&de(&v, "CIRCUITO"), [5.0, 5.0]);
+    assert!(cir.0 > 0.0 && cir.3 < 0.0 && dentro(cir), "{cir:?}");
+    // Um circuito de dois dígitos e uma potência longa diminuem o texto, sem vazar da divisão.
+    let qd = quadro_qualquer(&mut d);
+    editar::atribuir_circuito(&mut d, h, qd, "12").unwrap();
+    editar::definir(&mut d, h, &["POTENCIA"], Some("1x150W")).unwrap();
+    let v2 = textos_da_insercao(&d, h);
+    assert_eq!(de(&v2, "CIRCUITO").value, "-12-");
+    assert!(de(&v2, "CIRCUITO").height < de(&v, "CIRCUITO").height);
+    let cir = caixa_do_texto(&de(&v2, "CIRCUITO"), [5.0, 5.0]);
+    assert!(cir.0 > 0.0 && dentro(cir), "{cir:?}");
+    assert!(dentro(caixa_do_texto(&de(&v2, "POTENCIA"), [5.0, 5.0])));
+    assert_eq!(ponto::ler_ponto(&d, h).unwrap().circuito.as_deref(), Some("12"));
+
+    // Na parede: o comando de um lado da divisória e o circuito do outro; a potência fica nos dados do ponto.
+    let a = biblioteca::inserir_ponto(&mut d, "ILU-PAR", [0.0, 0.0], 0.0, &valores("60VA", "b", "2"), &setup).unwrap();
+    let v = textos_da_insercao(&d, a);
+    let com = caixa_do_texto(&de(&v, "COMANDO"), [0.0, 0.0]);
+    assert!(com.1 < 0.0 && com.2 > 0.0 && dentro(com), "{com:?}");
+    let cir = caixa_do_texto(&de(&v, "CIRCUITO"), [0.0, 0.0]);
+    assert!(cir.0 > 0.0 && cir.2 > 0.0 && dentro(cir), "{cir:?}");
+    let EntityKind::Insert(i) = &d.model.get(a).unwrap().kind else { panic!() };
+    assert!(i.attribs.iter().find(|x| x.tag == "POTENCIA").unwrap().invisible);
+    assert_eq!(ponto::ler_ponto(&d, a).unwrap().potencia, Some(60.0));
+    assert!(perto(rota::altura(&ponto::ler_ponto(&d, a).unwrap(), &setup), 2.10, 1e-9), "arandela no ponto alto");
+}
+
+/// O primeiro quadro do desenho, inserido se não houver.
+fn quadro_qualquer(d: &mut Drawing) -> Handle {
+    match analisar(d).quadros().first() {
+        Some(q) => q.handle,
+        None => biblioteca::inserir(d, "QDC", [20.0, 0.0], 0.0, &[]).unwrap(),
+    }
+}
+
+#[test]
+fn ponto_de_luz_antigo_vira_o_da_nbr5444_ao_preparar() {
+    let setup = Setup::default();
+    let mut d = metros();
+    biblioteca::garantir_base(&mut d, &setup, 1.0);
+    // O ILU-OCT das versões anteriores: o anel cheio e os textos alinhados à esquerda, fora do símbolo.
+    let mut velho = Block::new("ILU-OCT");
+    let (EntityKind::Hatch(mut anel), EntityKind::Hatch(furo)) = (biblioteca::disco(0.0, 0.0, 0.093), biblioteca::disco(0.0, 0.0, 0.066)) else {
+        panic!("hachuras")
+    };
+    anel.loops.extend(furo.loops);
+    velho.entities.push(Entity::new(d.new_handle(), EntityKind::Hatch(anel)));
+    let defs: Vec<Entity> = d.blocks["ILU-OCT"].entities.iter().filter(|e| matches!(e.kind, EntityKind::AttDef(_))).map(|e| (**e).clone()).collect();
+    for mut e in defs {
+        if let EntityKind::AttDef(a) = &mut e.kind {
+            a.text.halign = HAlign::Left;
+            a.text.valign = VAlign::Baseline;
+            a.text.align_pt = None;
+        }
+        velho.entities.push(e);
+    }
+    d.blocks.insert("ILU-OCT".into(), Arc::new(velho));
+    let h = biblioteca::inserir(&mut d, "ILU-OCT", [3.0, 3.0], 0.0, &[("CIRCUITO".into(), "4".into())]).unwrap();
+    assert_eq!(de_insercao(&d, h, "CIRCUITO").value, "4", "no bloco antigo nada muda");
+    assert!(biblioteca::falta_base(&d));
+    assert!(biblioteca::garantir_base(&mut d, &setup, 1.0));
+    assert!(d.blocks["ILU-OCT"].entities.iter().any(|e| matches!(e.kind, EntityKind::Circle(_))));
+    assert!(!d.blocks["ILU-OCT"].entities.iter().any(|e| matches!(e.kind, EntityKind::Hatch(_))));
+    let c = de_insercao(&d, h, "CIRCUITO");
+    assert_eq!((c.value.as_str(), c.halign), ("-4-", HAlign::Center));
+    assert!(!biblioteca::falta_base(&d));
+    // ELEREGEN também encaixa: um texto movido à mão volta para a divisão.
+    let mut e = (**d.model.get(h).unwrap()).clone();
+    if let EntityKind::Insert(i) = &mut e.kind {
+        i.attribs.iter_mut().for_each(|a| a.text.align_pt = Some(Vec3::new(9.0, 9.0, 0.0)));
+    }
+    d.model.replace(e);
+    fiacao::regenerar(&mut d, &setup, None).unwrap();
+    let c = de_insercao(&d, h, "CIRCUITO");
+    assert!(caixa_do_texto(&c, [3.0, 3.0]).0 > 0.0 && c.align_pt.unwrap().x < 3.1);
+}
+
+fn de_insercao(d: &Drawing, h: Handle, tag: &str) -> Text {
+    textos_da_insercao(d, h).into_iter().find(|(k, _)| k == tag).unwrap().1
+}
+
 #[test]
 fn bloco_base_antigo_e_trocado_e_o_redesenhado_fica() {
     let setup = Setup::default();

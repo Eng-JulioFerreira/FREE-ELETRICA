@@ -44,8 +44,6 @@ const COR_DESTAQUE_PONTO: Color32 = Color32::from_rgb(0, 229, 255);
 const COR_DESTAQUE_TRECHO: Color32 = Color32::from_rgb(255, 235, 59);
 /// Altura das linhas das tabelas.
 const LINHA: f32 = 20.0;
-/// Altura da paleta, com todas as ferramentas à vista.
-const ALTURA_PALETA: f32 = 680.0;
 
 /// Chave das configurações do Free Elétrica no armazenamento de preferências do CADCraft.
 pub const PREFS_KEY: &str = "freeeletrica.setup";
@@ -80,6 +78,11 @@ struct Janelas {
     filtro_barra: FiltroPontos,
     /// A aba da paleta.
     aba_paleta: AbaPaleta,
+    /// O quadro de cargas estava acoplado no quadro anterior: sumiu do layout sem Esc nem X, foi fechado pelo
+    /// menu do painel.
+    cargas_acoplado: bool,
+    /// Havia um menu aberto no fim do quadro anterior: o Esc deste quadro foi dele.
+    menu_aberto: bool,
 }
 
 /// As janelas do Free Elétrica.
@@ -258,54 +261,71 @@ pub fn load_prefs(json: &str) {
     }
 }
 
-/// Pede para a paleta abrir no primeiro quadro, se o usuário nunca a fechou. Só o executável
+/// Pede para a paleta (a aba Instalações) abrir no primeiro quadro. Só o executável
 /// chama: o layout de fábrica (e os testes dele) continuam os do CADCraft.
 pub fn abrir_ao_iniciar() {
     ABRIR_AO_INICIAR.store(true, Ordering::Relaxed);
 }
 
-/// Abre a paleta (comando ELETRICA, menu Janela). Na primeira vez ela fica acima das Tool Sets.
+/// A aba do Free Elétrica nas Tool Sets, ao lado de Drafting e Modeling (`palettes::toolsets`).
+pub const ABA_FERRAMENTAS: &str = "Installations";
+/// A largura das Tool Sets com a aba Instalações: as três abas e a paleta cabem sem cortar.
+const LARGURA_FERRAMENTAS: f32 = 290.0;
+/// A altura do quadro de cargas acoplado embaixo do desenho, ao abrir.
+const ALTURA_QUADRO: f32 = 330.0;
+
+/// Abre a paleta (comando ELETRICA, menu Janela): a aba Instalações das Tool Sets. A coluna avulsa das versões
+/// anteriores sai do layout.
 pub fn open(app: &mut CadApp) -> Result<Value, String> {
-    let panel = Panel::Eletrica;
-    let primeira = !app.ui.docking.layout.contains(&panel) && !app.ui.docking.hidden.iter().any(|(p, _)| *p == panel);
-    let r = crate::docking::command(app, false, &json!({ "operation": "open", "panel": panel.id() }))?;
-    if primeira && app.ui.docking.layout.contains(&Panel::ToolSets) {
-        let mover = json!({ "operation": "move", "panel": panel.id(), "target": Panel::ToolSets.id(), "zone": "top" });
-        if let Ok(r) = crate::docking::command(app, false, &mover) {
-            // A paleta só tem botões: altura fixa, e o resto da coluna fica com as Tool Sets.
-            redimensionar(app, panel, SplitSize::FixedFirst(ALTURA_PALETA));
-            return Ok(r);
-        }
+    fechar_coluna_antiga(app);
+    app.ui.show_toolsets = true;
+    let r = crate::docking::command(app, false, &json!({ "operation": "open", "panel": Panel::ToolSets.id() }))?;
+    app.ui.toolset_tab = ABA_FERRAMENTAS.into();
+    // Estreitas demais, as três abas se apertam: alarga uma vez, sem diminuir o que o usuário abriu.
+    let mut caminho = Vec::new();
+    if let Some(raiz) = &app.ui.docking.layout.root
+        && let Some(SplitSize::FixedFirst(largura)) = caminho_do_painel(raiz, Panel::ToolSets, &mut caminho)
+        && largura < LARGURA_FERRAMENTAS
+    {
+        redimensionar(app, Panel::ToolSets, SplitSize::FixedFirst(LARGURA_FERRAMENTAS));
     }
     Ok(r)
+}
+
+/// Tira do layout a coluna da paleta das versões anteriores, que tomava espaço do desenho.
+fn fechar_coluna_antiga(app: &mut CadApp) {
+    if app.ui.docking.layout.contains(&Panel::Eletrica) {
+        let _ = crate::docking::command(app, false, &json!({ "operation": "close", "panel": Panel::Eletrica.id() }));
+    }
 }
 
 /// Muda o tamanho da divisão que tem `panel` como filho. Sem divisão (flutuando), não faz nada.
 fn redimensionar(app: &mut CadApp, panel: Panel, size: SplitSize) {
     let mut caminho = Vec::new();
     if let Some(raiz) = &app.ui.docking.layout.root
-        && caminho_do_painel(raiz, panel, &mut caminho)
+        && caminho_do_painel(raiz, panel, &mut caminho).is_some()
         && let Ok(acao) = serde_json::to_value(Action::<Panel>::ResizeSplit { path: caminho, size })
     {
         let _ = crate::docking::command(app, false, &json!({ "action": acao }));
     }
 }
 
-/// O caminho (`true` = segundo filho) até a divisão com um filho que é só as abas de `panel`.
-fn caminho_do_painel(no: &Node<Panel>, panel: Panel, caminho: &mut Vec<bool>) -> bool {
-    let Node::Split { first, second, .. } = no else { return false };
+/// O caminho (`true` = segundo filho) até a divisão com um filho que é só as abas de `panel`, e o tamanho
+/// dela.
+fn caminho_do_painel(no: &Node<Panel>, panel: Panel, caminho: &mut Vec<bool>) -> Option<SplitSize> {
+    let Node::Split { first, second, size, .. } = no else { return None };
     let e_o_painel = |n: &Node<Panel>| matches!(n, Node::Tabs { panels, .. } if panels.contains(&panel));
     if e_o_painel(first) || e_o_painel(second) {
-        return true;
+        return Some(*size);
     }
     for (lado, filho) in [(false, first), (true, second)] {
         caminho.push(lado);
-        if caminho_do_painel(filho, panel, caminho) {
-            return true;
+        if let Some(s) = caminho_do_painel(filho, panel, caminho) {
+            return Some(s);
         }
         caminho.pop();
     }
-    false
+    None
 }
 
 fn abrir_setup() -> Result<Value, String> {
@@ -544,23 +564,28 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     egui::Frame::NONE.fill(t.panel).show(ui, |ui| {
         let r = ui.max_rect();
         let p = ui.painter().clone();
-        // As abas das disciplinas, como Desenho | Modelagem nas Tool Sets.
-        let altura_abas = 28.0;
-        let mut x = r.left();
-        for (qual, nome) in [(AbaPaleta::Eletrica, "Elétrica"), (AbaPaleta::Telecom, "Telecom")] {
-            let tr = egui::Rect::from_min_size(egui::pos2(x, r.top()), vec2(92.0, altura_abas));
+        // O seletor das disciplinas, lado a lado no topo da aba: Elétrica e Telecom não se misturam.
+        let altura_seletor = 36.0;
+        let faixa = egui::Rect::from_min_max(egui::pos2(r.left() + 8.0, r.top() + 6.0), egui::pos2(r.right() - 8.0, r.top() + 30.0));
+        p.rect_filled(faixa, 4.0, t.chrome);
+        let metade = faixa.width() / 2.0;
+        for (i, (qual, nome)) in [(AbaPaleta::Eletrica, "Elétrica"), (AbaPaleta::Telecom, "Telecom")].into_iter().enumerate() {
+            let tr = egui::Rect::from_min_size(faixa.min + vec2(metade * i as f32, 0.0), vec2(metade, faixa.height())).shrink(2.0);
             let ativa = aba == qual;
             let resp = ui.interact(tr, ui.id().with(("ele-aba-paleta", nome)), egui::Sense::click());
-            p.rect_filled(tr, 0.0, if ativa { t.tab_active } else { t.chrome });
-            p.text(tr.center(), egui::Align2::CENTER_CENTER, nome, egui::FontId::proportional(13.5), if ativa { t.text } else { t.text_dim });
+            if ativa {
+                p.rect_filled(tr, 3.0, t.tab_active);
+                p.rect_stroke(tr, 3.0, Stroke::new(1.0, t.accent), egui::StrokeKind::Inside);
+            } else if resp.hovered() {
+                p.rect_filled(tr, 3.0, t.tab_active.gamma_multiply(0.5));
+            }
+            p.text(tr.center(), egui::Align2::CENTER_CENTER, nome, egui::FontId::proportional(13.0), if ativa { t.text } else { t.text_dim });
             crate::icons::describe_control(ui, &resp, nome, Some(ativa), true);
             if resp.clicked() {
                 aba = qual;
             }
-            x += 92.0;
         }
-        p.rect_filled(egui::Rect::from_min_max(egui::pos2(x, r.top()), egui::pos2(r.right(), r.top() + altura_abas)), 0.0, t.chrome);
-        let corpo = egui::Rect::from_min_max(egui::pos2(r.left(), r.top() + altura_abas), r.max);
+        let corpo = egui::Rect::from_min_max(egui::pos2(r.left(), r.top() + altura_seletor), r.max);
         ui.scope_builder(egui::UiBuilder::new().max_rect(corpo), |ui| {
             egui::ScrollArea::vertical().id_salt("dock-eletrica").auto_shrink([false, false]).show(ui, |ui| {
                 ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
@@ -1230,32 +1255,99 @@ fn janela(ctx: &egui::Context, titulo: &str, pos: (f32, f32), tamanho: (f32, f32
     aberta
 }
 
+/// O quadro de cargas aberto fica acoplado embaixo do desenho, entre as Tool Sets e as Camadas, sem cobrir
+/// nada; fechado (X, Esc ou ELECARGAS de novo), sai do layout e o desenho volta a ocupar tudo.
+fn acoplar_quadro(app: &mut CadApp) {
+    let panel = Panel::QuadroCargas;
+    let acoplado = app.ui.docking.layout.contains(&panel);
+    let (aberto, estava) = {
+        let j = trava(&JANELAS);
+        (j.abertas.contains(&Qual::Cargas), j.cargas_acoplado)
+    };
+    if aberto && estava && !acoplado {
+        // Fechado pelo menu do próprio painel.
+        fechar(&mut trava(&JANELAS), Qual::Cargas);
+    } else if aberto && !acoplado {
+        let primeira = !app.ui.docking.hidden.iter().any(|(p, _)| *p == panel);
+        let abriu = crate::docking::command(app, false, &json!({ "operation": "open", "panel": panel.id() })).is_ok();
+        // Da segunda vez em diante, volta com o tamanho em que o usuário o deixou.
+        if abriu && primeira {
+            redimensionar(app, panel, SplitSize::FixedSecond(ALTURA_QUADRO));
+        }
+    } else if !aberto && acoplado {
+        let _ = crate::docking::command(app, false, &json!({ "operation": "close", "panel": panel.id() }));
+    }
+    let agora = app.ui.docking.layout.contains(&panel);
+    trava(&JANELAS).cargas_acoplado = agora;
+}
+
+/// O corpo do quadro de cargas acoplado (`docking`): o X no canto de cima e a tabela.
+pub fn quadro_acoplado(app: &mut CadApp, ui: &mut egui::Ui) {
+    let t = Tokens::get();
+    let ctx = ui.ctx().clone();
+    let (mut cargas, mut destaque) = {
+        let j = trava(&JANELAS);
+        (j.cargas.clone(), j.destaque.clone())
+    };
+    let mut st = ler_estado(app, &ctx);
+    let s = setup();
+    let mut acoes = Vec::new();
+    let mut fechar_quadro = false;
+    let area = ui.max_rect();
+    egui::Frame::NONE.fill(t.panel).inner_margin(egui::Margin::symmetric(8, 4)).show(ui, |ui| {
+        ui.set_min_size(ui.available_size());
+        // O X fica no canto, por cima da linha do seletor de quadro, que não chega até lá.
+        let x = egui::Rect::from_min_size(egui::pos2(area.right() - 26.0, area.top() + 4.0), vec2(20.0, 20.0));
+        let resp = ui.interact(x, egui::Id::new("ele-cargas-fechar"), egui::Sense::click());
+        let cor = if resp.hovered() { ui.visuals().strong_text_color() } else { ui.visuals().text_color() };
+        let c = x.shrink(5.0);
+        ui.painter().line_segment([c.left_top(), c.right_bottom()], Stroke::new(1.3, cor));
+        ui.painter().line_segment([c.right_top(), c.left_bottom()], Stroke::new(1.3, cor));
+        crate::icons::describe_control(ui, &resp, "Fechar", None, false);
+        fechar_quadro = resp.on_hover_text("Fechar (Esc)").clicked();
+        if st.chave.is_some() {
+            aba_cargas(ui, app, &t, &mut st, &s, &mut cargas, &mut destaque, &mut acoes);
+        } else {
+            ui.label(pequeno("Nenhum desenho aberto.", t.text_dim));
+        }
+    });
+    {
+        let mut j = trava(&JANELAS);
+        j.cargas = cargas;
+        j.destaque = destaque;
+        if fechar_quadro {
+            fechar(&mut j, Qual::Cargas);
+        }
+    }
+    guardar(&ctx, st);
+    executar(app, acoes);
+}
+
 /// Chamado a cada quadro, com ou sem a paleta visível: a abertura na primeira vez e as janelas.
 pub fn janelas(app: &mut CadApp, ctx: &egui::Context) {
     if ABRIR_AO_INICIAR.swap(false, Ordering::Relaxed) {
-        let panel = Panel::Eletrica;
-        if !app.ui.docking.layout.contains(&panel) && !app.ui.docking.hidden.iter().any(|(p, _)| *p == panel) {
-            let _ = open(app);
-        }
+        // O programa abre na aba Instalações das Tool Sets.
+        let _ = open(app);
     }
-    // O painel de baixo não existe mais: um workspace salvo com ele aberto o perde aqui.
-    if app.ui.docking.layout.contains(&Panel::QuadroCargas) {
-        let _ = crate::docking::command(app, false, &json!({ "operation": "close", "panel": Panel::QuadroCargas.id() }));
-    }
+    fechar_coluna_antiga(app);
+    acoplar_quadro(app);
     // Esc fecha a última janela aberta. Com um comando em andamento, Esc é dele; com um menu aberto
     // ou um campo em edição, é deles.
     let esc = ctx.input(|i| i.key_pressed(egui::Key::Escape));
-    if esc && app.session.running.is_none() && !ctx.egui_wants_keyboard_input() && !egui::Popup::is_any_open(ctx) {
+    // O quadro de cargas acoplado é desenhado antes daqui: o menu que o Esc fechou nele estava aberto no
+    // quadro anterior.
+    let menu_antes = std::mem::replace(&mut trava(&JANELAS).menu_aberto, egui::Popup::is_any_open(ctx));
+    if esc && app.session.running.is_none() && !ctx.egui_wants_keyboard_input() && !egui::Popup::is_any_open(ctx) && !menu_antes {
         let mut j = trava(&JANELAS);
         if let Some(q) = j.abertas.last().copied() {
             fechar(&mut j, q);
         }
     }
-    let (abertas, mut cargas, mut pontos, mut destaque, mut dimensionar, mut blocos) = {
+    let (abertas, mut pontos, mut dimensionar, mut blocos) = {
         let j = trava(&JANELAS);
-        (j.abertas.clone(), j.cargas.clone(), j.pontos.clone(), j.destaque.clone(), j.dimensionar.clone(), j.blocos.clone())
+        (j.abertas.clone(), j.pontos.clone(), j.dimensionar.clone(), j.blocos.clone())
     };
-    if abertas.is_empty() {
+    if abertas.iter().all(|q| *q == Qual::Cargas) {
         return;
     }
     let t = Tokens::get();
@@ -1270,13 +1362,8 @@ pub fn janelas(app: &mut CadApp, ctx: &egui::Context) {
                 janela_setup(ctx, &t, tem_desenho, &mut acoes);
                 trava(&JANELAS).setup.is_some()
             }
-            Qual::Cargas => janela(ctx, "Quadro de cargas", (240.0, 110.0), (1340.0, 460.0), |ui| {
-                if tem_desenho {
-                    aba_cargas(ui, app, &t, &mut st, &s, &mut cargas, &mut destaque, &mut acoes);
-                } else {
-                    ui.label(pequeno("Nenhum desenho aberto.", t.text_dim));
-                }
-            }),
+            // Acoplado embaixo do desenho (`quadro_acoplado`), não é janela.
+            Qual::Cargas => true,
             Qual::Dimensionar => janela(ctx, "Dimensionar projeto", (260.0, 110.0), (1120.0, 680.0), |ui| {
                 janela_dimensionar(ui, app, &t, &mut st, &s, &mut dimensionar, &mut acoes)
             }),
@@ -1317,9 +1404,7 @@ pub fn janelas(app: &mut CadApp, ctx: &egui::Context) {
     }
     {
         let mut j = trava(&JANELAS);
-        j.cargas = cargas;
         j.pontos = pontos;
-        j.destaque = destaque;
         j.dimensionar = dimensionar;
         j.blocos = blocos;
         for q in fechadas {
@@ -1446,12 +1531,13 @@ fn legenda_inspecao(ctx: &egui::Context, xf: &crate::canvas::Xf, itens: &[Item])
 }
 
 /// O bloco de cada tipo da barra de inserção: (rótulo, bloco).
-const TIPOS_BARRA: [(&str, &str); 16] = [
+const TIPOS_BARRA: [(&str, &str); 17] = [
     ("Tomada baixa", "TOM-SIM-BAIXA"),
     ("Tomada média", "TOM-SIM-MEDIA"),
     ("Tomada alta", "TOM-SIM-ALTA"),
     ("TUE", "TOM-TUE"),
-    ("Iluminação", "ILU-OCT"),
+    ("Ponto de luz no teto", "ILU-OCT"),
+    ("Arandela (luz na parede)", "ILU-PAR"),
     ("Interruptor simples, médio", "INT-SIM"),
     ("Interruptor paralelo, médio", "INT-PAR"),
     ("Interruptor intermediário, médio", "INT-INT"),

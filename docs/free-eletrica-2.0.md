@@ -299,3 +299,18 @@ Ajustes de interface e de prancha:
 - **Quadro de cargas:** sem abas; as ações de cada circuito ficam no menu "..." da linha, e os dados do quadro num grupo recolhível.
 - **Tabela no desenho:** o sub-cabeçalho é uma caixa só, sem linhas internas, com os dados em 3 colunas.
 - **Unifilar:** tudo na cor do diagrama, um risco por polo no disjuntor, e a moldura tracejada do quadro ligada ao terra (PE).
+
+## Ferramentas, quadro acoplado e pontos de luz da NBR 5444
+
+- **Paleta nas Tool Sets:** a coluna avulsa da direita saiu. A paleta é a aba **Installations** (Instalações) das Tool Sets, ao
+  lado de Drafting e Modeling, com o seletor **Elétrica | Telecom** no topo. `ELETRICA` abre essa aba e alarga as Tool Sets para
+  290 px uma vez; um workspace salvo com a coluna antiga a perde ao abrir.
+- **Quadro de cargas acoplado:** aberto, ele entra no layout embaixo do desenho, entre as Tool Sets e as Camadas, com 330 px e a
+  borda redimensionável; o X do canto, Esc ou o menu do painel o fecham e ele sai do layout. Da segunda vez, volta no tamanho em
+  que ficou.
+- **Ponto de luz no teto (`ILU-OCT`):** círculo de traço normal com diâmetro horizontal e o raio que divide a metade de baixo; a
+  potência em cima, o comando e o circuito (`-1-`) embaixo. O anel cheio das versões anteriores é trocado ao preparar o desenho.
+- **Arandela (`ILU-PAR`):** o D com a face reta na parede e a divisória até a borda; comando e circuito dentro, potência nos
+  dados do ponto; ponto alto (2,10 m).
+- **Textos que cabem:** cada texto do ponto de luz fica centralizado na sua divisão, com a altura que cabe (até 3 cm). Inserir,
+  editar um atributo e `ELEREGEN` recolocam os textos.

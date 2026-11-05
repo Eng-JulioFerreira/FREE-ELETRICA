@@ -421,6 +421,8 @@ pub fn definir(doc: &mut Drawing, h: Handle, tags: &[&str], valor: Option<&str>)
         None => xdata::gravar(&mut e.common.xdata, chave, valor),
     }
     doc.model.replace(e);
+    // No ponto de luz, o texto novo volta para dentro da divisão do símbolo, do tamanho que cabe.
+    crate::biblioteca::encaixar_textos_de_luz(doc, Some(h));
     Ok(())
 }
 

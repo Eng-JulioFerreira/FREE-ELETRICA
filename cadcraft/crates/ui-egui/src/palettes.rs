@@ -132,8 +132,10 @@ pub fn toolsets(app: &mut CadApp, ui: &mut egui::Ui) {
         // Tabs.
         let tab_h = 28.0;
         let mut x = r.left();
-        for name in ["Drafting", "Modeling"] {
-            let w = 92.0;
+        // Free Elétrica: a aba Installations (`eletrica::show`).
+        let names = ["Drafting", "Modeling", crate::eletrica::ABA_FERRAMENTAS];
+        let w = ((r.width() - 28.0) / names.len() as f32).clamp(56.0, 92.0);
+        for name in names {
             let tr = Rect::from_min_size(pos2(x, r.top()), vec2(w, tab_h));
             let active = app.ui.toolset_tab == name;
             let resp = ui.interact(tr, ui.id().with(("ts", name)), Sense::click());
@@ -142,7 +144,7 @@ pub fn toolsets(app: &mut CadApp, ui: &mut egui::Ui) {
                 tr.center(),
                 egui::Align2::CENTER_CENTER,
                 crate::i18n::t(name),
-                egui::FontId::proportional(13.5),
+                egui::FontId::proportional(if w < 84.0 { 12.0 } else { 13.5 }),
                 if active { t.text } else { t.text_dim },
             );
             icons::describe_control(ui, &resp, crate::i18n::t(name), Some(active), true);
@@ -160,6 +162,10 @@ pub fn toolsets(app: &mut CadApp, ui: &mut egui::Ui) {
             app.ui.show_toolsets = false;
         }
         let body = Rect::from_min_max(pos2(r.left(), r.top() + tab_h), r.max);
+        if app.ui.toolset_tab == crate::eletrica::ABA_FERRAMENTAS {
+            ui.scope_builder(egui::UiBuilder::new().max_rect(body), |ui| crate::eletrica::show(app, ui));
+            return;
+        }
         let mut clicked: Option<&'static str> = None;
         let mut toggle_group = None;
         let mut tool_visible: Option<(String, bool)> = None;

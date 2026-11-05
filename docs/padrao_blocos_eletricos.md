@@ -57,7 +57,18 @@ a caixa 4x2 (as peças da caixa têm o XDATA `wall_box`), encosta no topo do úl
 Os blocos antigos de mais de um módulo (`TOM-DUP-*`, `INT-2S`, `INT-3S` e os de paralelo e intermediário de 2 e 3 seções)
 são trocados por módulos empilhados e apagados do desenho.
 
-Também entram `TOM-TUE`, `ILU-OCT`, `QDG`, `QDC`, `RJ45`, `RACK` e `CX-PASSAGEM`. Um bloco com o mesmo nome já no desenho
+Os pontos de luz seguem a NBR 5444, com os textos centralizados dentro das divisões do símbolo:
+
+| Bloco | Símbolo | Textos |
+| :--- | :--- | :--- |
+| `ILU-OCT` | Ponto de luz no teto: círculo de traço normal (raio 10 cm), diâmetro horizontal e o raio que divide a metade de baixo | `POTENCIA` em cima; `COMANDO` embaixo à esquerda; `CIRCUITO` embaixo à direita, entre traços (`-1-`) |
+| `ILU-PAR` | Arandela, ponto de luz na parede: o D com a face reta na parede e a divisória do meio da face até a borda | `COMANDO` de um lado e `CIRCUITO` (`-1-`) do outro; `POTENCIA` invisível, nos dados do ponto. Ponto alto, 2,10 m |
+
+A altura de cada texto é a que cabe na divisão (até 3 cm): um circuito `-12-` ou uma potência `1x150W` saem menores, sem
+vazar das linhas. O circuito lido é o que está entre os traços. A inserção, a edição dos atributos e `ELEREGEN` recolocam os
+textos; o `ILU-OCT` antigo (anel cheio com os textos fora) é trocado ao preparar o desenho, e as inserções vêm junto.
+
+Também entram `TOM-TUE`, `QDG`, `QDC`, `RJ45`, `RACK` e `CX-PASSAGEM`. Um bloco com o mesmo nome já no desenho
 fica como está: é assim que se usa outro símbolo. Só o desenho padrão de uma versão anterior é trocado. Excluído na janela
 de blocos, um bloco de fábrica não volta sozinho; **Configurações > Geral** o traz de volta. Interruptores têm
 `TIPO_INTERRUPTOR` constante (`1S`, `2S`, `3S`, `PARALELO`, `PARALELO-2S`, `PARALELO-3S`, `INTERMEDIARIO`,

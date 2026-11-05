@@ -152,6 +152,7 @@ pub fn inserir(doc: &mut Drawing, nome: &str, pos: [f64; 2], rotacao: f64, valor
             }
         })
         .collect();
+    encaixar_textos(&mut ins, &bloco);
     let camada = match info.tipo {
         TipoPonto::Quadro => CAMADA_QUADROS,
         TipoPonto::Dados | TipoPonto::Rack => CAMADA_DADOS,
@@ -205,15 +206,48 @@ pub fn inserir_ponto(
 
 /// A caixa de passagem que ELEELETRODUTO insere ao dividir um trecho.
 pub const BLOCO_CAIXA: &str = "CX-PASSAGEM";
+/// O ponto de luz no teto e o ponto de luz na parede (arandela).
+pub const BLOCO_LUZ_TETO: &str = "ILU-OCT";
+pub const BLOCO_ARANDELA: &str = "ILU-PAR";
+
+/// O raio do símbolo de ponto de luz (m): o círculo do teto e o semicírculo da parede (NBR 5444).
+pub const RAIO_LUZ: f64 = 0.10;
+/// A altura dos textos dentro do símbolo de ponto de luz (m), quando cabem.
+pub const TEXTO_LUZ: f64 = 0.03;
+/// Um compartimento do símbolo de ponto de luz: (tag, centro x, centro y, largura, altura), em m. O retângulo
+/// cabe inteiro na divisão do símbolo.
+pub type Compartimento = (&'static str, f64, f64, f64, f64);
+/// Teto: a potência na metade de cima; o comando e o circuito nos quartos de baixo.
+const LUZ_TETO: [Compartimento; 3] =
+    [("POTENCIA", 0.0, 0.042, 0.15, 0.036), ("COMANDO", -0.042, -0.040, 0.066, 0.036), ("CIRCUITO", 0.042, -0.040, 0.066, 0.036)];
+/// Parede: o D com a face reta na parede (y = 0) e a divisória até a borda; o comando de um lado e o
+/// circuito do outro. A potência fica nos dados do ponto.
+const LUZ_PAREDE: [Compartimento; 2] = [("COMANDO", -0.042, 0.040, 0.066, 0.036), ("CIRCUITO", 0.042, 0.040, 0.066, 0.036)];
+
+/// Os compartimentos de texto do ponto de luz base `nome` (ou do módulo empilhado dele).
+pub fn compartimentos_de_luz(nome: &str) -> Option<&'static [Compartimento]> {
+    match bloco_de_origem(nome) {
+        BLOCO_LUZ_TETO => Some(&LUZ_TETO),
+        BLOCO_ARANDELA => Some(&LUZ_PAREDE),
+        _ => None,
+    }
+}
+
+/// O circuito como a planta mostra dentro do ponto de luz: `-1-`. Vazio fica vazio.
+pub fn circuito_entre_tracos(circuito: &str) -> String {
+    let c = circuito.trim().trim_matches('-').trim();
+    if c.is_empty() { String::new() } else { format!("-{c}-") }
+}
 /// Blocos base, na ordem da barra de inserção. Cada tomada e cada interruptor é um módulo só: duas tomadas
 /// ou duas teclas no mesmo ponto são dois blocos empilhados ([`empilhar`]), cada um com o seu circuito e o
 /// seu comando.
-pub const BLOCOS_BASE: [&str; 16] = [
+pub const BLOCOS_BASE: [&str; 17] = [
     "TOM-SIM-BAIXA",
     "TOM-SIM-MEDIA",
     "TOM-SIM-ALTA",
     "TOM-TUE",
     "ILU-OCT",
+    BLOCO_ARANDELA,
     "INT-SIM",
     "INT-PAR",
     "INT-INT",
@@ -292,12 +326,22 @@ enum Peca {
     Circulo(f64, f64, f64),
     /// Triângulo cheio.
     Cheio([(f64, f64); 3]),
-    /// Anel cheio: raio interno e externo.
-    Anel(f64, f64),
     /// Círculo cheio: centro e raio.
     Disco(f64, f64, f64),
     /// Metade esquerda de um círculo, cheia: centro e raio.
     MeioDisco(f64, f64, f64),
+    /// Arco anti-horário: centro, raio e ângulos de início e fim (graus).
+    Arco(f64, f64, f64, f64, f64),
+}
+
+/// O ponto de luz no teto (NBR 5444): o círculo, o diâmetro horizontal e o raio que divide a metade de baixo.
+fn pecas_luz_teto() -> Vec<Peca> {
+    vec![Peca::Circulo(0.0, 0.0, RAIO_LUZ), Peca::Linha(-RAIO_LUZ, 0.0, RAIO_LUZ, 0.0), Peca::Linha(0.0, 0.0, 0.0, -RAIO_LUZ)]
+}
+
+/// O ponto de luz na parede (NBR 5444): o D com a face reta na parede e a divisória do meio da face até a borda.
+fn pecas_arandela() -> Vec<Peca> {
+    vec![Peca::Arco(0.0, 0.0, RAIO_LUZ, 0.0, 180.0), Peca::Linha(-RAIO_LUZ, 0.0, RAIO_LUZ, 0.0), Peca::Linha(0.0, 0.0, 0.0, RAIO_LUZ)]
 }
 
 /// O raio do círculo do interruptor e a altura do centro do primeiro (m).
@@ -493,17 +537,32 @@ fn definicao_base(nome: &str, tensao: &str) -> Option<(Vec<Peca>, Vec<Att>)> {
                 ],
             )
         }
-        "ILU-OCT" => (
-            vec![Peca::Anel(0.066, 0.093)],
+        BLOCO_LUZ_TETO => (
+            pecas_luz_teto(),
             vec![
                 constante("TIPO_PONTO", "ILUM"),
                 att("TAG", "", "Identificação"),
-                visivel("POTENCIA", "100VA", "Potência", (-0.065, 0.118)),
-                visivel("COMANDO", "", "Letra do comando", (-0.118, -0.025)),
-                visivel("CIRCUITO", "", "Circuito", (0.118, -0.025)),
+                visivel("POTENCIA", "100VA", "Potência", (0.0, 0.0)),
+                visivel("COMANDO", "", "Letra do comando", (0.0, 0.0)),
+                visivel("CIRCUITO", "", "Circuito", (0.0, 0.0)),
                 att("TENSAO", tensao, "Tensão"),
                 att("NUMERO_FASES", "1", "Número de fases"),
                 visivel("ALTURA", "", "Altura fora da legenda", (0.118, -0.09)),
+                att("TIPO_CARGA", "ILUM_TUG", "Tipo de carga"),
+                att("FP", "0,92", "Fator de potência"),
+            ],
+        ),
+        BLOCO_ARANDELA => (
+            pecas_arandela(),
+            vec![
+                constante("TIPO_PONTO", "ILUM"),
+                att("TAG", "", "Identificação"),
+                att("POTENCIA", "60VA", "Potência"),
+                visivel("COMANDO", "", "Letra do comando", (0.0, 0.0)),
+                visivel("CIRCUITO", "", "Circuito", (0.0, 0.0)),
+                att("TENSAO", tensao, "Tensão"),
+                att("NUMERO_FASES", "1", "Número de fases"),
+                visivel("ALTURA", "", "Altura fora da legenda", (0.118, 0.03)),
                 att("TIPO_CARGA", "ILUM_TUG", "Tipo de carga"),
                 att("FP", "0,92", "Fator de potência"),
             ],
@@ -568,14 +627,106 @@ fn entidade_da_peca(p: &Peca, u: &dyn Fn(f64) -> f64) -> EntityKind {
             let v = t.map(|(x, y)| Vec3::new(u(x), u(y), 0.0));
             EntityKind::Solid(Solid { corners: [v[0], v[1], v[2], v[2]] })
         }
-        Peca::Anel(r1, r2) => cheio(vec![laco_circular(0.0, 0.0, *r1, u), laco_circular(0.0, 0.0, *r2, u)]),
         Peca::Disco(x, y, r) => cheio(vec![laco_circular(*x, *y, *r, u)]),
         Peca::MeioDisco(x, y, r) => {
             // De baixo para cima pela esquerda (horário), e a volta reta pelo diâmetro.
             let vertice = |vy: f64, bulge: f64| PolyVertex { p: Vec2::new(u(*x), u(vy)), bulge, start_width: 0.0, end_width: 0.0 };
             cheio(vec![HatchLoop { vertices: vec![vertice(*y - *r, -1.0), vertice(*y + *r, 0.0)], outer: false, sources: Vec::new() }])
         }
+        Peca::Arco(x, y, r, a0, a1) => {
+            EntityKind::Arc(cadcraft_doc::Arc { center: Vec3::new(u(*x), u(*y), 0.0), radius: u(*r), start: a0.to_radians(), end: a1.to_radians() })
+        }
     }
+}
+
+/// A escala (unidades do bloco por metro) de um ponto de luz base desenhado como agora: o raio do círculo
+/// ou do arco sobre [`RAIO_LUZ`], com o comando centralizado. `None` num bloco antigo ou redesenhado.
+fn escala_de_luz(b: &Block) -> Option<f64> {
+    let centralizado = definicoes(b)
+        .iter()
+        .any(|a| a.tag.trim().eq_ignore_ascii_case("COMANDO") && a.text.halign == HAlign::Center && a.text.valign == VAlign::Middle);
+    if !centralizado {
+        return None;
+    }
+    b.entities
+        .iter()
+        .find_map(|e| match &e.kind {
+            EntityKind::Circle(c) => Some(c.radius),
+            EntityKind::Arc(a) => Some(a.radius),
+            _ => None,
+        })
+        .map(|r| r / RAIO_LUZ)
+        .filter(|k| k.is_finite() && *k > 0.0)
+}
+
+/// Um texto centralizado no compartimento `c` do símbolo, na escala `k` (unidades por metro): a altura é a
+/// que cabe, nunca maior que [`TEXTO_LUZ`].
+fn texto_no_compartimento(c: &Compartimento, valor: String, estilo: &str, k: f64) -> Text {
+    let (_, cx, cy, w, h) = *c;
+    let n = valor.chars().count().max(1) as f64;
+    let altura = TEXTO_LUZ.min(h).min(w / (n * crate::tabela::LARGURA_CARACTERE));
+    let p = Vec3::new(cx * k, cy * k, 0.0);
+    Text {
+        insert: p,
+        align_pt: Some(p),
+        height: altura * k,
+        value: valor,
+        rotation: 0.0,
+        width_factor: 1.0,
+        oblique: 0.0,
+        style: estilo.to_string(),
+        halign: HAlign::Center,
+        valign: VAlign::Middle,
+    }
+}
+
+/// Põe os textos de uma inserção de ponto de luz nos compartimentos do símbolo, centralizados e do tamanho
+/// que cabe, e o circuito entre traços. Outros blocos ficam como estão. Devolve se mudou algo.
+fn encaixar_textos(ins: &mut Insert, bloco: &Block) -> bool {
+    let (Some(comps), Some(k)) = (compartimentos_de_luz(&ins.block), escala_de_luz(bloco)) else { return false };
+    let mat = ins.transform(bloco.base.xy());
+    let mut mudou = false;
+    for a in &mut ins.attribs {
+        let Some(c) = comps.iter().find(|c| a.tag.trim().eq_ignore_ascii_case(c.0)) else { continue };
+        let valor = if c.0 == "CIRCUITO" { circuito_entre_tracos(&a.text.value) } else { a.text.value.trim().to_string() };
+        let mut kind = EntityKind::Text(texto_no_compartimento(c, valor, &a.text.style, k));
+        kind.transform(&mat);
+        if let EntityKind::Text(t) = kind
+            && t != a.text
+        {
+            a.text = t;
+            mudou = true;
+        }
+    }
+    mudou
+}
+
+/// Encaixa os textos dos pontos de luz do desenho nos compartimentos do símbolo (`h`: só esse). Devolve
+/// quantos mudaram.
+pub fn encaixar_textos_de_luz(doc: &mut Drawing, h: Option<Handle>) -> usize {
+    let alvos: Vec<Entity> = doc
+        .model
+        .iter()
+        .filter(|e| h.is_none_or(|h| e.handle == h))
+        .filter(|e| matches!(&e.kind, EntityKind::Insert(i) if compartimentos_de_luz(&i.block).is_some()))
+        .map(|e| (**e).clone())
+        .collect();
+    let mut n = 0;
+    for mut e in alvos {
+        let EntityKind::Insert(ins) = &mut e.kind else { continue };
+        let Some(bloco) = doc.blocks.get(&ins.block).cloned() else { continue };
+        if encaixar_textos(ins, &bloco) {
+            doc.model.replace(e);
+            n += 1;
+        }
+    }
+    n
+}
+
+/// O ponto de luz no teto desenhado como nas versões anteriores: um anel cheio, sem divisórias.
+fn e_luz_antiga(b: &Block) -> bool {
+    let desenho: Vec<&EntityKind> = b.entities.iter().map(|e| &e.kind).filter(|k| !matches!(k, EntityKind::AttDef(_))).collect();
+    matches!(desenho.as_slice(), [EntityKind::Hatch(h)] if h.loops.len() == 2)
 }
 
 fn laco_circular(x: f64, y: f64, r: f64, u: &dyn Fn(f64) -> f64) -> HatchLoop {
@@ -636,6 +787,7 @@ fn atributo_base(a: &Att, m: f64) -> Attrib {
 pub fn falta_base(doc: &Drawing) -> bool {
     BLOCOS_BASE.iter().any(|n| !doc.blocks.contains_key(*n) && !familia::excluida(doc, n))
         || BLOCOS_ANTIGOS.iter().any(|n| doc.blocks.contains_key(*n))
+        || doc.blocks.get(BLOCO_LUZ_TETO).is_some_and(|b| e_luz_antiga(b))
         || crate::fiacao::TipoCondutor::TODOS.iter().any(|t| !doc.blocks.contains_key(t.bloco()))
         || [CAMADA_PONTOS, CAMADA_QUADROS, CAMADA_DADOS, crate::fiacao::CAMADA, crate::eletroduto::CAMADA_TETO, crate::eletroduto::CAMADA_PISO]
             .iter()
@@ -666,7 +818,8 @@ pub fn garantir_base(doc: &mut Drawing, setup: &crate::setup::Setup, metros: f64
             continue;
         }
         if let Some(existente) = doc.blocks.get(nome) {
-            let antigo = geometria_antiga(nome).is_some_and(|p| e_desenho_antigo(existente, &p, m));
+            let antigo =
+                geometria_antiga(nome).is_some_and(|p| e_desenho_antigo(existente, &p, m)) || (nome == BLOCO_LUZ_TETO && e_luz_antiga(existente));
             if !antigo {
                 completar_familia(doc, nome);
                 continue;
@@ -675,6 +828,8 @@ pub fn garantir_base(doc: &mut Drawing, setup: &crate::setup::Setup, metros: f64
         criar_bloco_base(doc, nome, &tensao, m);
     }
     migrar_antigos(doc, setup, m);
+    // Os pontos de luz já inseridos levam os textos para dentro do símbolo novo.
+    encaixar_textos_de_luz(doc, None);
     true
 }
 
@@ -693,9 +848,14 @@ pub(crate) fn criar_bloco_base(doc: &mut Drawing, nome: &str, tensao: &str, m: f
         }
         b.entities.push(e);
     }
+    let luz = compartimentos_de_luz(nome).unwrap_or(&[]);
     for a in &atributos {
-        let k = EntityKind::AttDef(atributo_base(a, m));
-        b.entities.push(Entity::new(doc.new_handle(), k));
+        let mut def = atributo_base(a, m);
+        // No ponto de luz, os textos ficam centralizados dentro das divisões do símbolo.
+        if let Some(c) = luz.iter().find(|c| c.0 == a.0) {
+            def.text = texto_no_compartimento(c, def.text.value.clone(), &def.text.style, 1.0 / m);
+        }
+        b.entities.push(Entity::new(doc.new_handle(), EntityKind::AttDef(def)));
     }
     doc.blocks.insert(nome.to_string(), Arc::new(b));
     if let Some(f) = familia::da_base(nome) {
@@ -848,10 +1008,11 @@ fn completar_familia(doc: &mut Drawing, nome: &str) {
 /// As geometrias de partida que o editor de blocos oferece: (código, nome).
 ///
 /// Só contornos: preencher um símbolo é com a Hachura nativa do CADCraft.
-pub const GEOMETRIAS: [(&str, &str); 5] = [
+pub const GEOMETRIAS: [(&str, &str); 6] = [
     ("tomada", "Triângulo de tomada"),
     ("comando", "Círculo de comando"),
-    ("luminaria", "Luminária octogonal"),
+    ("luminaria", "Ponto de luz no teto"),
+    ("arandela", "Ponto de luz na parede"),
     ("contorno4x2", "Contorno 4x2"),
     ("contorno4x4", "Contorno 4x4"),
 ];
@@ -882,20 +1043,8 @@ pub fn inserir_geometria(doc: &mut Drawing, forma: &str, metros: f64) -> Result<
             p
         }
         "comando" => vec![Peca::Circulo(0.0, 0.135, 0.075)],
-        "luminaria" => {
-            // Octógono com o raio do símbolo base.
-            let r: f64 = 0.093;
-            let v = |i: usize| {
-                let a = std::f64::consts::FRAC_PI_8 + std::f64::consts::FRAC_PI_4 * i as f64;
-                (r * a.cos(), r * a.sin())
-            };
-            (0..8)
-                .map(|i| {
-                    let (a, b) = (v(i), v(i + 1));
-                    Peca::Linha(a.0, a.1, b.0, b.1)
-                })
-                .collect()
-        }
+        "luminaria" => pecas_luz_teto(),
+        "arandela" => pecas_arandela(),
         "contorno4x2" => retangulo(-0.05, -0.05, 0.05, 0.0),
         "contorno4x4" => retangulo(-0.05, -0.1, 0.05, 0.0),
         _ => return Err(format!("geometria \"{forma}\" desconhecida")),
@@ -956,9 +1105,9 @@ pub fn gerar_atributos(doc: &mut Drawing, categoria: FamilyCategory, metros: f64
         C::Luminaria => vec![
             constante("TIPO_PONTO", "ILUM"),
             att("TAG", "", "Identificação"),
-            visivel("POTENCIA", "100VA", "Potência", (-0.065, 0.118)),
-            visivel("COMANDO", "", "Letra do comando", (-0.118, -0.025)),
-            visivel("CIRCUITO", "", "Circuito", (0.118, -0.025)),
+            visivel("POTENCIA", "100VA", "Potência", (0.0, 0.0)),
+            visivel("COMANDO", "", "Letra do comando", (0.0, 0.0)),
+            visivel("CIRCUITO", "", "Circuito", (0.0, 0.0)),
             altura((0.118, -0.09)),
             att("TIPO_CARGA", "ILUM_TUG", "Tipo de carga"),
             att("FP", "0,92", "Fator de potência"),
@@ -992,7 +1141,12 @@ pub fn gerar_atributos(doc: &mut Drawing, categoria: FamilyCategory, metros: f64
     let mut n = 0;
     for a in &lista {
         if !existe(doc, a.0) {
-            doc.add(&Space::Model, Common::default(), EntityKind::AttDef(atributo_base(a, m))).map_err(|e| e.to_string())?;
+            let mut def = atributo_base(a, m);
+            // Luminária: os textos centralizados nas divisões do ponto de luz no teto.
+            if let Some(c) = LUZ_TETO.iter().find(|c| categoria == C::Luminaria && c.0 == a.0) {
+                def.text = texto_no_compartimento(c, def.text.value.clone(), &def.text.style, 1.0 / m);
+            }
+            doc.add(&Space::Model, Common::default(), EntityKind::AttDef(def)).map_err(|e| e.to_string())?;
             n += 1;
         }
     }

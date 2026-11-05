@@ -1003,6 +1003,7 @@ pub fn regenerar(doc: &mut Drawing, setup: &Setup, criar: Option<&[Handle]>) -> 
     // Um bloco movido para o caminho de um eletroduto entra na rede antes de calcular.
     crate::eletroduto::encaixar(doc, setup, m, crate::eletroduto::TOLERANCIA_EM_LINHA, None, None)?;
     crate::eletroduto::padronizar(doc, setup);
+    crate::biblioteca::encaixar_textos_de_luz(doc, None);
     let analise = crate::analisar(doc);
     let (trechos, soltos, avisos) = todos_os_trechos(doc, &analise, setup);
     let mut reg = Regeneracao { avisos, ..Regeneracao::default() };

@@ -477,6 +477,7 @@ pub fn da_base(nome: &str) -> Option<Familia> {
     let (categoria, (legenda, material)) = match nome {
         "TOM-TUE" => (C::PontoForca, txt("Tomada de uso específico (TUE)", "Conjunto 1 Tomada 2P+T 20A + Placa 4x2 + Caixa 4x2")),
         "ILU-OCT" => (C::Luminaria, txt("Ponto de luz no teto", "Ponto de luz + Caixa octogonal")),
+        "ILU-PAR" => (C::Luminaria, txt("Ponto de luz na parede (arandela) - h=2,10m", "Ponto de luz + Caixa 4x2")),
         "QDG" => (C::QuadroEletrico, txt("Quadro de distribuição geral", "Quadro de distribuição geral")),
         "QDC" => (C::QuadroEletrico, txt("Quadro de distribuição de circuitos", "Quadro de distribuição de circuitos")),
         "RJ45" => (C::Dados, txt("Ponto de dados/telecom", "Conjunto 1 Tomada RJ45 + Placa 4x2 + Caixa 4x2")),
@@ -487,6 +488,9 @@ pub fn da_base(nome: &str) -> Option<Familia> {
     com(categoria, legenda, material, &|f| {
         if nome == "TOM-TUE" {
             f.ref_altura = RefAltura::Media;
+        }
+        if nome == "ILU-PAR" {
+            f.ref_altura = RefAltura::Alta;
         }
     })
 }

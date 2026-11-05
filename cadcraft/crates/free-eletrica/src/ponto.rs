@@ -354,7 +354,8 @@ impl PontoEletrico {
             potencia: valor(TAGS_POTENCIA).and_then(potencia_va).or_else(|| familia.as_ref().and_then(|f| f.potencia)),
             tensao: valor(TAGS_TENSAO).and_then(numero),
             fases: valor(TAGS_FASES).and_then(fases),
-            circuito: texto(TAGS_CIRCUITO),
+            // O ponto de luz mostra o circuito entre traços (-1-): o circuito é o que está dentro.
+            circuito: valor(TAGS_CIRCUITO).map(|c| c.trim().trim_matches('-').trim().to_string()),
             comando: texto(TAGS_COMANDO),
             tag: texto(TAGS_ID),
             altura: altura_exata.or_else(|| valor(TAGS_ALTURA).and_then(altura_m)),

@@ -118,12 +118,15 @@ fn paleta_ferramentas_e_fluxo_completo() {
     let mut h = harness(app);
     h.run_steps(3);
     assert!(!h.state().ui.docking.layout.contains(&Panel::Eletrica));
+    assert_eq!(h.state().ui.toolset_tab, "Drafting");
     let app = h.state_mut();
-    // Digitado, abre a paleta acima das Tool Sets, com altura fixa.
+    // Digitado, abre a aba Installations das Tool Sets, à esquerda: nenhuma coluna a mais tirando espaço do
+    // desenho, e as Tool Sets alargam para as três abas.
     assert!(app.cmdline("ELETRICA").is_none());
-    let local = app.ui.docking.layout.location(&Panel::Eletrica).unwrap();
-    assert_eq!(local.size, Some(craft_ui::layout::SplitSize::FixedFirst(680.0)));
-    assert_eq!(local.anchor, Some(Panel::ToolSets));
+    assert_eq!(app.ui.toolset_tab, "Installations");
+    assert!(!app.ui.docking.layout.contains(&Panel::Eletrica));
+    let local = app.ui.docking.layout.location(&Panel::ToolSets).unwrap();
+    assert_eq!(local.size, Some(craft_ui::layout::SplitSize::FixedFirst(290.0)));
 
     let (qd, luz, int) = handles(app);
     // ELECIRCUITO interativo: quadro, Enter (aceita o próximo número, 3) e a luz.
@@ -311,10 +314,13 @@ fn paleta_ferramentas_e_fluxo_completo() {
     h.run_steps(3);
     assert!(h.query_by_label("Cadastrar novo cabo").is_none());
 
-    // Quadro de cargas: uma janela, só quando pedida; o painel de baixo não existe mais.
+    // Quadro de cargas: só quando pedido, acoplado embaixo do desenho, entre as Tool Sets e as Camadas.
+    assert!(!h.state().ui.docking.layout.contains(&Panel::QuadroCargas));
     h.get_by_label("Quadro de cargas...").click();
     h.run_steps(3);
-    assert!(!h.state().ui.docking.layout.contains(&Panel::QuadroCargas));
+    let local = h.state().ui.docking.layout.location(&Panel::QuadroCargas).unwrap();
+    assert_eq!(local.anchor, Some(Panel::Canvas));
+    assert_eq!(local.size, Some(craft_ui::layout::SplitSize::FixedSecond(330.0)));
     h.get_by_label("PAINEL: QD-01");
     // Os dados do quadro ficam num grupo recolhível, e a tabela é o foco; sem abas Resumo e Ficha.
     assert!(h.query_by_label("Sistema do Quadro").is_none());
@@ -365,10 +371,11 @@ fn paleta_ferramentas_e_fluxo_completo() {
     h.get_by_label("vazio");
     h.state_mut().session.undo().unwrap();
     h.run_steps(3);
-    // O X do cabeçalho interno fecha, como Esc; ELEROTEAR abre a mesma janela.
+    // O X do canto fecha, como Esc, e o painel sai do layout; ELEROTEAR abre o mesmo quadro.
     h.get_by_label("Fechar").click();
     h.run_steps(3);
     assert!(h.query_by_label("PAINEL: QD-01").is_none());
+    assert!(!h.state().ui.docking.layout.contains(&Panel::QuadroCargas));
     assert!(h.state_mut().cmdline("ELEROTEAR").is_none());
     h.run_steps(3);
     assert_eq!(h.query_all_by_label("PAINEL: QD-01").count(), 1);
@@ -426,6 +433,7 @@ fn paleta_ferramentas_e_fluxo_completo() {
     h.key_press(egui::Key::Escape);
     h.run_steps(3);
     assert!(h.query_by_label("PAINEL: QD-01").is_none());
+    assert!(!h.state().ui.docking.layout.contains(&Panel::QuadroCargas), "Esc fecha o painel acoplado");
 
     // Dimensionar projeto: esquema, cabo e DR por circuito; Calcular mostra, e só Aplicar grava.
     assert!(h.state_mut().cmdline("ELEDIMENSIONAR").is_none());

@@ -3,9 +3,10 @@
 Um projeto segue a ordem da paleta **Elétrica**. Lançar pontos, circuitos e eletrodutos não calcula nada:
 os cabos e disjuntores só mudam quando você manda dimensionar.
 
-A paleta tem as abas **Elétrica** e **Telecom**, com seções que recolhem pela seta. Nada fica aberto sem ser
-pedido. As janelas fecham no X do cabeçalho ou com Esc, e Esc fecha a última aberta. Com um
-comando em andamento, Esc cancela o comando.
+A paleta é a aba **Instalações** das **Ferramentas**, à esquerda, ao lado de **Desenho** e **Modelagem**. No topo
+dela, o seletor **Elétrica | Telecom** troca as ferramentas: baixa tensão de um lado, cabeamento estruturado do outro.
+As seções recolhem pela seta. Nada fica aberto sem ser pedido. As janelas fecham no X do cabeçalho ou com Esc, e Esc
+fecha a última aberta. Com um comando em andamento, Esc cancela o comando.
 
 ## 1. Prepare o projeto
 
@@ -77,7 +78,8 @@ Abra **Dimensionar projeto...** e escolha o quadro:
    nada, e você pode trocar cada valor.
 5. Clique em **Aplicar ao Quadro**.
 
-Em **Quadro de cargas...**:
+**Quadro de cargas...** abre um painel embaixo do desenho, entre as Ferramentas e as Camadas, sem cobrir nada. A borda
+de cima muda a altura; o X do canto ou Esc fecha, e o desenho volta a ocupar a tela toda. Nele:
 
 - A tabela mostra fases, grupo DR, cabo e disjuntor calculados. Um circuito que mudou depois do cálculo aparece
   como **Desatualizado**.
