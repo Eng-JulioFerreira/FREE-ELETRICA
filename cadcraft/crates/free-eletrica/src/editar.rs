@@ -367,6 +367,118 @@ pub fn vincular_luminaria(doc: &mut Drawing, interruptor: Handle, letra: &str, l
     gravar_xdata(doc, interruptor, &chave, Some(&lista.join(",")))
 }
 
+/// Os interruptores de um comando, gravados nos interruptores e nas luminárias dele (`.<letra>`).
+pub const CHAVE_INTERRUPTORES: &str = "linked_switch_handles";
+/// O papel do interruptor no comando (`.<letra>`).
+pub const CHAVE_PAPEL_INTERRUPTOR: &str = "switch_role";
+
+/// O papel de um interruptor no esquema do comando.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PapelInterruptor {
+    /// O único interruptor do comando: recebe a fase e manda um retorno.
+    Simples,
+    /// O primeiro paralelo (three-way): recebe a fase.
+    InicioParalelo,
+    /// Um intermediário (four-way), entre os dois paralelos.
+    Intermediario,
+    /// O último paralelo: dele sai o retorno às luminárias.
+    FimParalelo,
+}
+
+impl PapelInterruptor {
+    pub fn codigo(self) -> &'static str {
+        match self {
+            Self::Simples => "Simple",
+            Self::InicioParalelo => "ParallelStart",
+            Self::Intermediario => "Intermediate",
+            Self::FimParalelo => "ParallelEnd",
+        }
+    }
+
+    pub fn de_codigo(t: &str) -> Option<Self> {
+        [Self::Simples, Self::InicioParalelo, Self::Intermediario, Self::FimParalelo].into_iter().find(|p| p.codigo().eq_ignore_ascii_case(t.trim()))
+    }
+
+    /// A posição no caminho dos retornos: início, intermediários, fim.
+    pub fn ordem(self) -> u8 {
+        match self {
+            Self::Simples | Self::InicioParalelo => 0,
+            Self::Intermediario => 1,
+            Self::FimParalelo => 2,
+        }
+    }
+}
+
+/// O papel gravado no interruptor para a letra `letra`.
+pub fn papel_do_interruptor(p: &crate::PontoEletrico, letra: &str) -> Option<PapelInterruptor> {
+    let chave = format!("{CHAVE_PAPEL_INTERRUPTOR}.{}", letra.trim().to_lowercase());
+    p.extras.iter().find(|(k, _)| k.eq_ignore_ascii_case(&chave)).and_then(|(_, v)| PapelInterruptor::de_codigo(v))
+}
+
+/// Os papéis dos interruptores de um comando, na ordem do caminho dos retornos. Sozinho, o interruptor é
+/// simples. Em grupo, os intermediários ficam no meio e os outros (paralelos, ou simples usados como
+/// paralelos) nas pontas, na ordem dada: o primeiro é o início, que recebe a fase, e o último o fim, de onde
+/// sai o retorno às luminárias.
+pub fn papeis(doc: &Drawing, interruptores: &[Handle]) -> Vec<(Handle, PapelInterruptor)> {
+    let mut lista: Vec<Handle> = Vec::new();
+    for h in interruptores {
+        if !lista.contains(h) {
+            lista.push(*h);
+        }
+    }
+    if let [so] = lista.as_slice() {
+        return vec![(*so, PapelInterruptor::Simples)];
+    }
+    let intermediario = |h: &Handle| ler_ponto(doc, *h).and_then(|p| p.tipo_interruptor).is_some_and(|t| t.intermediario());
+    let pontas: Vec<Handle> = lista.iter().copied().filter(|h| !intermediario(h)).collect();
+    let meio: Vec<Handle> = lista.iter().copied().filter(intermediario).collect();
+    let mut v = Vec::new();
+    if let Some(primeiro) = pontas.first() {
+        v.push((*primeiro, PapelInterruptor::InicioParalelo));
+    }
+    // Mais de dois paralelos não fecham o esquema: os do meio passam como intermediários.
+    for h in pontas.iter().skip(1).take(pontas.len().saturating_sub(2)).chain(meio.iter()) {
+        v.push((*h, PapelInterruptor::Intermediario));
+    }
+    if pontas.len() > 1
+        && let Some(ultimo) = pontas.last()
+    {
+        v.push((*ultimo, PapelInterruptor::FimParalelo));
+    }
+    v
+}
+
+/// Liga os interruptores do comando `letra` entre si e às luminárias dele: cada um guarda a lista dos
+/// interruptores, na ordem dos retornos, e o seu papel; cada luminária guarda a lista. Devolve os papéis.
+pub fn vincular_interruptores(
+    doc: &mut Drawing,
+    letra: &str,
+    interruptores: &[Handle],
+    luminarias: &[Handle],
+) -> Result<Vec<(Handle, PapelInterruptor)>, String> {
+    let l = letra.trim().to_lowercase();
+    if l.is_empty() {
+        return Err("informe a letra do comando".into());
+    }
+    for h in interruptores {
+        if !ler_ponto(doc, *h).is_some_and(|p| p.tipo == crate::TipoPonto::Interruptor) {
+            return Err(format!("o objeto {} não é um interruptor", h.hex()));
+        }
+    }
+    let papeis = papeis(doc, interruptores);
+    let lista = papeis.iter().map(|(h, _)| h.hex()).collect::<Vec<_>>().join(",");
+    let chave = format!("{CHAVE_INTERRUPTORES}.{l}");
+    for (h, papel) in &papeis {
+        gravar_xdata(doc, *h, &chave, Some(&lista))?;
+        gravar_xdata(doc, *h, &format!("{CHAVE_PAPEL_INTERRUPTOR}.{l}"), Some(papel.codigo()))?;
+    }
+    for h in luminarias {
+        gravar_xdata(doc, *h, &chave, Some(&lista))?;
+    }
+    Ok(papeis)
+}
+
 /// Descrição do circuito no quadro de cargas (`None` apaga). Um circuito descrito existe no
 /// quadro mesmo sem pontos.
 pub fn definir_descricao(doc: &mut Drawing, quadro: Handle, circuito: &str, descricao: Option<&str>) -> Result<(), String> {

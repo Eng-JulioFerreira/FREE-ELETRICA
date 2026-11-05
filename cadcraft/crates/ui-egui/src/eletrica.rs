@@ -76,6 +76,8 @@ struct Janelas {
     destaque: Option<(Handle, String)>,
     /// O filtro de categoria da mini-barra de pontos.
     filtro_barra: FiltroPontos,
+    /// A busca por nome ou legenda da mini-barra de pontos.
+    busca_barra: String,
     /// A aba da paleta.
     aba_paleta: AbaPaleta,
     /// O quadro de cargas estava acoplado no quadro anterior: sumiu do layout sem Esc nem X, foi fechado pelo
@@ -1531,7 +1533,7 @@ fn legenda_inspecao(ctx: &egui::Context, xf: &crate::canvas::Xf, itens: &[Item])
 }
 
 /// O bloco de cada tipo da barra de inserção: (rótulo, bloco).
-const TIPOS_BARRA: [(&str, &str); 17] = [
+const TIPOS_BARRA: [(&str, &str); 18] = [
     ("Tomada baixa", "TOM-SIM-BAIXA"),
     ("Tomada média", "TOM-SIM-MEDIA"),
     ("Tomada alta", "TOM-SIM-ALTA"),
@@ -1549,6 +1551,7 @@ const TIPOS_BARRA: [(&str, &str); 17] = [
     ("Ponto de dados", "RJ45"),
     ("Rack", "RACK"),
     ("Caixa de passagem", "CX-PASSAGEM"),
+    ("Caixa de passagem octogonal (teto)", "CX-OCT"),
 ];
 
 /// As alturas prontas: (nome, valor). Teto usa o pé-direito.
@@ -1570,9 +1573,14 @@ fn barra_de_contexto(app: &CadApp, ctx: &egui::Context, xf: &crate::canvas::Xf, 
             ui.spacing_mut().interact_size.y = ALTURA_BARRA;
             ui.horizontal_wrapped(|ui| match comando {
                 "eleponto" => {
-                    let mut filtro = trava(&JANELAS).filtro_barra;
-                    barra_ponto(ui, uid, st, s, &mut filtro, acoes);
-                    trava(&JANELAS).filtro_barra = filtro;
+                    let (mut filtro, mut busca) = {
+                        let j = trava(&JANELAS);
+                        (j.filtro_barra, j.busca_barra.clone())
+                    };
+                    barra_ponto(ui, uid, st, s, &mut filtro, &mut busca, acoes);
+                    let mut j = trava(&JANELAS);
+                    j.filtro_barra = filtro;
+                    j.busca_barra = busca;
                 }
                 "eleeletroduto" => barra_eletroduto(ui, uid, s, acoes),
                 "elefiacao" => barra_fiacao(ui, uid, acoes),
@@ -1582,7 +1590,38 @@ fn barra_de_contexto(app: &CadApp, ctx: &egui::Context, xf: &crate::canvas::Xf, 
     });
 }
 
-fn barra_ponto(ui: &mut egui::Ui, uid: u64, st: &Estado, s: &Setup, filtro: &mut FiltroPontos, acoes: &mut Vec<Acao>) {
+/// O nome de um bloco na barra de pontos: o da lista de fábrica, ou o próprio nome.
+fn nome_na_barra(nome: &str) -> String {
+    TIPOS_BARRA.iter().find(|(_, b)| b.eq_ignore_ascii_case(nome)).map_or(nome, |(n, _)| n).to_string()
+}
+
+/// O bloco aparece na busca: o texto está no nome dele, no nome da barra ou na legenda da família (sem
+/// diferenciar maiúsculas nem acentos).
+fn bloco_na_busca(b: &ele::biblioteca::BlocoPonto, busca: &str) -> bool {
+    let chave = |t: &str| ele::ponto::normalizar(t);
+    let busca = chave(busca.trim());
+    busca.is_empty()
+        || [b.nome.clone(), nome_na_barra(&b.nome), b.familia.as_ref().map_or(String::new(), |f| f.legenda.clone())]
+            .iter()
+            .any(|t| chave(t).contains(&busca))
+}
+
+/// O resumo de um bloco na lista: a potência padrão (fora dos interruptores e caixas) e a altura da legenda.
+fn resumo_do_bloco(b: &ele::biblioteca::BlocoPonto, s: &Setup) -> String {
+    let potencia = b
+        .familia
+        .as_ref()
+        .and_then(|f| f.potencia)
+        .or_else(|| b.atributos.iter().find(|a| a.tag.eq_ignore_ascii_case("POTENCIA")).and_then(|a| ele::ponto::potencia_va(&a.padrao)))
+        .filter(|_| !matches!(b.tipo, TipoPonto::Interruptor | TipoPonto::Caixa | TipoPonto::Quadro | TipoPonto::Dados | TipoPonto::Rack));
+    let altura = format!("h = {} m", fixo(b.altura_padrao(s), 2));
+    match potencia {
+        Some(p) => format!("{} VA · {altura}", fixo(p, 0)),
+        None => altura,
+    }
+}
+
+fn barra_ponto(ui: &mut egui::Ui, uid: u64, st: &Estado, s: &Setup, filtro: &mut FiltroPontos, busca: &mut String, acoes: &mut Vec<Acao>) {
     let Some(m) = ele::biblioteca::modelo(uid) else { return };
     let Some(bloco) = st.blocos.iter().find(|b| b.nome.eq_ignore_ascii_case(&m.bloco)) else { return };
     let tem = |tag: &str| bloco.atributos.iter().any(|a| !a.constante && a.tag.eq_ignore_ascii_case(tag));
@@ -1615,13 +1654,35 @@ fn barra_ponto(ui: &mut egui::Ui, uid: u64, st: &Estado, s: &Setup, filtro: &mut
             }
         }
     });
+    // A busca filtra a lista de blocos junto com a categoria, enquanto se digita.
+    let (lupa, _) = ui.allocate_exact_size(vec2(16.0, ALTURA_BARRA), egui::Sense::hover());
+    crate::icons::paint(ui.painter(), egui::Rect::from_center_size(lupa.center(), vec2(13.0, 13.0)), crate::icons::Icon::Search, false);
+    let campo_busca = ui.add_sized(vec2(150.0, ALTURA_BARRA), egui::TextEdit::singleline(busca).hint_text("Pesquisar ponto..."));
+    campo_busca.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, "Pesquisar ponto"));
+    let achados: Vec<&ele::biblioteca::BlocoPonto> = st.blocos.iter().filter(|b| filtro.aceita(b.tipo) && bloco_na_busca(b, busca)).collect();
+    // Uma busca que deixa um bloco só já o escolhe.
+    if campo_busca.changed()
+        && let [unico] = achados.as_slice()
+        && unico.nome != bloco.nome
+    {
+        enviar(acoes, &unico.nome, &[], m.quadro);
+    }
     ui.label("Bloco").on_hover_text(
         "Cada tomada e cada tecla é um módulo, com o seu circuito e o seu comando. Clique sobre um ponto de parede para empilhar na caixa dele",
     );
-    let nome_de = |nome: &str| TIPOS_BARRA.iter().find(|(_, b)| b.eq_ignore_ascii_case(nome)).map_or(nome, |(n, _)| n).to_string();
-    egui::ComboBox::from_id_salt("ele-barra-tipo").selected_text(nome_de(&bloco.nome)).width(210.0).show_ui(ui, |ui| {
-        for b in st.blocos.iter().filter(|b| filtro.aceita(b.tipo)) {
-            if ui.selectable_label(bloco.nome == b.nome, nome_de(&b.nome)).on_hover_text(b.nome.as_str()).clicked() {
+    egui::ComboBox::from_id_salt("ele-barra-tipo").selected_text(nome_na_barra(&bloco.nome)).width(240.0).height(420.0).show_ui(ui, |ui| {
+        ui.set_min_width(300.0);
+        if achados.is_empty() {
+            ui.label(pequeno(format!("Nenhum bloco com \"{}\".", busca.trim()), ui.visuals().weak_text_color()));
+        }
+        for b in &achados {
+            // O nome em destaque e, embaixo, a potência e a altura padrão.
+            let mut texto = egui::text::LayoutJob::default();
+            let forte = egui::TextFormat { color: ui.visuals().strong_text_color(), ..Default::default() };
+            texto.append(&nome_na_barra(&b.nome), 0.0, forte);
+            let fraco = egui::TextFormat { font_id: crate::theme::small(), color: ui.visuals().weak_text_color(), ..Default::default() };
+            texto.append(&format!("\n{}", resumo_do_bloco(b, s)), 0.0, fraco);
+            if ui.selectable_label(bloco.nome == b.nome, texto).on_hover_text(b.nome.as_str()).clicked() {
                 enviar(acoes, &b.nome, &[], m.quadro);
             }
         }

@@ -83,6 +83,11 @@ impl TipoInterruptor {
         }
     }
 
+    /// Intermediário (four-way): fica entre os dois paralelos do comando.
+    pub fn intermediario(self) -> bool {
+        matches!(self, Self::Intermediario | Self::Intermediario2 | Self::Intermediario3)
+    }
+
     /// Quantas teclas (letras de comando) o interruptor tem.
     pub fn teclas(self) -> usize {
         match self {
@@ -202,7 +207,7 @@ impl TipoPonto {
 }
 
 /// Maiúsculas, sem acentos, e tudo o que não é letra ou dígito vira espaço.
-pub(crate) fn normalizar(s: &str) -> String {
+pub fn normalizar(s: &str) -> String {
     s.chars()
         .map(|c| match c.to_uppercase().next().unwrap_or(c) {
             'Á' | 'À' | 'Â' | 'Ã' | 'Ä' => 'A',
@@ -354,7 +359,7 @@ impl PontoEletrico {
             potencia: valor(TAGS_POTENCIA).and_then(potencia_va).or_else(|| familia.as_ref().and_then(|f| f.potencia)),
             tensao: valor(TAGS_TENSAO).and_then(numero),
             fases: valor(TAGS_FASES).and_then(fases),
-            // O ponto de luz mostra o circuito entre traços (-1-): o circuito é o que está dentro.
+            // Versões anteriores mostravam o circuito do ponto de luz entre traços (-1-): o circuito é o de dentro.
             circuito: valor(TAGS_CIRCUITO).map(|c| c.trim().trim_matches('-').trim().to_string()),
             comando: texto(TAGS_COMANDO),
             tag: texto(TAGS_ID),

@@ -9,6 +9,7 @@
 #![forbid(unsafe_code)]
 
 pub mod biblioteca;
+pub mod borda;
 pub mod circuito;
 pub mod demanda;
 pub mod editar;

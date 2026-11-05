@@ -575,6 +575,15 @@ fn paleta_ferramentas_e_fluxo_completo() {
     if let Ok(saida) = std::env::var("FREE_ELETRICA_PNG_PONTOS") {
         h.render().unwrap().save(saida).unwrap();
     }
+    // A busca filtra a lista de blocos enquanto se digita, pelo nome ou pela legenda; um bloco só já fica escolhido.
+    let uid = h.state().session.state().unwrap().uid;
+    h.get_by_label("Pesquisar ponto").click();
+    h.run_steps(2);
+    h.get_by_label("Pesquisar ponto").type_text("arandela");
+    h.run_steps(3);
+    assert_eq!(free_eletrica::biblioteca::modelo(uid).unwrap().bloco, "ILU-PAR");
+    h.state_mut().run("eletrica.ponto.modelo", json!({ "bloco": "TOM-SIM-BAIXA" })).unwrap();
+    h.run_steps(3);
     let antes = h.state_mut().run("eletrica.analisar", json!({})).unwrap()["pontos"].as_array().unwrap().len();
     // Um clique de mouse de verdade, pelo caminho do desenho: sobre a mini-barra não insere.
     let clicar = |h: &mut Harness<'static, CadApp>, x: f32, y: f32| {
@@ -644,8 +653,10 @@ fn paleta_ferramentas_e_fluxo_completo() {
     let tem = |h: &mut Harness<'static, CadApp>, n: &str| {
         h.state_mut().run("eletrica.blocos", json!({})).unwrap().as_array().unwrap().iter().any(|b| b["nome"] == n)
     };
-    assert!(tem(&mut h, "CX-PASSAGEM"));
-    h.get_by_label("Excluir").click();
+    assert!(tem(&mut h, "CX-PASSAGEM") && tem(&mut h, "CX-OCT"));
+    // Duas caixas de fábrica, em ordem de nome: a octogonal de teto e a de passagem.
+    assert_eq!(h.query_all_by_label("Excluir").count(), 2);
+    h.query_all_by_label("Excluir").last().unwrap().click();
     h.run_steps(3);
     h.get_by_label("Excluir?").click();
     h.run_steps(3);

@@ -804,6 +804,70 @@ fn comando_usa_as_teclas_do_interruptor_e_grava_o_vinculo() {
 }
 
 #[test]
+fn paralelos_e_intermediario_no_mesmo_comando_e_os_retornos() {
+    let _setup = trava_setup();
+    let mut s = Session::new();
+    let mut d = Drawing::new_metric();
+    d.header.set_i64("INSUNITS", 6);
+    let qd = inserir(&mut d, "QDG", 0.0, 0.0, &[("TIPO_PONTO", "QUADRO"), ("TAG", "QDG"), ("NUMERO_FASES", "3"), ("ALTURA", "1,5")]);
+    let tipo = |t: &'static str| [("TIPO_PONTO", "INTERRUPTOR"), ("TIPO_INTERRUPTOR", t), ("POTENCIA", "0W"), ("ALTURA", "1,10")];
+    let s1 = inserir(&mut d, "INT-PAR", 2.0, 0.0, &tipo("PARALELO"));
+    let meio = inserir(&mut d, "INT-INT", 4.0, 0.0, &tipo("INTERMEDIARIO"));
+    let s2 = inserir(&mut d, "INT-PAR", 6.0, 0.0, &tipo("PARALELO"));
+    let luz = inserir(&mut d, "ILU-OCT", 6.0, 2.0, &[("TIPO_PONTO", "ILUM"), ("POTENCIA", "100VA"), ("TENSAO", "220V"), ("COMANDO", "")]);
+    for (a, b) in [((0.0, 0.0), (2.0, 0.0)), ((2.0, 0.0), (4.0, 0.0)), ((4.0, 0.0), (6.0, 0.0)), ((6.0, 0.0), (6.0, 2.0))] {
+        eletroduto(&mut d, a, b);
+    }
+    s.open_drawing(d, "Planta", None);
+    s.execute("elecircuito", &json!({ "quadro": qd.hex(), "pontos": [luz.hex()] })).unwrap();
+    // Os três interruptores num comando só: o intermediário vai para o meio, e os paralelos para as pontas.
+    let r = s.execute("elecomando", &json!({ "interruptores": [s1.hex(), s2.hex(), meio.hex()], "luminarias": [luz.hex()] })).unwrap();
+    assert_eq!(r["comando"], "a");
+    let papeis: Vec<(String, String)> = r["interruptores"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| (p["interruptor"].as_str().unwrap().into(), p["papel"].as_str().unwrap().into()))
+        .collect();
+    assert_eq!(papeis, [(s1.hex(), "ParallelStart".into()), (meio.hex(), "Intermediate".into()), (s2.hex(), "ParallelEnd".into())], "{r}");
+    let ler = |s: &Session, h: Handle| free_eletrica::ponto::ler_ponto(s.doc().unwrap(), h).unwrap();
+    for h in [s1, meio, s2] {
+        let p = ler(&s, h);
+        assert_eq!((p.comando.as_deref(), p.circuito.as_deref()), (Some("a"), Some("1")));
+    }
+    let lista = format!("{},{},{}", s1.hex(), meio.hex(), s2.hex());
+    for h in [s1, s2, luz] {
+        assert!(ler(&s, h).extras.iter().any(|(k, v)| k == "linked_switch_handles.a" && *v == lista), "{:?}", ler(&s, h).extras);
+    }
+    assert!(ler(&s, meio).extras.iter().any(|(k, v)| k == "switch_role.a" && v == "Intermediate"));
+
+    // A fiação: a fase só até o primeiro paralelo; dois retornos (a' e a") do primeiro ao intermediário e dele ao
+    // último; um retorno (a) do último até a luz.
+    let retornos = |s: &Session, x: Handle, y: Handle| -> (u8, Vec<String>) {
+        let doc = s.doc().unwrap();
+        let f = free_eletrica::fiacao::calcular(doc, &free_eletrica::analisar(doc), &free_eletrica::setup::atual(), qd).unwrap();
+        let t = f.trechos.iter().find(|t| (t.de == x && t.para == y) || (t.de == y && t.para == x)).unwrap();
+        let k = t.circuitos.first().unwrap();
+        (k.fases, k.retornos.iter().cloned().collect())
+    };
+    assert_eq!(retornos(&s, qd, s1), (1, vec![]));
+    assert_eq!(retornos(&s, s1, meio), (0, vec!["a\"".to_string(), "a'".to_string()]));
+    assert_eq!(retornos(&s, meio, s2), (0, vec!["a\"".to_string(), "a'".to_string()]));
+    assert_eq!(retornos(&s, s2, luz), (0, vec!["a".to_string()]));
+
+    // A ordem escolhida vale sobre a distância: começando pelo paralelo de longe, a fase vai até ele e o retorno
+    // às luzes sai do de perto.
+    s.execute("elecomando", &json!({ "interruptores": [s2.hex(), meio.hex(), s1.hex()], "luminarias": [luz.hex()], "comando": "a" })).unwrap();
+    assert_eq!(retornos(&s, qd, s1).0, 1);
+    assert_eq!(retornos(&s, meio, s2), (1, vec!["a".to_string(), "a\"".to_string(), "a'".to_string()]));
+    // Um interruptor só é simples; o que não é interruptor é recusado.
+    let r = s.execute("elecomando", &json!({ "interruptores": [s1.hex()], "luminarias": [luz.hex()], "comando": "b" })).unwrap();
+    assert_eq!(r["interruptores"][0]["papel"], "Simple");
+    assert!(s.execute("elecomando", &json!({ "interruptores": [s1.hex(), luz.hex()], "luminarias": [] })).is_err());
+    assert!(s.execute("elecomando", &json!({ "interruptores": [], "luminarias": [] })).is_err());
+}
+
+#[test]
 fn tags_tabela_e_inspecao_por_comandos() {
     let _setup = trava_setup();
     let mut s = Session::new();
@@ -1338,7 +1402,8 @@ fn tag_de_fiacao_direta_ou_com_chamada() {
     s.input(Input::Point(Vec2::new(2.0, 0.05))).unwrap();
     assert!(s.preview(Vec2::new(5.0, 2.0)).is_empty());
     let (h, x, y) = insercao(&s);
-    assert_eq!((x, y), (2.0, 0.0));
+    // O eletroduto para na borda dos blocos: a projeção no trecho cortado tem arredondamento.
+    assert!((x - 2.0).abs() < 1e-9 && y.abs() < 1e-9, "{x} {y}");
     // Com linha de chamada, trocada com o comando correndo: dois cliques e a prévia elástica.
     s.input(Input::Keyword("Chamada".into())).unwrap();
     s.input(Input::Point(Vec2::new(3.0, 0.0))).unwrap();

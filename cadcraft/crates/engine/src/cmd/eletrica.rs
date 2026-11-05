@@ -36,7 +36,7 @@ pub fn specs() -> Vec<CommandSpec> {
             .interactive(|_| Ok(Box::new(CircuitoM::default()))),
         CommandSpec::new("eleremoverponto", "Remove Points from Circuit", run_remover).params("{pontos: [hex]} → {removidos}").interactive(|_| Ok(Box::new(RemoverM::default()))),
         CommandSpec::new("elecomando", "Switches and Lamps", run_comando)
-            .params("{interruptor: hex, luminarias: [hex], comando?: letter (default: the next free key of the switch)} → {comando, circuito, luminarias}")
+            .params("{interruptor: hex | interruptores: [hex] (three-way/four-way: the first gets the phase, the last feeds the lamps), luminarias: [hex], comando?: letter (default: the next free key of the switch)} → {comando, circuito, luminarias, interruptores: [{interruptor, papel}]}")
             .interactive(|_| Ok(Box::new(ComandoM::default()))),
         CommandSpec::new("elefiacao", "Wiring Tags", run_fiacao)
             .params("{quadro?: hex | TAG, eletrodutos?: [hex], limpar?: bool (erase the tags), ancora?: [x, y] (the point on the conduit), modo?: direct | leader (default: direct without `tag`, leader with it), tag?: [x, y] (leader: where the base line starts; the leader takes the angle of the two points), eletroduto?: hex (default: the conduit at `ancora`)} (default: every conduit, at its middle) → {tags, criadas, apagadas, tabelas, avisos} or {tag}")
@@ -1359,24 +1359,67 @@ fn ligar_luminaria(s: &mut Session, sw: &mut Interruptor, h: Handle) -> Result<b
     Ok(true)
 }
 
+/// Põe outro interruptor no comando de `sw`: a mesma letra e o mesmo circuito (paralelos e intermediários).
+fn juntar_interruptor(s: &mut Session, sw: &Interruptor, h: Handle) -> Result<bool> {
+    if h == sw.h {
+        return Ok(false);
+    }
+    let Some(outro) = preparar_interruptor(s, h, Some(&sw.letra))? else { return Ok(false) };
+    if let (Some(c), Some(q)) = (&sw.circuito, sw.quadro)
+        && (outro.circuito.as_deref() != Some(c.as_str()) || outro.quadro != Some(q))
+    {
+        ele::editar::atribuir_circuito(s.doc_mut()?, h, q, c).map_err(erro)?;
+    }
+    s.echo(format!("Interruptor {}: comando {}.", outro.rotulo, sw.letra));
+    Ok(true)
+}
+
+/// Grava os papéis dos interruptores do comando e a lista deles nas luminárias.
+fn vincular_comando(
+    s: &mut Session,
+    sw: &Interruptor,
+    outros: &[Handle],
+    luminarias: &[Handle],
+) -> Result<Vec<(Handle, ele::editar::PapelInterruptor)>> {
+    let todos: Vec<Handle> = std::iter::once(sw.h).chain(outros.iter().copied()).collect();
+    ele::editar::vincular_interruptores(s.doc_mut()?, &sw.letra, &todos, luminarias).map_err(erro)
+}
+
 fn run_comando(s: &mut Session, p: &Value) -> Result<Value> {
-    let h = handle("elecomando", p, "interruptor")?;
+    // Um interruptor, ou vários num mesmo comando (paralelos e intermediários).
+    let interruptores =
+        if p.get("interruptores").is_some() { handles("elecomando", p, "interruptores")? } else { vec![handle("elecomando", p, "interruptor")?] };
+    let Some((&h, outros)) = interruptores.split_first() else { return Err(bad("elecomando", "`interruptores` is empty")) };
     let lista = handles("elecomando", p, "luminarias")?;
     let letra = p.get("comando").and_then(Value::as_str).filter(|l| !l.trim().is_empty());
     let mut sw =
         preparar_interruptor(s, h, letra)?.ok_or_else(|| bad("elecomando", "`interruptor` is not a switch block (TIPO_PONTO = INTERRUPTOR)"))?;
     let mut feitos = Vec::new();
+    let mut lums = Vec::new();
     for l in lista {
         if ligar_luminaria(s, &mut sw, l)? {
             feitos.push(l.hex());
+            lums.push(l);
         }
     }
-    Ok(json!({ "comando": sw.letra, "circuito": sw.circuito, "luminarias": feitos }))
+    let mut juntos = Vec::new();
+    for o in outros {
+        if !juntar_interruptor(s, &sw, *o)? {
+            return Err(bad("elecomando", format!("{} is not another switch block (TIPO_PONTO = INTERRUPTOR)", o.hex())));
+        }
+        juntos.push(*o);
+    }
+    let papeis = vincular_comando(s, &sw, &juntos, &lums)?;
+    let papeis: Vec<Value> = papeis.iter().map(|(h, r)| json!({ "interruptor": h.hex(), "papel": r.codigo() })).collect();
+    Ok(json!({ "comando": sw.letra, "circuito": sw.circuito, "luminarias": feitos, "interruptores": papeis }))
 }
 
 #[derive(Default)]
 struct ComandoM {
     interruptor: Option<Interruptor>,
+    /// Os outros interruptores do mesmo comando (paralelos e intermediários), na ordem escolhida.
+    outros: Vec<Handle>,
+    luminarias: Vec<Handle>,
     feitos: usize,
     pedindo_letra: bool,
 }
@@ -1396,7 +1439,11 @@ impl Interactive for ComandoM {
         }
         match &self.interruptor {
             None => Prompt::new("Selecione o interruptor", Accept::SELECT),
-            Some(sw) => Prompt::new(format!("Selecione as luminárias do comando {}", sw.letra), Accept::SELECT).kw(&["Letra"]),
+            Some(sw) => Prompt::new(
+                format!("Selecione as luminárias e os outros interruptores (paralelos, intermediários) do comando {}", sw.letra),
+                Accept::SELECT,
+            )
+            .kw(&["Letra"]),
         }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
@@ -1432,10 +1479,18 @@ impl Interactive for ComandoM {
                     }
                     Some(sw) => {
                         for h in hs {
-                            if ligar_luminaria(s, sw, h)? {
+                            // Outro interruptor entra no mesmo comando: paralelos e intermediários.
+                            let e_interruptor = analise(s)?.ponto(h).is_some_and(|p| p.tipo == TipoPonto::Interruptor);
+                            if e_interruptor {
+                                if !self.outros.contains(&h) && juntar_interruptor(s, sw, h)? {
+                                    self.outros.push(h);
+                                }
+                            } else if ligar_luminaria(s, sw, h)? {
                                 self.feitos += 1;
+                                self.luminarias.push(h);
                             }
                         }
+                        vincular_comando(s, sw, &self.outros, &self.luminarias)?;
                     }
                 }
                 Ok(Step::Continue)

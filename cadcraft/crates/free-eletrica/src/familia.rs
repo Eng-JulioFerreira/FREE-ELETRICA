@@ -483,6 +483,7 @@ pub fn da_base(nome: &str) -> Option<Familia> {
         "RJ45" => (C::Dados, txt("Ponto de dados/telecom", "Conjunto 1 Tomada RJ45 + Placa 4x2 + Caixa 4x2")),
         "RACK" => (C::QuadroDados, txt("Rack de dados", "Rack de dados")),
         "CX-PASSAGEM" => (C::Caixa, txt("Caixa de passagem", "Caixa de passagem")),
+        "CX-OCT" => (C::Caixa, txt("Caixa de passagem octogonal (teto)", "Caixa octogonal 4x4\" de teto")),
         _ => return None,
     };
     com(categoria, legenda, material, &|f| {
@@ -491,6 +492,11 @@ pub fn da_base(nome: &str) -> Option<Familia> {
         }
         if nome == "ILU-PAR" {
             f.ref_altura = RefAltura::Alta;
+        }
+        if nome == "CX-OCT" {
+            f.ref_altura = RefAltura::Teto;
+            f.caixa = CaixaFisica::Octogonal;
+            f.potencia = None;
         }
     })
 }

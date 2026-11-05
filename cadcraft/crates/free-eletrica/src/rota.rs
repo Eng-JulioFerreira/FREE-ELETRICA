@@ -355,7 +355,11 @@ impl Rede {
             };
             let gravados = [gravado(CHAVE_DE), gravado(CHAVE_PARA)];
             let ponta = |q: P| -> Option<usize> {
-                let encosta = |n: &usize| rede.nos.get(*n).is_some_and(|no| dist(no.pos, q) <= raio);
+                // A ponta cortada na borda de um bloco grande pode ficar além do raio de captura: para o bloco
+                // gravado, o raio conta a partir do contorno dele.
+                let encosta = |n: &usize| {
+                    rede.nos.get(*n).is_some_and(|no| dist(no.pos, q) <= raio + crate::borda::contorno(doc, no.handle).map_or(0.0, |c| c.alcance()))
+                };
                 gravados
                     .iter()
                     .flatten()
@@ -389,7 +393,9 @@ impl Rede {
                         Instalacao::Piso => 0.0,
                         Instalacao::Parede => za,
                     };
-                    let comprimento_2d = comprimento_tracado(&tr) * metros;
+                    // O traçado para na borda dos blocos: o cabo segue até o centro deles.
+                    let ate_os_blocos = dist(a, rede.nos[de].pos) + dist(b, rede.nos[para].pos);
+                    let comprimento_2d = (comprimento_tracado(&tr) + ate_os_blocos) * metros;
                     let comprimento = comprimento_2d + (cota - za).abs() + (cota - zb).abs();
                     let i = rede.arestas.len();
                     rede.arestas.push(Aresta { eletroduto: e.handle, de, para, instalacao, tipo, perfil, comprimento_2d, comprimento, meio, angulo });

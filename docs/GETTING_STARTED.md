@@ -23,7 +23,9 @@ As camadas e os blocos base entram sozinhos na primeira ferramenta que você usa
 
 ## 2. Insira os pontos
 
-Clique em **Inserir pontos**. Na mini-barra sobre o desenho, escolha categoria, bloco, potência, altura e
+Clique em **Inserir pontos**. Na mini-barra sobre o desenho, **Pesquisar ponto...** filtra os blocos pelo nome ou pela
+legenda enquanto você digita, junto com a categoria; a lista mostra a potência e a altura padrão de cada um. Escolha
+categoria, bloco, potência, altura e
 quadro pai. Cada clique no desenho insere um ponto, que alinha à parede mais próxima. **Tab** gira e
 **Enter** termina.
 
@@ -44,7 +46,10 @@ Na aba **Telecom** da paleta, **Inserir ponto de dados** e **Inserir rack** já 
 
 - **Criar circuito:** clique no quadro, informe o número e clique nos pontos. Enter termina. A mini-barra edita
   descrição, esquema e tensão.
-- **Comandos e luminárias:** clique no interruptor e nas luminárias dele. Enter termina.
+- **Comandos e luminárias:** clique no interruptor e nas luminárias dele. Enter termina. Para paralelos (three-way) e
+  intermediários (four-way), clique também nos outros interruptores do mesmo comando, na ordem do caminho: o primeiro recebe
+  a fase, os intermediários ficam no meio e do último sai o retorno às luminárias. A fiação passa dois retornos (`a'` e
+  `a"`) entre eles e um (`a`) até as luminárias.
 
 Ligue **Inspecionar projeto** para ver os halos: vermelho falta circuito ou comando, laranja sem caminho até o
 quadro, amarelo acima do limite e verde válido.

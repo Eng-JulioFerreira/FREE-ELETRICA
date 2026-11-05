@@ -206,6 +206,10 @@ pub fn inserir_ponto(
 
 /// A caixa de passagem que ELEELETRODUTO insere ao dividir um trecho.
 pub const BLOCO_CAIXA: &str = "CX-PASSAGEM";
+/// A caixa de passagem octogonal de teto: derivação sem carga, sem potência nem comando.
+pub const BLOCO_CAIXA_OCT: &str = "CX-OCT";
+/// O raio do octógono da caixa de teto (m).
+const RAIO_OCTOGONO: f64 = 0.06;
 /// O ponto de luz no teto e o ponto de luz na parede (arandela).
 pub const BLOCO_LUZ_TETO: &str = "ILU-OCT";
 pub const BLOCO_ARANDELA: &str = "ILU-PAR";
@@ -233,15 +237,15 @@ pub fn compartimentos_de_luz(nome: &str) -> Option<&'static [Compartimento]> {
     }
 }
 
-/// O circuito como a planta mostra dentro do ponto de luz: `-1-`. Vazio fica vazio.
-pub fn circuito_entre_tracos(circuito: &str) -> String {
-    let c = circuito.trim().trim_matches('-').trim();
-    if c.is_empty() { String::new() } else { format!("-{c}-") }
+/// O circuito como a planta mostra dentro do ponto de luz: só o número (`1`), sem os traços que versões
+/// anteriores punham em volta.
+pub fn circuito_na_planta(circuito: &str) -> String {
+    circuito.trim().trim_matches('-').trim().to_string()
 }
 /// Blocos base, na ordem da barra de inserção. Cada tomada e cada interruptor é um módulo só: duas tomadas
 /// ou duas teclas no mesmo ponto são dois blocos empilhados ([`empilhar`]), cada um com o seu circuito e o
 /// seu comando.
-pub const BLOCOS_BASE: [&str; 17] = [
+pub const BLOCOS_BASE: [&str; 18] = [
     "TOM-SIM-BAIXA",
     "TOM-SIM-MEDIA",
     "TOM-SIM-ALTA",
@@ -259,6 +263,7 @@ pub const BLOCOS_BASE: [&str; 17] = [
     "RJ45",
     "RACK",
     BLOCO_CAIXA,
+    BLOCO_CAIXA_OCT,
 ];
 
 /// A altura de uma tomada base, que o preenchimento do triângulo mostra.
@@ -332,6 +337,20 @@ enum Peca {
     MeioDisco(f64, f64, f64),
     /// Arco anti-horário: centro, raio e ângulos de início e fim (graus).
     Arco(f64, f64, f64, f64, f64),
+}
+
+/// Um octógono regular de raio `r`, com lados horizontais e verticais.
+fn octogono(r: f64) -> Vec<Peca> {
+    let v = |i: usize| {
+        let a = std::f64::consts::FRAC_PI_8 + std::f64::consts::FRAC_PI_4 * i as f64;
+        (r * a.cos(), r * a.sin())
+    };
+    (0..8)
+        .map(|i| {
+            let (a, b) = (v(i), v(i + 1));
+            Peca::Linha(a.0, a.1, b.0, b.1)
+        })
+        .collect()
 }
 
 /// O ponto de luz no teto (NBR 5444): o círculo, o diâmetro horizontal e o raio que divide a metade de baixo.
@@ -408,13 +427,21 @@ fn e_desenho_antigo(b: &Block, pecas: &[Peca], m: f64) -> bool {
         })
 }
 
+/// A caixa 4x2 em planta: a largura ao longo da parede e o quanto entra nela (m). A 4x4 tem o dobro da
+/// largura e a mesma profundidade.
+const LARGURA_4X2: f64 = 0.07;
+const PROFUNDIDADE_CAIXA: f64 = 0.0475;
+/// A haste padrão, da caixa ao símbolo (m).
+const HASTE: f64 = 0.06;
+
 /// A caixa na parede e a haste até o símbolo.
 fn caixa_e_haste(haste: f64) -> Vec<Peca> {
+    let (l, p) = (LARGURA_4X2 / 2.0, PROFUNDIDADE_CAIXA);
     vec![
-        Peca::Linha(-0.035, 0.0, 0.035, 0.0),
-        Peca::Linha(-0.035, 0.0, -0.035, -0.0475),
-        Peca::Linha(0.035, 0.0, 0.035, -0.0475),
-        Peca::Linha(0.035, -0.0475, -0.035, -0.0475),
+        Peca::Linha(-l, 0.0, l, 0.0),
+        Peca::Linha(-l, 0.0, -l, -p),
+        Peca::Linha(l, 0.0, l, -p),
+        Peca::Linha(l, -p, -l, -p),
         Peca::Linha(0.0, 0.0, 0.0, haste),
     ]
 }
@@ -583,6 +610,14 @@ fn definicao_base(nome: &str, tensao: &str) -> Option<(Vec<Peca>, Vec<Att>)> {
                 visivel("ALTURA", "", "Altura fora da legenda", (0.07, -0.02)),
             ],
         ),
+        BLOCO_CAIXA_OCT => (
+            octogono(RAIO_OCTOGONO),
+            vec![
+                constante("TIPO_PONTO", "CAIXA DE PASSAGEM"),
+                att("TAG", "", "Identificação"),
+                visivel("ALTURA", "", "Altura fora da legenda", (0.08, -0.02)),
+            ],
+        ),
         "RJ45" => (
             vec![
                 Peca::Linha(-0.035, 0.0, 0.035, 0.0),
@@ -681,14 +716,14 @@ fn texto_no_compartimento(c: &Compartimento, valor: String, estilo: &str, k: f64
 }
 
 /// Põe os textos de uma inserção de ponto de luz nos compartimentos do símbolo, centralizados e do tamanho
-/// que cabe, e o circuito entre traços. Outros blocos ficam como estão. Devolve se mudou algo.
+/// que cabe, e o circuito só com o número. Outros blocos ficam como estão. Devolve se mudou algo.
 fn encaixar_textos(ins: &mut Insert, bloco: &Block) -> bool {
     let (Some(comps), Some(k)) = (compartimentos_de_luz(&ins.block), escala_de_luz(bloco)) else { return false };
     let mat = ins.transform(bloco.base.xy());
     let mut mudou = false;
     for a in &mut ins.attribs {
         let Some(c) = comps.iter().find(|c| a.tag.trim().eq_ignore_ascii_case(c.0)) else { continue };
-        let valor = if c.0 == "CIRCUITO" { circuito_entre_tracos(&a.text.value) } else { a.text.value.trim().to_string() };
+        let valor = if c.0 == "CIRCUITO" { circuito_na_planta(&a.text.value) } else { a.text.value.trim().to_string() };
         let mut kind = EntityKind::Text(texto_no_compartimento(c, valor, &a.text.style, k));
         kind.transform(&mat);
         if let EntityKind::Text(t) = kind
@@ -984,6 +1019,10 @@ fn trocar_insercao(doc: &mut Drawing, e: &Entity, modulo: &str, quantos: usize, 
         }
     }
     doc.model.remove(e.handle);
+    // Os eletrodutos gravados no ponto antigo passam ao primeiro módulo.
+    if let Some(novo) = primeiro {
+        crate::eletroduto::trocar_ponta(doc, e.handle, novo);
+    }
     Ok(())
 }
 
@@ -1008,13 +1047,14 @@ fn completar_familia(doc: &mut Drawing, nome: &str) {
 /// As geometrias de partida que o editor de blocos oferece: (código, nome).
 ///
 /// Só contornos: preencher um símbolo é com a Hachura nativa do CADCraft.
-pub const GEOMETRIAS: [(&str, &str); 6] = [
+pub const GEOMETRIAS: [(&str, &str); 7] = [
     ("tomada", "Triângulo de tomada"),
     ("comando", "Círculo de comando"),
     ("luminaria", "Ponto de luz no teto"),
     ("arandela", "Ponto de luz na parede"),
-    ("contorno4x2", "Contorno 4x2"),
-    ("contorno4x4", "Contorno 4x4"),
+    ("haste", "Haste / conector padrão"),
+    ("contorno4x2", "Caixa 4x2"),
+    ("contorno4x4", "Caixa 4x4"),
 ];
 
 const CHAVE_CONECTOR: &str = "connector";
@@ -1045,13 +1085,21 @@ pub fn inserir_geometria(doc: &mut Drawing, forma: &str, metros: f64) -> Result<
         "comando" => vec![Peca::Circulo(0.0, 0.135, 0.075)],
         "luminaria" => pecas_luz_teto(),
         "arandela" => pecas_arandela(),
-        "contorno4x2" => retangulo(-0.05, -0.05, 0.05, 0.0),
-        "contorno4x4" => retangulo(-0.05, -0.1, 0.05, 0.0),
+        // Em planta, a 4x4 entra na parede o mesmo que a 4x2 e tem o dobro da largura ao longo dela.
+        "contorno4x2" => retangulo(-LARGURA_4X2 / 2.0, -PROFUNDIDADE_CAIXA, LARGURA_4X2 / 2.0, 0.0),
+        "contorno4x4" => retangulo(-LARGURA_4X2, -PROFUNDIDADE_CAIXA, LARGURA_4X2, 0.0),
+        "haste" => vec![Peca::Linha(0.0, 0.0, 0.0, HASTE)],
         _ => return Err(format!("geometria \"{forma}\" desconhecida")),
     };
+    // A caixa e a haste levam o papel de base: somem quando um módulo desta família é empilhado.
+    let base = matches!(forma, "contorno4x2" | "contorno4x4" | "haste");
     let u = |v: f64| v / m;
     for p in &pecas {
-        doc.add(&Space::Model, Common::default(), entidade_da_peca(p, &u)).map_err(|e| e.to_string())?;
+        let mut c = Common::default();
+        if base {
+            crate::xdata::gravar(&mut c.xdata, CHAVE_PAPEL, Some(PAPEL_BASE));
+        }
+        doc.add(&Space::Model, c, entidade_da_peca(p, &u)).map_err(|e| e.to_string())?;
     }
     Ok(pecas.len())
 }
@@ -1265,16 +1313,36 @@ pub const SUFIXO_EMPILHADO: &str = "$EMP";
 /// Até esta distância (m) do ponto base, um ponto novo de parede é empilhado na caixa dele.
 pub const TOLERANCIA_EMPILHAR: f64 = 0.10;
 
+/// O papel de uma peça no desenho de uma família (XDATA): a caixa e a haste de um ponto de parede são
+/// [`PAPEL_BASE`], e somem no módulo empilhado.
+pub const CHAVE_PAPEL: &str = "ROLE";
+pub const PAPEL_BASE: &str = "BASE_BOX_CONNECTOR";
+
 /// O nome do bloco de origem de um módulo empilhado.
 pub fn bloco_de_origem(nome: &str) -> &str {
     nome.strip_suffix(SUFIXO_EMPILHADO).unwrap_or(nome)
+}
+
+/// A peça é a caixa ou a haste de um ponto de parede: marcada com [`PAPEL_BASE`] (qualquer família) ou com
+/// [`CHAVE_CAIXA_2D`] (os blocos de fábrica).
+pub fn e_peca_de_base(e: &Entity) -> bool {
+    crate::xdata::ler(&e.common.xdata)
+        .iter()
+        .any(|(k, v)| k == CHAVE_CAIXA_2D || (k.eq_ignore_ascii_case(CHAVE_PAPEL) && v.trim().eq_ignore_ascii_case(PAPEL_BASE)))
+}
+
+/// O ponto tem caixa de parede onde outros módulos se empilham: a família diz 4x2 ou 4x4, ou o desenho do
+/// bloco tem a caixa e a haste marcadas.
+fn tem_caixa_de_parede(doc: &Drawing, p: &crate::ponto::PontoEletrico) -> bool {
+    matches!(p.caixa, Some(familia::CaixaFisica::C4x2 | familia::CaixaFisica::C4x4))
+        || doc.blocks.get(bloco_de_origem(&p.bloco)).is_some_and(|b| b.entities.iter().any(|e| e_peca_de_base(e)))
 }
 
 /// A faixa vertical (y mínimo e máximo) do desenho do bloco, sem atributos; com `sem_caixa`, sem a caixa 4x2.
 fn faixa_vertical(b: &Block, sem_caixa: bool) -> Option<(f64, f64)> {
     let mut ys: Vec<f64> = Vec::new();
     for e in b.entities.iter() {
-        if sem_caixa && crate::xdata::ler(&e.common.xdata).iter().any(|(k, _)| k == CHAVE_CAIXA_2D) {
+        if sem_caixa && e_peca_de_base(e) {
             continue;
         }
         match &e.kind {
@@ -1292,20 +1360,17 @@ fn faixa_vertical(b: &Block, sem_caixa: bool) -> Option<(f64, f64)> {
     Some((min, max))
 }
 
-/// O bloco do módulo empilhado de `nome`: criado na primeira vez, com a família copiada. Num bloco sem as
-/// peças da caixa marcadas, o desenho fica inteiro.
+/// O bloco do módulo empilhado de `nome`, refeito a cada empilhamento (a família pode ter sido redesenhada),
+/// com a família copiada. Num bloco sem as peças da caixa marcadas, o desenho fica inteiro.
 fn bloco_empilhado(doc: &mut Drawing, nome: &str) -> Result<String, String> {
     let nome = bloco_de_origem(nome).to_string();
     let novo = format!("{nome}{SUFIXO_EMPILHADO}");
-    if doc.blocks.contains_key(&novo) {
-        return Ok(novo);
-    }
     let origem = doc.blocks.get(&nome).cloned().ok_or_else(|| format!("o desenho não tem o bloco \"{nome}\""))?;
     let (base, _) = faixa_vertical(&origem, true).unwrap_or((0.0, 0.0));
     let descer = cadcraft_doc::geom::Mat3::translate(Vec2::new(0.0, -base));
     let mut b = Block::new(&novo);
     for e in origem.entities.iter() {
-        if crate::xdata::ler(&e.common.xdata).iter().any(|(k, _)| k == CHAVE_CAIXA_2D) {
+        if e_peca_de_base(e) {
             continue;
         }
         let mut k = e.kind.clone();
@@ -1320,15 +1385,15 @@ fn bloco_empilhado(doc: &mut Drawing, nome: &str) -> Result<String, String> {
     Ok(novo)
 }
 
-/// O ponto base da caixa em que `h` cai: um ponto de parede com caixa 4x2, não empilhado, a até
-/// [`TOLERANCIA_EMPILHAR`].
-fn base_para(analise: &crate::Analise, h: Handle, metros: f64) -> Option<Handle> {
+/// O ponto base da caixa em que `h` cai: um ponto de parede com caixa (de fábrica ou de família própria), não
+/// empilhado, a até [`TOLERANCIA_EMPILHAR`].
+fn base_para(doc: &Drawing, analise: &crate::Analise, h: Handle, metros: f64) -> Option<Handle> {
     let p = analise.ponto(h)?;
     let tol = TOLERANCIA_EMPILHAR / metros;
     analise
         .pontos
         .iter()
-        .filter(|o| o.handle != h && o.host.is_none() && o.caixa == Some(familia::CaixaFisica::C4x2))
+        .filter(|o| o.handle != h && o.host.is_none() && tem_caixa_de_parede(doc, o))
         .map(|o| (o.handle, (o.posicao[0] - p.posicao[0]).hypot(o.posicao[1] - p.posicao[1])))
         .filter(|(_, d)| *d <= tol)
         .min_by(|a, b| a.1.total_cmp(&b.1))
@@ -1353,7 +1418,7 @@ pub fn empilhar(doc: &mut Drawing, h: Handle, base: Option<Handle>, metros: f64)
             }
             Some(o.host.unwrap_or(b))
         }
-        None if p.caixa == Some(familia::CaixaFisica::C4x2) => base_para(&analise, h, metros),
+        None if tem_caixa_de_parede(doc, &p) => base_para(doc, &analise, h, metros),
         None => None,
     };
     let Some(base) = base else { return Ok(None) };

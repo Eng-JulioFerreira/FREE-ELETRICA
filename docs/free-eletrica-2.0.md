@@ -314,3 +314,22 @@ Ajustes de interface e de prancha:
   dados do ponto; ponto alto (2,10 m).
 - **Textos que cabem:** cada texto do ponto de luz fica centralizado na sua divisão, com a altura que cabe (até 3 cm). Inserir,
   editar um atributo e `ELEREGEN` recolocam os textos.
+
+## Famílias próprias empilhadas, borda dos blocos e esquemas paralelos
+
+- **Empilhar qualquer família:** a caixa e a haste marcadas com `ROLE = BASE_BOX_CONNECTOR` somem no módulo empilhado, em
+  famílias de fábrica ou próprias. O editor de blocos insere **Caixa 4x2**, **Caixa 4x4** e **Haste / conector padrão** já
+  marcadas. O bloco empilhado é refeito a cada empilhamento, então redesenhar a família vale para os próximos módulos.
+- **Caixa 4x4 em planta:** a mesma profundidade da 4x2 e o dobro da largura.
+- **Busca no Inserir pontos:** **Pesquisar ponto...** filtra a lista pelo nome ou pela legenda, sem acentos; a lista mostra
+  potência e altura padrão. Uma busca que deixa um bloco só já o escolhe.
+- **Ponto de luz:** o circuito aparece só com o número (`1`); um `-1-` antigo volta ao número ao regenerar.
+- **`CX-OCT`:** caixa de passagem octogonal de teto, sem potência nem comando.
+- **Paralelos e intermediários:** `elecomando` aceita `interruptores: [...]`, e o interativo aceita clicar nos outros
+  interruptores do comando. Cada um grava `linked_switch_handles.<letra>` e `switch_role.<letra>` (`ParallelStart`,
+  `Intermediate`, `ParallelEnd`, ou `Simple` quando é um só); as luminárias gravam a lista. A fiação segue essa ordem: fase
+  até o primeiro, `a'` e `a"` entre eles, `a` do último às luminárias.
+- **Eletroduto na borda:** a linha, o arco ou a polilinha param no contorno do bloco (o círculo de um símbolo redondo, o
+  retângulo dos outros), na inserção, ao dividir, ao encaixar e no `ELEREGEN`. O vínculo segue no XDATA, o grafo aceita a ponta
+  a até o raio de captura além do contorno do bloco gravado, e o comprimento soma o pedaço até o centro de cada bloco. Um
+  bloco antigo trocado por módulos passa os eletrodutos gravados nele ao primeiro módulo.

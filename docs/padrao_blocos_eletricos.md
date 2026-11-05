@@ -53,7 +53,11 @@ Na primeira ferramenta usada num desenho, entram sem perguntar as camadas e os b
 
 Cada bloco é um módulo, com o seu `CIRCUITO` e o seu `COMANDO`. Tomada dupla ou interruptor de duas teclas são dois módulos
 empilhados: o segundo, inserido no mesmo ponto (a até 10 cm) ou com `eletrica.ponto.empilhar`, usa o bloco `<nome>$EMP`, sem
-a caixa 4x2 (as peças da caixa têm o XDATA `wall_box`), encosta no topo do último símbolo e grava `host_point_handle`.
+a caixa e a haste (as peças com o XDATA `ROLE` = `BASE_BOX_CONNECTOR`, ou `wall_box` nos blocos de fábrica), encosta no topo
+do último símbolo e grava `host_point_handle`. Vale para qualquer família, de fábrica ou própria: num bloco desenhado no editor,
+**Caixa 4x2**, **Caixa 4x4** e **Haste / conector padrão** já entram com esse papel, e basta clicar sobre o ponto de parede
+para empilhar o 2º, 3º, 4º módulo. Em planta, a caixa 4x4 entra na parede o mesmo que a 4x2 (4,75 cm) e tem o dobro da
+largura ao longo dela (14 cm contra 7 cm).
 Os blocos antigos de mais de um módulo (`TOM-DUP-*`, `INT-2S`, `INT-3S` e os de paralelo e intermediário de 2 e 3 seções)
 são trocados por módulos empilhados e apagados do desenho.
 
@@ -61,14 +65,15 @@ Os pontos de luz seguem a NBR 5444, com os textos centralizados dentro das divis
 
 | Bloco | Símbolo | Textos |
 | :--- | :--- | :--- |
-| `ILU-OCT` | Ponto de luz no teto: círculo de traço normal (raio 10 cm), diâmetro horizontal e o raio que divide a metade de baixo | `POTENCIA` em cima; `COMANDO` embaixo à esquerda; `CIRCUITO` embaixo à direita, entre traços (`-1-`) |
-| `ILU-PAR` | Arandela, ponto de luz na parede: o D com a face reta na parede e a divisória do meio da face até a borda | `COMANDO` de um lado e `CIRCUITO` (`-1-`) do outro; `POTENCIA` invisível, nos dados do ponto. Ponto alto, 2,10 m |
+| `ILU-OCT` | Ponto de luz no teto: círculo de traço normal (raio 10 cm), diâmetro horizontal e o raio que divide a metade de baixo | `POTENCIA` em cima; `COMANDO` embaixo à esquerda; `CIRCUITO` embaixo à direita, só o número (`1`) |
+| `ILU-PAR` | Arandela, ponto de luz na parede: o D com a face reta na parede e a divisória do meio da face até a borda | `COMANDO` de um lado e `CIRCUITO` (`1`) do outro; `POTENCIA` invisível, nos dados do ponto. Ponto alto, 2,10 m |
 
 A altura de cada texto é a que cabe na divisão (até 3 cm): um circuito `-12-` ou uma potência `1x150W` saem menores, sem
 vazar das linhas. O circuito lido é o que está entre os traços. A inserção, a edição dos atributos e `ELEREGEN` recolocam os
 textos; o `ILU-OCT` antigo (anel cheio com os textos fora) é trocado ao preparar o desenho, e as inserções vêm junto.
 
-Também entram `TOM-TUE`, `QDG`, `QDC`, `RJ45`, `RACK` e `CX-PASSAGEM`. Um bloco com o mesmo nome já no desenho
+Também entram `TOM-TUE`, `QDG`, `QDC`, `RJ45`, `RACK`, `CX-PASSAGEM` e `CX-OCT`, a caixa de passagem octogonal de teto,
+uma derivação sem potência nem comando. Um bloco com o mesmo nome já no desenho
 fica como está: é assim que se usa outro símbolo. Só o desenho padrão de uma versão anterior é trocado. Excluído na janela
 de blocos, um bloco de fábrica não volta sozinho; **Configurações > Geral** o traz de volta. Interruptores têm
 `TIPO_INTERRUPTOR` constante (`1S`, `2S`, `3S`, `PARALELO`, `PARALELO-2S`, `PARALELO-3S`, `INTERMEDIARIO`,

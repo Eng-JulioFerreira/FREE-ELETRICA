@@ -503,8 +503,11 @@ pub fn calcular(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle)
             }
         }
         let distancia = |p: &PontoEletrico| rede.no_de(p.handle).and_then(|n| arvore_q.distancia.get(n).copied()).unwrap_or(f64::INFINITY);
-        for lista in por_letra.values_mut() {
-            lista.sort_by(|a, b| distancia(a).total_cmp(&distancia(b)));
+        // Com os papéis gravados (ELECOMANDO com vários interruptores), a ordem é a do esquema: o primeiro paralelo,
+        // os intermediários e o último paralelo. Sem eles, do mais perto ao mais longe do quadro.
+        for (letra, lista) in por_letra.iter_mut() {
+            let ordem = |p: &PontoEletrico| crate::editar::papel_do_interruptor(p, letra).map_or(0, |r| r.ordem());
+            lista.sort_by(|a, b| ordem(a).cmp(&ordem(b)).then(distancia(a).total_cmp(&distancia(b))));
         }
         // Só o primeiro interruptor de um comando recebe a fase; um interruptor sem letra também.
         let recebe_fase = |s: &PontoEletrico| {
@@ -1003,6 +1006,7 @@ pub fn regenerar(doc: &mut Drawing, setup: &Setup, criar: Option<&[Handle]>) -> 
     // Um bloco movido para o caminho de um eletroduto entra na rede antes de calcular.
     crate::eletroduto::encaixar(doc, setup, m, crate::eletroduto::TOLERANCIA_EM_LINHA, None, None)?;
     crate::eletroduto::padronizar(doc, setup);
+    crate::eletroduto::aparar(doc, setup, m, None);
     crate::biblioteca::encaixar_textos_de_luz(doc, None);
     let analise = crate::analisar(doc);
     let (trechos, soltos, avisos) = todos_os_trechos(doc, &analise, setup);

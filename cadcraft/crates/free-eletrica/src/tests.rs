@@ -2817,13 +2817,13 @@ fn pontos_de_luz_da_nbr5444_com_os_textos_dentro_das_divisoes() {
     let dentro = |(x0, x1, y0, y1): (f64, f64, f64, f64)| [(x0, y0), (x0, y1), (x1, y0), (x1, y1)].iter().all(|(x, y)| x * x + y * y <= r * r);
     let de = |v: &[(String, Text)], t: &str| v.iter().find(|(k, _)| k == t).unwrap().1.clone();
 
-    // No teto: a potência em cima, o comando embaixo à esquerda e o circuito (-1-) embaixo à direita.
+    // No teto: a potência em cima, o comando embaixo à esquerda e o circuito (só o número) embaixo à direita.
     let valores =
         |p: &str, c: &str, k: &str| vec![("POTENCIA".to_string(), p.to_string()), ("COMANDO".into(), c.into()), ("CIRCUITO".into(), k.into())];
     let h = biblioteca::inserir_ponto(&mut d, "ILU-OCT", [5.0, 5.0], 0.0, &valores("100VA", "a", "1"), &setup).unwrap();
     let v = textos_da_insercao(&d, h);
-    assert_eq!((de(&v, "POTENCIA").value.as_str(), de(&v, "COMANDO").value.as_str(), de(&v, "CIRCUITO").value.as_str()), ("100VA", "a", "-1-"));
-    assert_eq!(ponto::ler_ponto(&d, h).unwrap().circuito.as_deref(), Some("1"), "o circuito é o que está entre os traços");
+    assert_eq!((de(&v, "POTENCIA").value.as_str(), de(&v, "COMANDO").value.as_str(), de(&v, "CIRCUITO").value.as_str()), ("100VA", "a", "1"));
+    assert_eq!(ponto::ler_ponto(&d, h).unwrap().circuito.as_deref(), Some("1"));
     for t in ["POTENCIA", "COMANDO", "CIRCUITO"] {
         assert!(de(&v, t).halign == HAlign::Center && de(&v, t).valign == VAlign::Middle, "{t}");
     }
@@ -2833,17 +2833,18 @@ fn pontos_de_luz_da_nbr5444_com_os_textos_dentro_das_divisoes() {
     assert!(com.1 < 0.0 && com.3 < 0.0 && dentro(com), "{com:?}");
     let cir = caixa_do_texto(&de(&v, "CIRCUITO"), [5.0, 5.0]);
     assert!(cir.0 > 0.0 && cir.3 < 0.0 && dentro(cir), "{cir:?}");
-    // Um circuito de dois dígitos e uma potência longa diminuem o texto, sem vazar da divisão.
+    // Um circuito de três dígitos e uma potência longa diminuem o texto, sem vazar da divisão. Um circuito
+    // gravado entre traços por versões anteriores volta só com o número.
     let qd = quadro_qualquer(&mut d);
-    editar::atribuir_circuito(&mut d, h, qd, "12").unwrap();
+    editar::atribuir_circuito(&mut d, h, qd, "-123-").unwrap();
     editar::definir(&mut d, h, &["POTENCIA"], Some("1x150W")).unwrap();
     let v2 = textos_da_insercao(&d, h);
-    assert_eq!(de(&v2, "CIRCUITO").value, "-12-");
+    assert_eq!(de(&v2, "CIRCUITO").value, "123");
     assert!(de(&v2, "CIRCUITO").height < de(&v, "CIRCUITO").height);
     let cir = caixa_do_texto(&de(&v2, "CIRCUITO"), [5.0, 5.0]);
     assert!(cir.0 > 0.0 && dentro(cir), "{cir:?}");
     assert!(dentro(caixa_do_texto(&de(&v2, "POTENCIA"), [5.0, 5.0])));
-    assert_eq!(ponto::ler_ponto(&d, h).unwrap().circuito.as_deref(), Some("12"));
+    assert_eq!(ponto::ler_ponto(&d, h).unwrap().circuito.as_deref(), Some("123"));
 
     // Na parede: o comando de um lado da divisória e o circuito do outro; a potência fica nos dados do ponto.
     let a = biblioteca::inserir_ponto(&mut d, "ILU-PAR", [0.0, 0.0], 0.0, &valores("60VA", "b", "2"), &setup).unwrap();
@@ -2856,6 +2857,109 @@ fn pontos_de_luz_da_nbr5444_com_os_textos_dentro_das_divisoes() {
     assert!(i.attribs.iter().find(|x| x.tag == "POTENCIA").unwrap().invisible);
     assert_eq!(ponto::ler_ponto(&d, a).unwrap().potencia, Some(60.0));
     assert!(perto(rota::altura(&ponto::ler_ponto(&d, a).unwrap(), &setup), 2.10, 1e-9), "arandela no ponto alto");
+}
+
+#[test]
+fn eletroduto_para_na_borda_dos_blocos() {
+    let setup = Setup::default();
+    let mut d = metros();
+    biblioteca::garantir_base(&mut d, &setup, 1.0);
+    let q = biblioteca::inserir_ponto(&mut d, "QDG", [0.0, 0.0], 0.0, &[], &setup).unwrap();
+    let luz = biblioteca::inserir_ponto(&mut d, "ILU-OCT", [4.0, 0.0], 0.0, &[], &setup).unwrap();
+    let cx = biblioteca::inserir_ponto(&mut d, "CX-OCT", [4.0, 3.0], 0.0, &[], &setup).unwrap();
+    // Reto: começa na face do quadro (10 cm do centro) e termina no círculo da luminária (raio 10 cm).
+    let reto = eletroduto::inserir(&mut d, q, luz, rota::Instalacao::Teto, 0.0).unwrap();
+    let EntityKind::Line(l) = &d.model.get(reto).unwrap().kind else { panic!("linha") };
+    assert!(perto(l.a.x, 0.1, 1e-6) && perto(l.b.x, 3.9, 1e-6) && l.a.y == 0.0, "{l:?}");
+    // Em arco: continua arco, do círculo da luminária ao contorno da caixa octogonal.
+    let arco = eletroduto::inserir(&mut d, luz, cx, rota::Instalacao::Teto, 0.15).unwrap();
+    let EntityKind::Arc(a) = &d.model.get(arco).unwrap().kind else { panic!("arco") };
+    let em = |ang: f64| [a.center.x + a.radius * ang.cos(), a.center.y + a.radius * ang.sin()];
+    // O ARC anda no sentido anti-horário: a ponta da luminária pode ser a do fim.
+    let (p, q) = (em(a.start), em(a.end));
+    let (na_luz, na_caixa) = if p[1] < q[1] { (p, q) } else { (q, p) };
+    assert!(perto((na_luz[0] - 4.0).hypot(na_luz[1]), biblioteca::RAIO_LUZ, 1e-6), "{na_luz:?}");
+    let c = borda::contorno(&d, cx).unwrap();
+    assert!(c.dentro(na_caixa, 1e-6) && !c.dentro(na_caixa, -1e-6), "{na_caixa:?}");
+    // O grafo liga os dois, e o comprimento é de centro a centro.
+    let rede = rede_de(&d);
+    assert!(rede.soltos.is_empty() && rede.arestas.len() == 2, "{:?}", rede.soltos);
+    let aresta = rede.arestas.iter().find(|x| x.eletroduto == reto).unwrap();
+    assert!(perto(aresta.comprimento_2d, 4.0, 1e-6), "{}", aresta.comprimento_2d);
+    // Cortar de novo não muda nada; um eletroduto antigo, de centro a centro, é cortado ao regenerar.
+    assert_eq!(eletroduto::aparar(&mut d, &setup, 1.0, None), 0);
+    let mut e = (**d.model.get(reto).unwrap()).clone();
+    e.kind = EntityKind::Line(Line { a: Vec3::new(0.0, 0.0, 0.0), b: Vec3::new(4.0, 0.0, 0.0) });
+    d.model.replace(e);
+    fiacao::regenerar(&mut d, &setup, None).unwrap();
+    let EntityKind::Line(l) = &d.model.get(reto).unwrap().kind else { panic!("linha") };
+    assert!(perto(l.a.x, 0.1, 1e-6) && perto(l.b.x, 3.9, 1e-6), "{l:?}");
+}
+
+#[test]
+fn familia_propria_com_caixa_e_haste_marcadas_empilha() {
+    let setup = Setup::default();
+    let mut d = metros();
+    biblioteca::garantir_base(&mut d, &setup, 1.0);
+    // O desenho como o editor de blocos faz: a caixa 4x4, a haste e o triângulo da tomada.
+    let mut rascunho = metros();
+    for forma in ["contorno4x4", "haste", "tomada"] {
+        biblioteca::inserir_geometria(&mut rascunho, forma, 1.0).unwrap();
+    }
+    let base: Vec<Entity> = rascunho.model.iter().map(|e| (**e).clone()).collect();
+    assert_eq!(base.iter().filter(|e| biblioteca::e_peca_de_base(e)).count(), 5, "a caixa e a haste levam o papel de base");
+    // Em planta, a 4x4 entra na parede o mesmo que a 4x2 e tem o dobro da largura.
+    let faixa = |forma: &str| {
+        let mut r = metros();
+        biblioteca::inserir_geometria(&mut r, forma, 1.0).unwrap();
+        let pts: Vec<Vec3> =
+            r.model.iter().filter_map(|e| if let EntityKind::Line(l) = &e.kind { Some([l.a, l.b]) } else { None }).flatten().collect();
+        let x = pts.iter().map(|p| p.x).fold(f64::MIN, f64::max) - pts.iter().map(|p| p.x).fold(f64::MAX, f64::min);
+        let y = pts.iter().map(|p| p.y).fold(f64::MIN, f64::max) - pts.iter().map(|p| p.y).fold(f64::MAX, f64::min);
+        (x, y)
+    };
+    let (l2, p2) = faixa("contorno4x2");
+    let (l4, p4) = faixa("contorno4x4");
+    assert!(perto(l4, 2.0 * l2, 1e-9) && perto(p4, p2, 1e-9), "{l2} {p2} {l4} {p4}");
+    // A família própria sem caixa física escolhida: o desenho marcado basta para empilhar.
+    let mut b = Block::new("MINHA-TOMADA");
+    for e in base {
+        b.entities.push(e);
+    }
+    d.blocks.insert("MINHA-TOMADA".into(), Arc::new(b));
+    let mut f = familia::Familia::da_categoria(familia::FamilyCategory::PontoForca);
+    f.caixa = familia::CaixaFisica::Nenhuma;
+    familia::gravar(&mut d, "MINHA-TOMADA", Some(&f)).unwrap();
+    let um = biblioteca::inserir_ponto(&mut d, "MINHA-TOMADA", [1.0, 1.0], 0.0, &[], &setup).unwrap();
+    let dois = biblioteca::inserir_ponto(&mut d, "MINHA-TOMADA", [1.02, 1.0], 0.0, &[], &setup).unwrap();
+    let tres = biblioteca::inserir_ponto(&mut d, "MINHA-TOMADA", [0.98, 1.0], 0.0, &[], &setup).unwrap();
+    assert_eq!(biblioteca::empilhar(&mut d, dois, None, 1.0).unwrap(), Some(um));
+    assert_eq!(biblioteca::empilhar(&mut d, tres, None, 1.0).unwrap(), Some(um));
+    // O módulo empilhado sai sem a caixa e a haste, e cada um encosta no topo do anterior.
+    let variante = &d.blocks["MINHA-TOMADA$EMP"];
+    assert!(!variante.entities.iter().any(|e| biblioteca::e_peca_de_base(e)));
+    assert_eq!(variante.entities.iter().filter(|e| matches!(e.kind, EntityKind::Line(_))).count(), 3);
+    let y = |h: Handle| if let EntityKind::Insert(i) = &d.model.get(h).unwrap().kind { (i.insert.x, i.insert.y) } else { panic!() };
+    assert!(perto(y(dois).0, 1.0, 1e-9) && perto(y(dois).1, 1.205, 1e-9), "{:?}", y(dois));
+    assert!(perto(y(tres).1, 1.205 + (0.205 - 0.0595), 1e-9), "{:?}", y(tres));
+}
+
+#[test]
+fn caixa_octogonal_de_teto_sem_potencia() {
+    let setup = Setup::default();
+    let mut d = metros();
+    biblioteca::garantir_base(&mut d, &setup, 1.0);
+    let bloco = biblioteca::blocos(&d).into_iter().find(|b| b.nome == "CX-OCT").unwrap();
+    assert_eq!(bloco.tipo, TipoPonto::Caixa);
+    assert!(!bloco.atributos.iter().any(|a| a.tag == "POTENCIA" || a.tag == "COMANDO" || a.tag == "CIRCUITO"));
+    let f = bloco.familia.unwrap();
+    assert_eq!((f.categoria, f.caixa, f.potencia), (familia::FamilyCategory::Caixa, familia::CaixaFisica::Octogonal, None));
+    assert!(f.legenda.contains("octogonal"));
+    let h = biblioteca::inserir_ponto(&mut d, "CX-OCT", [2.0, 2.0], 0.0, &[], &setup).unwrap();
+    let p = ponto::ler_ponto(&d, h).unwrap();
+    assert_eq!(p.potencia.unwrap_or(0.0), 0.0);
+    assert!(perto(rota::altura(&p, &setup), setup.pe_direito, 1e-9), "no teto");
+    assert_eq!(d.blocks["CX-OCT"].entities.iter().filter(|e| matches!(e.kind, EntityKind::Line(_))).count(), 8);
 }
 
 /// O primeiro quadro do desenho, inserido se não houver.
@@ -2895,7 +2999,7 @@ fn ponto_de_luz_antigo_vira_o_da_nbr5444_ao_preparar() {
     assert!(d.blocks["ILU-OCT"].entities.iter().any(|e| matches!(e.kind, EntityKind::Circle(_))));
     assert!(!d.blocks["ILU-OCT"].entities.iter().any(|e| matches!(e.kind, EntityKind::Hatch(_))));
     let c = de_insercao(&d, h, "CIRCUITO");
-    assert_eq!((c.value.as_str(), c.halign), ("-4-", HAlign::Center));
+    assert_eq!((c.value.as_str(), c.halign), ("4", HAlign::Center));
     assert!(!biblioteca::falta_base(&d));
     // ELEREGEN também encaixa: um texto movido à mão volta para a divisão.
     let mut e = (**d.model.get(h).unwrap()).clone();

@@ -163,7 +163,60 @@ pub fn inserir_percurso(
     xdata::gravar(&mut xdata_novo, rota::CHAVE_TIPO, Some(tipo.codigo()));
     let mut common = Common { layer: camada(instalacao).into(), xdata: xdata_novo, ..Common::default() };
     pintar(doc, &mut common, tipo.cor_padrao(), TipoLinha::do_caminhamento(instalacao));
-    doc.add(&Space::Model, common, percurso.entidade(a, b)).map_err(|e| e.to_string())
+    // O traçado vai de centro a centro e para na borda de cada bloco.
+    let mut kind = percurso.entidade(a, b);
+    if let Some(k) = crate::borda::aparado(&kind, crate::borda::contorno(doc, de).as_ref(), crate::borda::contorno(doc, para).as_ref()) {
+        kind = k;
+    }
+    doc.add(&Space::Model, common, kind).map_err(|e| e.to_string())
+}
+
+/// Os eletrodutos gravados no bloco `antigo` passam a apontar para `novo`. Devolve quantos mudaram.
+pub fn trocar_ponta(doc: &mut Drawing, antigo: Handle, novo: Handle) -> usize {
+    let alvos: Vec<Entity> = doc
+        .model
+        .iter()
+        .filter(|e| xdata::ler(&e.common.xdata).iter().any(|(k, v)| e_ponta_gravada(k) && Handle::parse_hex(v) == Some(antigo)))
+        .map(|e| (**e).clone())
+        .collect();
+    let n = alvos.len();
+    for mut e in alvos {
+        for chave in [rota::CHAVE_DE, rota::CHAVE_PARA] {
+            let atual = xdata::ler(&e.common.xdata).into_iter().find(|(k, _)| k.eq_ignore_ascii_case(chave)).and_then(|(_, v)| Handle::parse_hex(&v));
+            if atual == Some(antigo) {
+                xdata::gravar(&mut e.common.xdata, chave, Some(&novo.hex()));
+            }
+        }
+        doc.model.replace(e);
+    }
+    n
+}
+
+fn e_ponta_gravada(k: &str) -> bool {
+    k.eq_ignore_ascii_case(rota::CHAVE_DE) || k.eq_ignore_ascii_case(rota::CHAVE_PARA)
+}
+
+/// Corta as pontas dos eletrodutos na borda dos blocos que eles ligam (`alvos`: só esses). Devolve quantos
+/// mudaram.
+pub fn aparar(doc: &mut Drawing, setup: &Setup, metros: f64, alvos: Option<&[Handle]>) -> usize {
+    let analise = crate::analisar(doc);
+    let rede = rota::Rede::montar(doc, setup, &analise.pontos, metros);
+    let mut n = 0;
+    for aresta in &rede.arestas {
+        if alvos.is_some_and(|l| !l.contains(&aresta.eletroduto)) {
+            continue;
+        }
+        let (Some(de), Some(para)) = (rede.nos.get(aresta.de), rede.nos.get(aresta.para)) else { continue };
+        let Some(mut e) = doc.model.get(aresta.eletroduto).map(|e| (**e).clone()) else { continue };
+        let (cd, cp) = (crate::borda::contorno(doc, de.handle), crate::borda::contorno(doc, para.handle));
+        // A ponta do começo do traçado é a de `de` (o grafo lê as pontas nessa ordem).
+        if let Some(k) = crate::borda::aparado(&e.kind, cd.as_ref(), cp.as_ref()) {
+            e.kind = k;
+            doc.model.replace(e);
+            n += 1;
+        }
+    }
+    n
 }
 
 /// Garante o tipo de linha no desenho, com a definição da biblioteca padrão.
@@ -508,7 +561,8 @@ pub fn dividir(doc: &mut Drawing, setup: &Setup, h: Handle, q: P, metros: f64) -
     biblioteca::garantir_base(doc, setup, metros);
     let valores = vec![("ALTURA".to_string(), crate::ponto::br(z))];
     let caixa = biblioteca::inserir_ponto(doc, biblioteca::BLOCO_CAIXA, p, 0.0, &valores, setup)?;
-    partir(doc, &original, &t, i, p, caixa, pontas, instalacao)?;
+    let novo = partir(doc, &original, &t, i, p, caixa, pontas, instalacao)?;
+    aparar(doc, setup, metros, Some(&[h, novo]));
     Ok(caixa)
 }
 
@@ -615,6 +669,10 @@ pub fn encaixar(
             l.push(novo);
         }
         n += 1;
+    }
+    // As partes chegam ao centro do bloco do corte: param na borda dele.
+    if n > 0 {
+        aparar(doc, setup, metros, None);
     }
     Ok(n)
 }
