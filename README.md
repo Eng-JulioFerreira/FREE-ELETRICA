@@ -1,105 +1,72 @@
 # Free Elétrica
 
-Projeto elétrico predial de baixa tensão (NBR 5410) e telecom dentro do
-[CADCraft](https://github.com/storytold/cadcraft), no estilo do OFE Elétrico, do PRO-Elétrica e
-do Lumine. Aparece como a paleta **Elétrica**, acoplada à interface do CADCraft.
+Projeto elétrico predial de baixa tensão direto no CAD: pontos, circuitos, eletrodutos, dimensionamento pela
+ABNT NBR 5410, quadro de cargas, tags de fiação e lista de materiais. Software livre, em português.
 
-> **Aviso:** os resultados são de apoio e não substituem a responsabilidade técnica de um
-> profissional habilitado. Leia o [AVISO_LEGAL.md](AVISO_LEGAL.md).
+## Baixar para Windows
 
-## Visão: de fork a plugin
+**[Baixar a versão mais recente](https://github.com/Eng-JulioFerreira/Free-Eletrica/releases/latest)**
 
-Hoje o Free Elétrica é um **fork** do CADCraft: uma cópia dele em `cadcraft/` com algumas linhas de
-registro, porque o CADCraft ainda não tem como receber extensões. **A meta é virar um plugin**:
-um projeto separado que só traz o próprio código e usa o CADCraft original sem modificá-lo.
+1. Baixe o arquivo `.zip` da página acima.
+2. Extraia em qualquer pasta.
+3. Clique duas vezes em `FreeEletrica.exe`.
 
-Isso depende de o CADCraft ganhar uma **API de extensão** (registrar comandos extras no motor e
-painéis e janelas extras na interface, carregados quando o programa inicia), proposta em
-[storytold/cadcraft#1544](https://github.com/storytold/cadcraft/issues/1544). O código do Free
-Elétrica já está organizado para essa mudança: o motor fica numa biblioteca própria, os comandos e a
-paleta ficam em arquivos próprios, e as poucas linhas nos arquivos do CADCraft estão listadas em
-[docs/arquitetura.md](docs/arquitetura.md). Elas são exatamente o que a API de extensão precisaria
-oferecer.
+Não precisa instalar nada: nem Rust, nem compilador, nem scripts. Funciona no Windows 10 e 11, 64 bits. Na
+primeira vez, o Windows pode avisar que o aplicativo é desconhecido: clique em **Mais informações** e
+**Executar assim mesmo**. Veja o [guia de instalação](docs/INSTALL.md).
 
-**Fork no GitHub:** [Eng-JulioFerreira/cadcraft-free-eletrica](https://github.com/Eng-JulioFerreira/cadcraft-free-eletrica)
-é um fork de verdade do CADCraft (aparece na rede de forks do projeto original) com o Free
-Elétrica dentro. Ele traz só a pasta `cadcraft/` deste repositório, publicada por
-`scripts\publicar_fork.bat`; o desenvolvimento, os templates, os scripts e a documentação ficam
-aqui.
+## O que ele faz
 
-## O que faz
+- **Dimensionamento pela NBR 5410:** corrente de projeto, FCT, FCA real por trecho, capacidade de condução,
+  queda de tensão em 3D, seção e disjuntor, com travas para o que você escolher à mão.
+- **Eletrodutos que seguem a obra:** retos, ortogonais ou em arco, com desvios e cotas de teto, piso e parede.
+  Cruzamento sem caixa não conecta, como na instalação real.
+- **Cabo e eletroduto por tipo:** PVC, HEPR/XLPE e LSZH por circuito; corrugado, rígido, PEAD e galvanizado por trecho,
+  com a ocupação de cada um.
+- **Blocos como famílias:** categoria, altura padrão, caixa e potência no próprio bloco. A altura fora da legenda
+  aparece sozinha na planta, como `h=1,45m`.
+- **Documentação que não se desfaz:** tags de fiação que guardam a posição que você deu, tabela do quadro no desenho e lista
+  de materiais.
+- **Tudo dentro do DXF:** circuitos, famílias e resultados viajam com o arquivo.
+- **Demanda da concessionária:** tabelas da Equatorial.
+- **Pronto para automação:** todo o motor responde por comandos JSON, sem interface.
 
-A paleta **Elétrica** segue o fluxo de trabalho. Nada fica aberto sem ser pedido: enquanto um comando
-espera cliques, uma mini-barra sobre o desenho muda o que ele usa; os dados ficam em janelas
-independentes, que fecham no X ou com Esc.
+Os símbolos dos blocos base seguem as formas usuais da NBR 5444, com medidas proporcionais do projeto.
 
-| Ferramenta | Comando | O quê |
+## O fluxo de um projeto
+
+| Etapa | Ferramenta | O que você faz |
 | :--- | :--- | :--- |
-| 1. Blocos e famílias | `ELEBLOCOS` | Lista os blocos elétricos e tem **+ Criar novo bloco elétrico**. No editor de blocos, a paleta vira as Propriedades da Família: domínio, categoria, altura padrão, caixa física, potência, FP e teclas, mais geometria base, ponto de conexão e atributos prontos. |
-| 1. Inspetor de atributos | `ELEATRIBUTOS` | Selecione um bloco e mude valor, visibilidade e posição de cada atributo. |
-| 1. Inserir pontos | `ELEPONTOS` | A mini-barra tem categoria, bloco, potência, altura e quadro pai; cada clique no desenho insere um ponto. Ele alinha à parede mais próxima, e Tab gira. Altura diferente da legenda aparece na planta como `h=1,45m`. |
-| 1. Lista de pontos | | Pontos por categoria: altura, selecionar, excluir. |
-| 2. Criar circuito | `ELECIRCUITO` | Quadro, número e pontos; a barra edita descrição, esquema (F+N, F+N+T, 2F+T, 3F+N+T) e tensão. O atributo CIRCUITO muda na hora. |
-| 2. Comandos e luminárias | `ELECOMANDO` | Interruptor e luminárias. A letra é a próxima livre, respeitando as teclas do interruptor, ou a que você digitar. |
-| 3. Quadro de cargas | `ELECARGAS` (ou `ELEROTEAR`) | Janela em duas abas. O **resumo** tem pontos, potência, Ib, fases R, S, T, grupo DR e o cabo e disjuntor do último cálculo. A **ficha de engenharia** tem tipo de cabo, FCT, FCA, I'b, Iz, queda e as travas de seção e disjuntor (vermelho se viola a NBR 5410). Clicar no circuito o destaca no desenho. |
-| 3. Dimensionar projeto | `ELEDIMENSIONAR` | Premissas (PE compartilhado, temperatura, FCA) e **Processar cálculo**. Só aqui o quadro, as tags e as tabelas recebem o resultado. |
-| 4. Inserir eletroduto | `ELEELETRODUTO` | Clique nos blocos em sequência; a mini-barra escolhe traçado (reto, ortogonal ou arco), cota e tipo. Um clique no vazio vira um desvio do trajeto, e no meio de um eletroduto divide o trecho com uma caixa de passagem. |
-| 4. Lista de eletrodutos | | Trechos com tipo, cota, diâmetro e ocupação. |
-| 5. Tags de fiação | `ELEFIACAO` | Simbologia, circuito, seção e diâmetro em cada eletroduto. A posição que você der à tag fica guardada, e ela acompanha as mudanças do projeto. |
-| 5. Tabela do quadro | `ELEQUADRO_TABELA` | Desenha o quadro de cargas num ponto da planta e o refaz no mesmo lugar. |
-| 5. Atualizar | `ELEREGEN` | Refaz tags e tabelas sem mudar as posições. |
-| 5. Lista de materiais | `ELEMATERIAIS` | Cabos por seção e tipo, eletrodutos por tipo e diâmetro, caixas, pontos e disjuntores. |
-| Inspecionar projeto | `ELEINSPECAO`, `ELECONFERIR` | Halos no desenho: vermelho falta circuito ou comando, laranja sem caminho até o quadro, amarelo acima do limite, verde válido. |
-| Configurações | `ELECONFIG` | Critérios elétricos (sistema, temperatura, isolação, quedas de iluminação, força e alimentador, folga de cabos), alturas padrão do projeto, cores, diâmetros, eletrodutos, telecom e demanda da concessionária. |
+| 1. Setup | Configurações | Sistema, temperatura, cabo padrão, limites de queda e alturas. Camadas e blocos entram sozinhos. |
+| 2. Blocos e pontos | Blocos e famílias, Inserir pontos | Crie seus símbolos ou use os prontos. Na mini-barra, escolha bloco, potência e altura, e clique na planta. |
+| 3. Circuitos e comandos | Criar circuito, Comandos e luminárias | Agrupe os pontos e ligue interruptores às luminárias. A inspeção visual aponta o que falta. |
+| 4. Eletrodutos | Inserir eletroduto | Ligue os blocos em traçado reto, ortogonal ou em arco. Clique no meio de um trecho para pôr uma caixa. |
+| 5. Dimensionamento | Dimensionar projeto | Ajuste as premissas, como PE compartilhado e FCA, e processe o cálculo. |
+| 6. Quadro e tags | Quadro de cargas, Tags de fiação, Lista de materiais | Confira o resumo e a ficha de cada circuito e documente na planta. |
 
-Os eletrodutos formam um **grafo estrito**: cada um liga exatamente dois blocos elétricos. Cruzamentos
-e derivações sem caixa não conectam. Veja `docs/free-eletrica-2.0.md`.
+O passo a passo completo está em [Primeiros passos](docs/GETTING_STARTED.md).
 
-Tudo também responde em JSON pelo canal de controle e pelo `cadcraft-cli`: `eletrica.analisar`,
-`eletrica.rotear`, `eletrica.sobrescrever`, `eletrica.circuito.*`, `eletrica.quadro`,
-`eletrica.eletroduto.*`, `eletrica.eletrodutos`, `eletrica.materiais`, `eletrica.dimensionar`,
-`eletrica.quadro.equilibrar`, `eletrica.inspecionar`, `eletrica.bootstrap`,
-`eletrica.demanda.tabelas`, `eletrica.blocos`, `eletrica.ponto.modelo`, `eletrica.ponto.altura`,
-`eletrica.ponto.excluir`, `eletrica.familia.*`, `elefamilia_conector`,
-`eletrica.setup`, `eleponto`, `elecircuito`, `eleremoverponto`, `elecomando`, `eleeletroduto`,
-`elefiacao`, `eleregen`, `elequadro_tabela`.
+## Responsabilidade técnica
 
-## Começar
+O Free Elétrica apoia o projeto, e os resultados precisam da conferência de um profissional habilitado. Diâmetros de
+cabos e eletrodutos são valores típicos de catálogo, e as sugestões de DR e DPS devem ser conferidas. Veja o
+[aviso legal](AVISO_LEGAL.md).
 
-1. `scripts\compilar.bat` compila (`release` para a versão otimizada).
-2. `scripts\iniciar.bat` abre o CADCraft com a paleta Elétrica.
-3. Abra ou crie um desenho e use as ferramentas: as camadas e os blocos entram na primeira vez.
-   O template `templates\FREE_ELETRICA_BLOCOS.dxf` é opcional.
+## Para desenvolvedores
 
-Para só usar, sem compilar, veja [docs/INSTALL.md](docs/INSTALL.md) e
-[docs/GETTING_STARTED.md](docs/GETTING_STARTED.md). O pacote `.zip` é gerado com `cargo xtask dist`.
-
-Pré-requisitos (uma vez): Rust e MinGW em `C:\rust`, como descrito em `CLAUDE.md`.
-
-## Estrutura
-
-```
-CLAUDE.md     regras do projeto (test-driven, motor desacoplado, tudo é comando)
-cadcraft/     o CADCraft com o Free Elétrica (crates/free-eletrica, cmd/eletrica.rs, ui-egui/eletrica.rs)
-docs/         padrão de blocos, arquitetura do fork e o registro da versão 2.0
-templates/    template de blocos e camadas
-scripts/      compilar, iniciar, testar, gerar o template
-```
-
-## Desenvolvimento
-
-Test-driven: `scripts\testar.bat` precisa passar antes de todo commit. Veja `CLAUDE.md` e
-`docs/arquitetura.md`.
+- [Documentação técnica](docs/SPECIFICATION.md): arquitetura, dados no DXF e comandos.
+- [Padrão de blocos](docs/padrao_blocos_eletricos.md) e [regras do projeto](CLAUDE.md).
+- O CADCraft fica em [`cadcraft/`](cadcraft/), e o código do Free Elétrica em `cadcraft/crates/free-eletrica`,
+  `cadcraft/crates/engine/src/cmd/eletrica.rs` e `cadcraft/crates/ui-egui/src/eletrica.rs`.
+- Para gerar o pacote: `scripts\package_release.ps1`.
 
 ## Licença
 
-- **Free Elétrica** (o código próprio: `cadcraft/crates/free-eletrica/`, os arquivos `eletrica*.rs` nos crates
-  do CADCraft, `docs/`, `templates/`, `scripts/`): **GNU General Public License v3**
-  (`GPL-3.0-only`, texto em [LICENSE](LICENSE)). Os arquivos de código levam o cabeçalho
-  `SPDX-License-Identifier: GPL-3.0-only`.
-- **Isenção de garantia e de responsabilidade:** [AVISO_LEGAL.md](AVISO_LEGAL.md), que complementa
-  as seções 15 e 16 da GPL.
-- **CADCraft** (o resto de `cadcraft/`): continua sob as licenças dele, MIT OR Apache-2.0
-  (`cadcraft/LICENSE-MIT`, `cadcraft/LICENSE-APACHE`, `cadcraft/NOTICE`), que precisam acompanhar
-  o repositório. Ambas são compatíveis com a GPL v3; o programa compilado como um todo é
-  distribuído sob a GPL v3.
+O código do Free Elétrica é [GPL-3.0](LICENSE). O CADCraft segue MIT OR Apache-2.0, em [`cadcraft/`](cadcraft/).
+
+---
+
+**Nota técnica:** hoje o Free Elétrica funciona como um fork integrado ao CADCraft, porque o CADCraft ainda não tem um
+sistema de plugins. O código elétrico fica em arquivos próprios, ligados por poucas linhas de registro. Ele aguarda a API
+oficial de plugins proposta em [storytold/cadcraft#1544](https://github.com/storytold/cadcraft/issues/1544). Baseado no
+[CADCraft](https://github.com/storytold/cadcraft) da equipe ArtCraft; não é um produto ArtCraft.

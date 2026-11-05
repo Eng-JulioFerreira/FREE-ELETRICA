@@ -10,9 +10,9 @@ CADCraft. O pacote não tem instalador e não precisa de Rust.
 
 ## Instalação
 
-1. Baixe o arquivo `FreeEletrica-<versão>-windows-x64.zip`.
+1. Baixe o arquivo `FreeEletrica-v<versão>-win64.zip` na [página de versões](https://github.com/Eng-JulioFerreira/Free-Eletrica/releases/latest).
 2. Extraia para uma pasta sua, como `Documentos\FreeEletrica`.
-3. Abra `cadcraft.exe`. Na primeira vez, o Windows pode mostrar um aviso de aplicativo desconhecido,
+3. Clique duas vezes em `FreeEletrica.exe`. Na primeira vez, o Windows pode mostrar um aviso de aplicativo desconhecido,
    porque o executável não é assinado: clique em **Mais informações** e **Executar assim mesmo**.
 
 A paleta **Elétrica** abre sozinha. Se tiver sido fechada, digite `ELETRICA` na linha de comando ou
@@ -22,9 +22,10 @@ use o menu **Janela**.
 
 | Item | O quê |
 | :--- | :--- |
-| `cadcraft.exe` | O programa |
+| `FreeEletrica.exe` | O programa |
 | `templates/FREE_ELETRICA_BLOCOS.dxf` | Template opcional de blocos; os blocos base entram sozinhos em qualquer desenho |
-| `GETTING_STARTED.md` | Primeiros passos |
+| `LEIA-ME.md` | O resumo para começar |
+| `INSTALL.md`, `GETTING_STARTED.md` | Instalação e primeiros passos |
 | `licencas/` | Licenças do Free Elétrica e do CADCraft |
 
 ## Atualizar e remover
@@ -37,5 +38,5 @@ configuração do seu usuário e não são apagadas junto.
 
 ## Para quem desenvolve
 
-O pacote é gerado com `cargo xtask dist`, na pasta `cadcraft/`, depois de carregar o ambiente com
-`scripts\ambiente.cmd`. O resultado sai em `dist/`. Veja `CLAUDE.md` para o ambiente de compilação.
+O pacote é gerado com `scripts\package_release.ps1`, que chama `cargo xtask dist`. O resultado sai em `dist/`. Veja
+`CLAUDE.md` para o ambiente de compilação.

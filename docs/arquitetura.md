@@ -62,13 +62,11 @@ para getartcraft.com ou o Discord do ArtCraft na interface).
 
 ## O fork no GitHub
 
-O repositório `Eng-JulioFerreira/cadcraft-free-eletrica` foi criado pelo botão de fork (API
-`POST /repos/storytold/cadcraft/forks`), então o GitHub o mostra ligado ao original. Ele não
-tem histórico próprio de desenvolvimento: cada publicação (`scripts\publicar_fork.ps1`) é um
-commit com a árvore de `cadcraft/` deste repositório. O primeiro commit tem como pai a Release
-0.9.0 do CADCraft; os seguintes têm como pai o commit anterior do fork e, quando o subtree foi
-atualizado, também o commit oficial novo (o `git-subtree-split` do squash), para o fork seguir
-ligado ao CADCraft.
+O repositório público é `Eng-JulioFerreira/Free-Eletrica`, criado pelo botão de fork (API
+`POST /repos/storytold/cadcraft/forks`), então o GitHub o mostra ligado ao original. A branch padrão, `free-eletrica`, é
+este repositório inteiro, com o CADCraft dentro de `cadcraft/`: quem visita vê o Free Elétrica primeiro. O `main` do fork
+ficou parado na última publicação antiga, que copiava a árvore de `cadcraft/` num commit por vez. O repositório antigo,
+`FREE-ELETRICA-legacy-archive`, é privado e arquivado, só para consulta.
 
 ## Como sair do fork um dia
 

@@ -131,15 +131,13 @@ inteiro). Commits atômicos em Conventional Commits (`feat:`, `fix:`, `docs:`, `
 
 ## Repositórios no GitHub
 
-Hoje, `origin` é `Eng-JulioFerreira/FREE-ELETRICA`, e `Eng-JulioFerreira/cadcraft-free-eletrica` é o fork de `storytold/cadcraft`.
-Foi pedida, e ainda não executada, a reorganização que renomeia o antigo para `FREE-ELETRICA-legacy-archive` (privado e
-arquivado) e o fork para `Free-Eletrica`, público, com a branch padrão `free-eletrica` com a árvore deste repositório. Ela
-depende da autorização explícita do usuário.
+- `origin` é `Eng-JulioFerreira/Free-Eletrica`, o fork público de `storytold/cadcraft`. A branch padrão é `free-eletrica`, com a
+  árvore deste repositório (`cadcraft/`, `docs/`, `templates/`, `scripts/`). O `main` do fork ficou parado na publicação antiga.
+- `legacy` é `Eng-JulioFerreira/FREE-ELETRICA-legacy-archive`, privado e arquivado, só para consulta e sem push. Ele guarda a
+  versão 1: o `main`, o branch `versao-1` e a tag `v1-antes-da-2.0`, também presentes aqui.
 
-O GitHub não diferencia maiúsculas em nomes: depois das renomeações, uma URL `.../FREE-ELETRICA.git` aponta para o novo
-`Free-Eletrica`. Atualize os remotos no mesmo passo. Depois de arquivado, o repositório antigo não aceita push.
-
-Publicar uma versão segue a política de Git do início deste arquivo.
+Desenvolva em `free-eletrica`. O GitHub não diferencia maiúsculas em nomes: uma URL `.../FREE-ELETRICA.git` aponta para o
+`Free-Eletrica` público, nunca para o arquivo antigo. Publicar segue a política de Git do início deste arquivo.
 
 ## Atualizar o CADCraft
 

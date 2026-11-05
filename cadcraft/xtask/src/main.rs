@@ -19,8 +19,8 @@ usage: cargo xtask <command>
 
 commands:
   assets          check that every icon/image/font/asset is attributed in ATTRIBUTION.md
-  dist [--sem-compilar]
-                  Free Elétrica: release build packed into dist/ with templates, manuals and licenses, plus a .zip
+  dist [--versao X.Y.Z] [--sem-compilar]
+                  Free Elétrica: release build packed into dist/FreeEletrica with templates, manuals and licenses, plus a .zip
   layers          enforce the crate dependency layering (plan/architecture.md §3)
   wasm            cargo check --target wasm32-unknown-unknown for the wasm-safe crates
   ci              fmt --check, clippy -D warnings, test, assets, layers, wasm (stops at first failure)

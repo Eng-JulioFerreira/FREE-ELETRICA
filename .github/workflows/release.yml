@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Compila no Windows, gera o pacote e publica na aba Releases. Disparado à mão, em Actions.
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      versao:
+        description: "Versão, sem o v (ex.: 0.2.0)"
+        required: true
+        default: "0.2.0"
+
+permissions:
+  contents: write
+
+jobs:
+  pacote:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compilar e empacotar
+        shell: pwsh
+        run: ./scripts/package_release.ps1 -Versao "${{ inputs.versao }}"
+      - name: Publicar
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSAO: ${{ inputs.versao }}
+        run: |
+          $zip = "dist/FreeEletrica-v$env:VERSAO-win64.zip"
+          gh release view "v$env:VERSAO" *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload "v$env:VERSAO" $zip --clobber
+          } else {
+            gh release create "v$env:VERSAO" $zip --target $env:GITHUB_SHA --title "Free Elétrica v$env:VERSAO (Windows x64 - Pronto para Uso)" --notes "Versão compilada pronta para uso. Baixe o arquivo .zip, extraia em qualquer pasta e execute o programa diretamente (não requer instalação do Rust nem scripts .bat)."
+          }
