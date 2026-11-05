@@ -547,6 +547,8 @@ pub struct Setup {
     pub edificacao: String,
     /// As tabelas de demanda cadastradas pelo projetista.
     pub tabelas_proprias: Vec<crate::demanda::TabelaDemanda>,
+    /// As tabelas de fábrica excluídas: saem da lista, e um preset não volta sozinho.
+    pub tabelas_excluidas: Vec<String>,
 }
 
 impl Default for Setup {
@@ -588,6 +590,7 @@ impl Setup {
             concessionaria: "equatorial-nt001-r07".into(),
             edificacao: "Residências e edifícios de apartamentos".into(),
             tabelas_proprias: Vec::new(),
+            tabelas_excluidas: Vec::new(),
         }
     }
 }
@@ -799,6 +802,10 @@ impl Setup {
         for t in &mut self.tabelas_proprias {
             t.propria = true;
         }
+        // Nunca sem nenhuma tabela de demanda.
+        if self.tabelas_demanda().is_empty() {
+            self.tabelas_excluidas.clear();
+        }
         let tabela = self.tabela_demanda();
         let (id, edificacao) = (tabela.id.clone(), tabela.edificacao(&self.edificacao).nome.clone());
         self.concessionaria = id;
@@ -825,17 +832,17 @@ impl Setup {
         }
     }
 
-    /// A tabela de demanda escolhida: uma própria ou uma de fábrica.
+    /// A tabela de demanda escolhida. A que não existe mais dá lugar à primeira da lista.
     pub fn tabela_demanda(&self) -> &crate::demanda::TabelaDemanda {
-        self.tabelas_proprias
-            .iter()
-            .find(|t| t.id.eq_ignore_ascii_case(self.concessionaria.trim()))
-            .unwrap_or_else(|| crate::demanda::tabela(&self.concessionaria))
+        let id = self.concessionaria.trim();
+        let lista = self.tabelas_demanda();
+        lista.iter().find(|t| t.id.eq_ignore_ascii_case(id)).or_else(|| lista.first()).copied().unwrap_or_else(|| crate::demanda::tabela(id))
     }
 
-    /// Todas as tabelas de demanda: as de fábrica e as próprias.
+    /// Todas as tabelas de demanda: as de fábrica que não foram excluídas e as próprias.
     pub fn tabelas_demanda(&self) -> Vec<&crate::demanda::TabelaDemanda> {
-        crate::demanda::tabelas().iter().chain(self.tabelas_proprias.iter()).collect()
+        let excluida = |id: &str| self.tabelas_excluidas.iter().any(|e| e.eq_ignore_ascii_case(id));
+        crate::demanda::tabelas().iter().filter(|t| !excluida(&t.id)).chain(self.tabelas_proprias.iter()).collect()
     }
 
     /// Cadastra ou atualiza uma tabela própria. Sem id, ele nasce do nome. As de fábrica não mudam:
@@ -862,15 +869,21 @@ impl Setup {
         Ok(id)
     }
 
-    /// Exclui uma tabela própria. Se ela estava em uso, o projeto volta à primeira de fábrica.
+    /// Exclui uma tabela, própria ou de fábrica. Se ela estava em uso, o projeto vai para a primeira da
+    /// lista. A última que sobrar não sai: sem nenhuma, voltam as de fábrica.
     pub fn remover_tabela(&mut self, id: &str) -> bool {
-        let antes = self.tabelas_proprias.len();
-        self.tabelas_proprias.retain(|t| !t.id.eq_ignore_ascii_case(id.trim()));
-        let saiu = self.tabelas_proprias.len() != antes;
-        if saiu {
-            self.normalizar();
+        let id = id.trim();
+        let existe = self.tabelas_demanda().iter().any(|t| t.id.eq_ignore_ascii_case(id));
+        if !existe {
+            return false;
         }
-        saiu
+        let antes = self.tabelas_proprias.len();
+        self.tabelas_proprias.retain(|t| !t.id.eq_ignore_ascii_case(id));
+        if self.tabelas_proprias.len() == antes {
+            self.tabelas_excluidas.push(id.to_string());
+        }
+        self.normalizar();
+        true
     }
 
     /// Cadastra um cabo de telecom. O nome é obrigatório e único.

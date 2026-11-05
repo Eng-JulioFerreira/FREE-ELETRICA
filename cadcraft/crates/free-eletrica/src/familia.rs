@@ -28,6 +28,8 @@ const CHAVE_CLASSE: &str = "demand_class";
 const CHAVE_FATOR: &str = "demand_factor";
 const CHAVE_LEGENDA: &str = "legend_name";
 const CHAVE_DESC_MATERIAL: &str = "material_desc";
+/// Bloco de fábrica que o projetista excluiu: a preparação do desenho não o recria.
+const CHAVE_EXCLUIDA: &str = "factory_block_deleted";
 /// O tamanho máximo dos textos da família: um grupo do XDATA tem limite.
 const TEXTO_MAXIMO: usize = 200;
 
@@ -412,7 +414,21 @@ pub fn gravar(doc: &mut Drawing, bloco: &str, familia: Option<&Familia>) -> Resu
     for (k, v) in &pares {
         xdata::gravar(&mut registro.xdata, k, v.as_deref());
     }
+    if familia.is_some() {
+        xdata::gravar(&mut registro.xdata, CHAVE_EXCLUIDA, None);
+    }
     Ok(())
+}
+
+/// O bloco de fábrica foi excluído pelo projetista neste desenho.
+pub fn excluida(doc: &Drawing, bloco: &str) -> bool {
+    doc.foreign.records.get(&chave(bloco)).is_some_and(|r| xdata::ler(&r.xdata).iter().any(|(k, _)| k.eq_ignore_ascii_case(CHAVE_EXCLUIDA)))
+}
+
+/// Marca (ou desmarca) um bloco de fábrica como excluído.
+pub fn marcar_excluida(doc: &mut Drawing, bloco: &str, sim: bool) {
+    let foreign = Arc::make_mut(&mut doc.foreign);
+    xdata::gravar(&mut foreign.records.entry(chave(bloco)).or_default().xdata, CHAVE_EXCLUIDA, sim.then_some("1"));
 }
 
 /// A família natural de um bloco base, com os textos da legenda e da lista de materiais.

@@ -1370,6 +1370,9 @@
 	Prepare Electrical Drawing	Підготувати електричне креслення
 	Conduit Template	Шаблон кабелепроводу
 	Split Conduit	Розділити кабелепровід
+	Delete RCD Group	Видалити групу ПЗВ
+	Delete Block Family	Видалити блок і сімейство
+	Delete Conduits	Видалити кабелепроводи
 	Symbol Legend	Легенда символів
 	Point Documentation	Документація точки
 	Connect Blocks In Line	Під'єднати блоки на лінії

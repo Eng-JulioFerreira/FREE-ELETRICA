@@ -1261,3 +1261,45 @@ fn documentacao_dos_pontos_e_legenda_por_comando() {
     assert!(s.running.is_none());
     assert_eq!(s.doc().unwrap().model.len(), antes, "a legenda é uma só");
 }
+
+#[test]
+fn excluir_por_comandos() {
+    let _setup = trava_setup();
+    let (d, [qd, luz, ..]) = planta();
+    let mut s = Session::default();
+    s.open_drawing(d, "Excluir", None);
+    s.execute("eletrica.bootstrap", &json!({})).unwrap();
+    // Grupo de DR: os circuitos ficam, sem DR.
+    s.execute("elecircuito", &json!({ "quadro": qd.hex(), "circuito": "7", "pontos": [luz.hex()] })).unwrap();
+    s.execute("eletrica.circuito.definir", &json!({ "quadro": qd.hex(), "circuito": "7", "grupoDr": "IDR1" })).unwrap();
+    assert_eq!(s.execute("eletrica.dr.excluir", &json!({ "quadro": qd.hex(), "grupo": "idr1" })).unwrap()["circuitos"], 1);
+    let r = s.execute("eletrica.rotear", &json!({ "quadro": qd.hex() })).unwrap();
+    assert!(r["linhas"].as_array().unwrap().iter().all(|l| l["grupoDr"].is_null()), "{r}");
+    assert!(s.execute("eletrica.dr.excluir", &json!({ "quadro": qd.hex(), "grupo": "idr1" })).is_err());
+    assert!(s.execute("eletrica.dr.excluir", &json!({ "quadro": qd.hex() })).is_err());
+    // Eletroduto.
+    let e = s.execute("eleeletroduto", &json!({ "de": qd.hex(), "para": luz.hex() })).unwrap()["eletroduto"].as_str().unwrap().to_string();
+    s.execute("elefiacao", &json!({ "eletrodutos": [e] })).unwrap();
+    assert!(s.execute("eletrica.eletroduto.excluir", &json!({ "eletrodutos": [qd.hex()] })).is_err());
+    assert_eq!(s.execute("eletrica.eletroduto.excluir", &json!({ "eletrodutos": [e] })).unwrap()["excluidos"], 1);
+    s.undo().unwrap();
+    assert!(s.doc().unwrap().model.get(Handle::parse_hex(&e).unwrap()).is_some(), "desfaz");
+    // Bloco e família; com inserção só pedindo; a legenda não fica com o símbolo que saiu.
+    s.execute("eleponto", &json!({ "bloco": "TOM-DUP-BAIXA", "pontos": [[20.0, 20.0]] })).unwrap();
+    s.execute("elelegenda", &json!({ "ponto": [30.0, 30.0] })).unwrap();
+    assert!(s.execute("eletrica.familia.excluir", &json!({ "bloco": "TOM-DUP-BAIXA" })).is_err());
+    assert_eq!(s.execute("eletrica.familia.excluir", &json!({ "bloco": "TOM-DUP-BAIXA", "comInsercoes": true })).unwrap()["insercoes"], 1);
+    assert!(!s.execute("eletrica.blocos", &json!({})).unwrap().as_array().unwrap().iter().any(|b| b["nome"] == "TOM-DUP-BAIXA"));
+    let legenda = s.doc().unwrap().blocks.get(free_eletrica::legenda::BLOCO).unwrap().clone();
+    assert!(!legenda.entities.iter().any(|e| matches!(&e.kind, EntityKind::Insert(i) if i.block == "TOM-DUP-BAIXA")));
+    s.execute("eletrica.bootstrap", &json!({})).unwrap();
+    assert!(!s.execute("eletrica.blocos", &json!({})).unwrap().as_array().unwrap().iter().any(|b| b["nome"] == "TOM-DUP-BAIXA"));
+    s.execute("eletrica.bootstrap", &json!({ "restaurar": true })).unwrap();
+    assert!(s.execute("eletrica.blocos", &json!({})).unwrap().as_array().unwrap().iter().any(|b| b["nome"] == "TOM-DUP-BAIXA"));
+    // Tabela de fábrica.
+    let antes = s.execute("eletrica.demanda.tabelas", &json!({})).unwrap().as_array().unwrap().len();
+    assert_eq!(s.execute("eletrica.demanda.excluir", &json!({ "id": "cemig-nd51" })).unwrap()["excluida"], true);
+    assert_eq!(s.execute("eletrica.demanda.tabelas", &json!({})).unwrap().as_array().unwrap().len(), antes - 1);
+    s.execute("eletrica.setup", &json!({ "tabelasExcluidas": [] })).unwrap();
+    assert_eq!(s.execute("eletrica.demanda.tabelas", &json!({})).unwrap().as_array().unwrap().len(), antes);
+}

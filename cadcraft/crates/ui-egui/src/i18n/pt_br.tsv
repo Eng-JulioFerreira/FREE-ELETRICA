@@ -1284,6 +1284,9 @@
 	Prepare Electrical Drawing	Preparar desenho elétrico
 	Conduit Template	Modelo do eletroduto
 	Split Conduit	Dividir eletroduto
+	Delete RCD Group	Excluir grupo de DR
+	Delete Block Family	Excluir bloco e família
+	Delete Conduits	Excluir eletrodutos
 	Symbol Legend	Legenda de símbolos
 	Point Documentation	Documentação do ponto
 	Connect Blocks In Line	Ligar blocos em linha

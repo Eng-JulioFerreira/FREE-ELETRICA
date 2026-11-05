@@ -438,6 +438,8 @@ pub fn dividir(doc: &mut Drawing, setup: &Setup, h: Handle, q: P, metros: f64) -
         Instalacao::Piso => 0.0,
         Instalacao::Parede => aresta.and_then(|a| rede.nos.get(a.de)).map_or(setup.pe_direito, |n| n.z),
     };
+    // A caixa é necessária aqui, mesmo que o projetista a tenha tirado da lista de blocos.
+    crate::familia::marcar_excluida(doc, biblioteca::BLOCO_CAIXA, false);
     biblioteca::garantir_base(doc, setup, metros);
     let valores = vec![("ALTURA".to_string(), crate::ponto::br(z))];
     let caixa = biblioteca::inserir_ponto(doc, biblioteca::BLOCO_CAIXA, p, 0.0, &valores, setup)?;
@@ -624,4 +626,16 @@ pub fn padronizar(doc: &mut Drawing, setup: &Setup) -> usize {
         }
     }
     n
+}
+
+/// Exclui eletrodutos, com as tags de fiação deles. Recusa, sem excluir nada, um objeto que não esteja
+/// numa camada de eletroduto. Devolve quantos saíram.
+pub fn excluir(doc: &mut Drawing, setup: &Setup, eletrodutos: &[Handle]) -> Result<usize, String> {
+    for h in eletrodutos {
+        if !doc.model.get(*h).is_some_and(|e| setup.e_camada_eletroduto(&e.common.layer)) {
+            return Err(format!("o objeto {} não é um eletroduto", h.hex()));
+        }
+    }
+    crate::fiacao::limpar(doc, Some(eletrodutos));
+    Ok(eletrodutos.iter().filter(|h| doc.model.remove(**h).is_some()).count())
 }

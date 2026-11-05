@@ -642,7 +642,7 @@ fn atributo_base(a: &Att, m: f64) -> Attrib {
 
 /// Falta alguma camada ou bloco base no desenho.
 pub fn falta_base(doc: &Drawing) -> bool {
-    BLOCOS_BASE.iter().any(|n| !doc.blocks.contains_key(*n))
+    BLOCOS_BASE.iter().any(|n| !doc.blocks.contains_key(*n) && !familia::excluida(doc, n))
         || crate::fiacao::TipoCondutor::TODOS.iter().any(|t| !doc.blocks.contains_key(t.bloco()))
         || [CAMADA_PONTOS, CAMADA_QUADROS, CAMADA_DADOS, crate::fiacao::CAMADA, crate::eletroduto::CAMADA_TETO, crate::eletroduto::CAMADA_PISO]
             .iter()
@@ -669,6 +669,9 @@ pub fn garantir_base(doc: &mut Drawing, setup: &crate::setup::Setup, metros: f64
     }
     crate::fiacao::garantir_blocos(doc, m);
     for nome in BLOCOS_BASE {
+        if familia::excluida(doc, nome) {
+            continue;
+        }
         if let Some(existente) = doc.blocks.get(nome) {
             let antigo = geometria_antiga(nome).is_some_and(|p| e_desenho_antigo(existente, &p, m));
             if !antigo {
@@ -930,4 +933,37 @@ pub fn excluir(doc: &mut Drawing, pontos: &[Handle]) -> Result<usize, String> {
         }
     }
     Ok(pontos.iter().filter(|h| doc.model.remove(**h).is_some()).count())
+}
+
+/// Exclui um bloco do desenho, com a família dele. Com inserções, só se `com_insercoes` disser: elas saem
+/// junto. Um bloco de fábrica fica marcado, e a preparação do desenho não o recria. Devolve quantas
+/// inserções saíram.
+pub fn excluir_bloco(doc: &mut Drawing, nome: &str, com_insercoes: bool) -> Result<usize, String> {
+    let info = blocos(doc)
+        .into_iter()
+        .find(|b| b.nome.eq_ignore_ascii_case(nome.trim()))
+        .ok_or_else(|| format!("o desenho não tem o bloco \"{}\"", nome.trim()))?;
+    if info.inseridos > 0 && !com_insercoes {
+        return Err(format!("o bloco \"{}\" tem {} inserção(ões) no desenho", info.nome, info.inseridos));
+    }
+    let hs: Vec<Handle> =
+        doc.model.iter().filter(|e| matches!(&e.kind, EntityKind::Insert(i) if i.block.eq_ignore_ascii_case(&info.nome))).map(|e| e.handle).collect();
+    for h in &hs {
+        doc.model.remove(*h);
+    }
+    familia::gravar(doc, &info.nome, None)?;
+    doc.blocks.remove(&info.nome);
+    if BLOCOS_BASE.contains(&info.nome.as_str()) {
+        familia::marcar_excluida(doc, &info.nome, true);
+    }
+    Ok(hs.len())
+}
+
+/// Traz de volta os blocos de fábrica excluídos do desenho (a próxima preparação os recria).
+pub fn restaurar_base(doc: &mut Drawing) {
+    for n in BLOCOS_BASE {
+        if familia::excluida(doc, n) {
+            familia::marcar_excluida(doc, n, false);
+        }
+    }
 }

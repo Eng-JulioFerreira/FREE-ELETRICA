@@ -591,6 +591,38 @@ fn paleta_ferramentas_e_fluxo_completo() {
     h.key_press(egui::Key::Escape);
     h.run_steps(3);
 
+    // Todo item tem Excluir: eletrodutos, blocos e famílias, circuitos e grupos de DR.
+    h.get_by_label("Lista de eletrodutos...").click();
+    h.run_steps(3);
+    let trechos =
+        |h: &mut Harness<'static, CadApp>| h.state_mut().run("eletrica.eletrodutos", json!({})).unwrap()["trechos"].as_array().unwrap().len();
+    let antes_trechos = trechos(&mut h);
+    h.query_all_by_label("Excluir").next().unwrap().click();
+    h.run_steps(3);
+    h.get_by_label("Excluir?").click();
+    h.run_steps(3);
+    assert_eq!(trechos(&mut h), antes_trechos - 1);
+    h.state_mut().session.undo().unwrap();
+    h.key_press(egui::Key::Escape);
+    h.run_steps(3);
+    h.state_mut().run("eletrica.bootstrap", json!({})).unwrap();
+    h.get_by_label("Blocos e famílias...").click();
+    h.run_steps(3);
+    h.get_by_label("Caixas").click();
+    h.run_steps(3);
+    let tem = |h: &mut Harness<'static, CadApp>, n: &str| {
+        h.state_mut().run("eletrica.blocos", json!({})).unwrap().as_array().unwrap().iter().any(|b| b["nome"] == n)
+    };
+    assert!(tem(&mut h, "CX-PASSAGEM"));
+    h.get_by_label("Excluir").click();
+    h.run_steps(3);
+    h.get_by_label("Excluir?").click();
+    h.run_steps(3);
+    assert!(!tem(&mut h, "CX-PASSAGEM"));
+    h.state_mut().run("eletrica.bootstrap", json!({ "restaurar": true })).unwrap();
+    h.key_press(egui::Key::Escape);
+    h.run_steps(3);
+
     // Editor de blocos: a paleta vira as propriedades da família.
     assert!(h.query_by_label("Propriedades da Família").is_none());
     h.state_mut().run("bedit", json!({ "name": "MINHA-TOMADA", "create": true })).unwrap();

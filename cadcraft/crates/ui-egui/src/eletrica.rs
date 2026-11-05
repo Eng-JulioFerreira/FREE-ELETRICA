@@ -164,11 +164,15 @@ struct OpcoesDimensionar {
     selecionados: Vec<String>,
     /// Grupos criados com + Novo Grupo DR, ainda sem circuito.
     grupos_novos: Vec<String>,
+    /// O circuito com a exclusão pedida: espera a confirmação na linha.
+    excluir: Option<String>,
 }
 
 /// A janela de blocos.
 #[derive(Clone, Default)]
 struct Blocos {
+    /// O bloco com a exclusão pedida: espera a confirmação na linha.
+    excluir: Option<String>,
     filtro: FiltroPontos,
     nome: String,
     categoria: Option<ele::familia::FamilyCategory>,
@@ -1809,6 +1813,7 @@ fn janela_dimensionar(ui: &mut egui::Ui, app: &CadApp, t: &Tokens, st: &mut Esta
                 ("Situação", 74.0, false),
             ]);
         }
+        colunas.push(("", 96.0, false));
         egui::Grid::new("ele-dimensionar-tabela").num_columns(colunas.len()).striped(true).spacing(vec2(8.0, 2.0)).show(ui, |ui| {
             cabecalho(ui, t, &colunas);
             for l in &r.linhas {
@@ -1859,6 +1864,23 @@ fn janela_dimensionar(ui: &mut egui::Ui, app: &CadApp, t: &Tokens, st: &mut Esta
                             .on_hover_text(avisos.join("\n"));
                     }
                 }
+                ui.horizontal(|ui| {
+                    if o.excluir.as_deref() == Some(id.as_str()) {
+                        if ui
+                            .small_button(RichText::new("Excluir?").color(COR_AVISO))
+                            .on_hover_text("Os pontos ficam sem circuito (Ctrl+Z desfaz)")
+                            .clicked()
+                        {
+                            acoes.push(Acao::Rodar("eletrica.circuito.excluir", json!({ "quadro": q.hex(), "circuito": id })));
+                            o.excluir = None;
+                        }
+                        if ui.small_button("Não").clicked() {
+                            o.excluir = None;
+                        }
+                    } else if ui.small_button("Excluir").clicked() {
+                        o.excluir = Some(id.clone());
+                    }
+                });
                 ui.end_row();
             }
         });
@@ -1946,6 +1968,9 @@ fn grupos_de_dr(ui: &mut egui::Ui, t: &Tokens, r: &ele::ResumoQuadro, q: Handle,
                     if ui.add_enabled(!o.selecionados.is_empty(), egui::Button::new("Mover selecionados").small()).clicked() {
                         mover(&g.nome, o, acoes);
                     }
+                    if ui.small_button("Excluir").on_hover_text("Os circuitos do grupo ficam sem DR (Ctrl+Z desfaz)").clicked() {
+                        acoes.push(Acao::Rodar("eletrica.dr.excluir", json!({ "quadro": q.hex(), "grupo": g.nome })));
+                    }
                 });
                 for l in r.linhas.iter().filter(|l| g.circuitos.contains(&l.circuito.id)) {
                     ui.horizontal(|ui| {
@@ -2024,7 +2049,7 @@ fn janela_blocos(ui: &mut egui::Ui, t: &Tokens, st: &Estado, b: &mut Blocos, tem
         }
     });
     let colunas: [(&str, f32, bool); 5] =
-        [("Bloco", 170.0, false), ("Categoria", 190.0, false), ("Caixa", 90.0, false), ("No desenho", 70.0, true), ("", 130.0, false)];
+        [("Bloco", 170.0, false), ("Categoria", 190.0, false), ("Caixa", 90.0, false), ("No desenho", 70.0, true), ("", 240.0, false)];
     egui::ScrollArea::vertical().id_salt("ele-blocos-lista").auto_shrink([false, true]).show(ui, |ui| {
         egui::Grid::new("ele-blocos-tabela").num_columns(colunas.len()).striped(true).spacing(vec2(10.0, 2.0)).show(ui, |ui| {
             cabecalho(ui, t, &colunas);
@@ -2043,6 +2068,18 @@ fn janela_blocos(ui: &mut egui::Ui, t: &Tokens, st: &Estado, b: &mut Blocos, tem
                         acoes.push(Acao::Rodar("eletrica.ponto.modelo", json!({ "bloco": x.nome })));
                         acoes.push(Acao::Iniciar("eleponto"));
                         acoes.push(Acao::Fechar(Qual::Blocos));
+                    }
+                    if b.excluir.as_deref() == Some(x.nome.as_str()) {
+                        let pergunta = if x.inseridos > 0 { format!("Excluir e as {} inserções?", x.inseridos) } else { "Excluir?".to_string() };
+                        if ui.small_button(RichText::new(pergunta).color(COR_AVISO)).on_hover_text("Ctrl+Z desfaz").clicked() {
+                            acoes.push(Acao::Rodar("eletrica.familia.excluir", json!({ "bloco": x.nome, "comInsercoes": true })));
+                            b.excluir = None;
+                        }
+                        if ui.small_button("Não").clicked() {
+                            b.excluir = None;
+                        }
+                    } else if ui.small_button("Excluir").clicked() {
+                        b.excluir = Some(x.nome.clone());
                     }
                 });
                 ui.end_row();
@@ -2860,6 +2897,22 @@ fn aba_lista_eletrodutos(ui: &mut egui::Ui, app: &CadApp, t: &Tokens, st: &mut E
         }
     });
     let nome = |h: Handle| analise.ponto(h).map_or_else(|| h.hex(), PontoEletrico::rotulo);
+    // O trecho com a exclusão pedida fica na memória da janela até a confirmação.
+    let id_excluir = egui::Id::new("ele-trecho-excluir");
+    let mut pedido: Option<Handle> = ui.ctx().data_mut(|d| d.get_temp::<Option<Handle>>(id_excluir)).flatten();
+    let excluir_trecho = |ui: &mut egui::Ui, h: Handle, pedido: &mut Option<Handle>, acoes: &mut Vec<Acao>| {
+        if *pedido == Some(h) {
+            if ui.small_button(RichText::new("Excluir?").color(COR_AVISO)).on_hover_text("Sai com a tag de fiação dele (Ctrl+Z desfaz)").clicked() {
+                acoes.push(Acao::Rodar("eletrica.eletroduto.excluir", json!({ "eletrodutos": [h.hex()] })));
+                *pedido = None;
+            }
+            if ui.small_button("Não").clicked() {
+                *pedido = None;
+            }
+        } else if ui.small_button("Excluir").clicked() {
+            *pedido = Some(h);
+        }
+    };
     let colunas: [(&str, f32, bool); 9] = [
         ("De", 130.0, false),
         ("Para", 130.0, false),
@@ -2869,7 +2922,7 @@ fn aba_lista_eletrodutos(ui: &mut egui::Ui, app: &CadApp, t: &Tokens, st: &mut E
         ("Circuitos", 120.0, false),
         ("Diâmetro", 112.0, false),
         ("Ocupação", 70.0, true),
-        ("", 70.0, false),
+        ("", 170.0, false),
     ];
     egui::Grid::new("ele-eletrodutos-tabela").num_columns(colunas.len()).striped(true).spacing(vec2(8.0, 2.0)).show(ui, |ui| {
         cabecalho(ui, t, &colunas);
@@ -2929,9 +2982,12 @@ fn aba_lista_eletrodutos(ui: &mut egui::Ui, app: &CadApp, t: &Tokens, st: &mut E
             let ocupacao = tr.ocupacao.map_or("-".to_string(), |o| format!("{} %", fixo(o * 100.0, 0)));
             let ocupacao = if excedida { numero(ocupacao).color(COR_VIOLACAO) } else { numero(ocupacao) };
             celula(ui, colunas[7].1, ocupacao, true);
-            if ui.small_button("Localizar").clicked() {
-                acoes.push(Acao::Localizar(vec![tr.meio]));
-            }
+            ui.horizontal(|ui| {
+                if ui.small_button("Localizar").clicked() {
+                    acoes.push(Acao::Localizar(vec![tr.meio]));
+                }
+                excluir_trecho(ui, h, &mut pedido, acoes);
+            });
             ui.end_row();
         }
     });
@@ -2943,6 +2999,7 @@ fn aba_lista_eletrodutos(ui: &mut egui::Ui, app: &CadApp, t: &Tokens, st: &mut E
                 if ui.small_button("Localizar").clicked() {
                     acoes.push(Acao::Localizar(vec![x.meio]));
                 }
+                excluir_trecho(ui, x.eletroduto, &mut pedido, acoes);
                 ui.label(pequeno(format!("{}: {}", x.eletroduto.hex(), x.motivo), t.text));
             });
         }
@@ -2951,6 +3008,7 @@ fn aba_lista_eletrodutos(ui: &mut egui::Ui, app: &CadApp, t: &Tokens, st: &mut E
         "Grafo estrito: um eletroduto liga exatamente dois blocos. Um bloco no caminho do trecho já é uma caixa e divide o trecho nele. Cruzamentos sem bloco não conectam; clique no meio de um trecho com Inserir eletroduto para pôr uma caixa.",
         t.text_dim,
     ));
+    ui.ctx().data_mut(|d| d.insert_temp(id_excluir, pedido));
 }
 
 /// A aba Conferência: a lista da inspeção, os pontos e os circuitos.
@@ -3337,7 +3395,7 @@ fn aba_geral(ui: &mut egui::Ui, t: &Tokens, s: &mut Setup, tem_desenho: bool, ac
         .on_hover_text("Cria as camadas e os blocos que faltam; as ferramentas fazem isso sozinhas na primeira vez")
         .clicked()
     {
-        acoes.push(Acao::Rodar("eletrica.bootstrap", json!({})));
+        acoes.push(Acao::Rodar("eletrica.bootstrap", json!({ "restaurar": true })));
     }
     ui.add_space(4.0);
     egui::Grid::new("ele-setup-geral").num_columns(2).spacing(vec2(12.0, 6.0)).show(ui, |ui| {
@@ -3611,6 +3669,7 @@ fn aba_demanda(ui: &mut egui::Ui, t: &Tokens, r: &mut Rascunho) {
     });
     let mut abrir_editor = None;
     let mut excluir = false;
+    let mut restaurar = false;
     ui.horizontal(|ui| {
         if ui
             .button("+ Criar / Editar Tabela de Concessionária")
@@ -3619,8 +3678,11 @@ fn aba_demanda(ui: &mut egui::Ui, t: &Tokens, r: &mut Rascunho) {
         {
             abrir_editor = Some(if tabela.propria { tabela.clone() } else { ele::demanda::TabelaDemanda::em_branco("Nova concessionária") });
         }
-        if tabela.propria && ui.button("Excluir tabela").clicked() {
+        if ui.button("Excluir tabela").on_hover_text("Tira da lista esta tabela. O projeto passa para a primeira que sobrar").clicked() {
             excluir = true;
+        }
+        if !s.tabelas_excluidas.is_empty() && ui.button("Restaurar tabelas de fábrica").clicked() {
+            restaurar = true;
         }
     });
     ui.add_space(4.0);
@@ -3694,6 +3756,9 @@ fn aba_demanda(ui: &mut egui::Ui, t: &Tokens, r: &mut Rascunho) {
         ))
         .wrap(),
     );
+    if restaurar {
+        r.setup.tabelas_excluidas.clear();
+    }
     if excluir {
         r.setup.remover_tabela(&tabela.id);
     }

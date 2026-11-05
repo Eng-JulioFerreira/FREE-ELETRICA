@@ -60,6 +60,8 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("elelegenda", "Symbol Legend", run_legenda)
             .params("{ponto: [x, y]} → draws the symbol legend of the points in the drawing as a block at the point (moves it if there is one): {legenda, linhas}")
             .interactive(|_| Ok(Box::new(LegendaM))),
+        CommandSpec::new("eletrica.familia.excluir", "Delete Block Family", run_familia_excluir)
+            .params("{bloco, comInsercoes?: bool (also deletes its insertions)} → deletes the block and its family; a factory block stays out until restored: {insercoes}"),
         CommandSpec::new("eletrica.familia.ler", "Block Family", run_familia_ler)
             .params("{bloco? (default: the block being edited)} → the family, or null")
             .noundo(),
@@ -89,7 +91,8 @@ pub fn specs() -> Vec<CommandSpec> {
             .noundo(),
         CommandSpec::new("eletrica.atributo.definir", "Edit Block Attribute", run_atributo_definir)
             .params("{ponto: hex, tag, valor?: text, visivel?: bool, posicao?: [x, y]} (ALTURA follows the project's height rule) → {ponto, tag}"),
-        CommandSpec::new("eletrica.bootstrap", "Prepare Electrical Drawing", run_bootstrap).params("{} → creates the missing base layers and blocks: {mudou}"),
+        CommandSpec::new("eletrica.bootstrap", "Prepare Electrical Drawing", run_bootstrap)
+            .params("{restaurar?: bool (also brings back the deleted factory blocks)} → creates the missing base layers and blocks: {mudou}"),
         CommandSpec::new("eletrica.blocos", "Electrical Point Blocks", run_blocos)
             .params("{} → [{nome, tipo, inseridos, atributos: [{tag, padrao, prompt, constante}]}]")
             .noundo(),
@@ -103,6 +106,8 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("eletrica.eletroduto.dividir", "Split Conduit", run_dividir).params("{eletroduto: hex, ponto: [x, y]} → splits it with a pull box: {caixa}"),
         CommandSpec::new("eletrica.eletroduto.encaixar", "Connect Blocks In Line", run_encaixar)
             .params("{} → splits each conduit at the blocks in its path, without a new box: {divididos}"),
+        CommandSpec::new("eletrica.eletroduto.excluir", "Delete Conduits", run_excluir_eletrodutos)
+            .params("{eletrodutos: [hex]} → deletes them with their wiring tags: {excluidos}"),
         CommandSpec::new("eletrica.eletroduto.definir", "Conduit Properties", run_definir_eletroduto)
             .params("{eletroduto: hex, diametro?: mm | null (a number locks it; null: back to automatic), instalacao?: \"CEILING\" | \"FLOOR\" | \"WALL\", tipo?: conduit type code, perfil?: profile name} → {eletroduto}"),
         CommandSpec::new("eletrica.eletrodutos", "Conduit Summary", run_eletrodutos).params("{} → {trechos, soltos, avisos}").noundo(),
@@ -142,6 +147,8 @@ pub fn specs() -> Vec<CommandSpec> {
             .params("{id} → deletes a custom table: {excluida}")
             .enabled(always)
             .noundo(),
+        CommandSpec::new("eletrica.dr.excluir", "Delete RCD Group", run_excluir_dr)
+            .params("{quadro?: hex | TAG, grupo} → its circuits stay, without RCD: {circuitos}"),
         CommandSpec::new("eletrica.circuito.alvo", "Circuit Target", run_alvo)
             .params("{quadro?: hex | TAG, circuito} → the next ELECIRCUITO goes straight to picking points for this circuit")
             .noundo(),
@@ -639,7 +646,10 @@ fn run_setup(_s: &mut Session, p: &Value) -> Result<Value> {
     ele::setup::json(p).map_err(|e| bad("eletrica.setup", e))
 }
 
-fn run_bootstrap(s: &mut Session, _p: &Value) -> Result<Value> {
+fn run_bootstrap(s: &mut Session, p: &Value) -> Result<Value> {
+    if p.get("restaurar").and_then(Value::as_bool).unwrap_or(false) {
+        ele::biblioteca::restaurar_base(s.doc_mut()?);
+    }
     Ok(json!({ "mudou": preparar(s)? }))
 }
 
@@ -1356,6 +1366,44 @@ fn run_dividir(s: &mut Session, p: &Value) -> Result<Value> {
     let m = metros(s)?;
     let caixa = ele::eletroduto::dividir(s.doc_mut()?, &ele::setup::atual(), e, q, m).map_err(erro)?;
     Ok(json!({ "caixa": caixa.hex() }))
+}
+
+fn run_excluir_eletrodutos(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "eletrica.eletroduto.excluir";
+    let hs = handles(CMD, p, "eletrodutos")?;
+    let n = ele::eletroduto::excluir(s.doc_mut()?, &ele::setup::atual(), &hs).map_err(|e| bad(CMD, e))?;
+    Ok(json!({ "excluidos": n }))
+}
+
+fn run_familia_excluir(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "eletrica.familia.excluir";
+    let bloco = texto(CMD, p, "bloco")?;
+    let com = p.get("comInsercoes").and_then(Value::as_bool).unwrap_or(false);
+    let n = ele::biblioteca::excluir_bloco(s.doc_mut()?, &bloco, com).map_err(|e| bad(CMD, e))?;
+    // A legenda desenha os símbolos: não pode ficar com o que saiu.
+    let (a, m) = (analise(s)?, metros(s)?);
+    ele::legenda::regenerar(s.doc_mut()?, &a, m);
+    Ok(json!({ "insercoes": n }))
+}
+
+fn run_excluir_dr(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "eletrica.dr.excluir";
+    let a = analise(s)?;
+    let q = achar_quadro(&a, p.get("quadro"))?;
+    let grupo = texto(CMD, p, "grupo")?;
+    let quadro = a.ponto(q).ok_or_else(|| bad(CMD, "board not found"))?;
+    let circuitos: Vec<String> = ele::quadro::propriedades(quadro)
+        .into_iter()
+        .filter(|(_, v)| v.grupo_dr.as_deref().is_some_and(|g| g.eq_ignore_ascii_case(grupo.trim())))
+        .map(|(k, _)| k)
+        .collect();
+    if circuitos.is_empty() {
+        return Err(bad(CMD, format!("there is no RCD group `{grupo}` on this board")));
+    }
+    for c in &circuitos {
+        ele::editar::definir_grupo_dr(s.doc_mut()?, q, c, None).map_err(erro)?;
+    }
+    Ok(json!({ "circuitos": circuitos.len() }))
 }
 
 fn run_encaixar(s: &mut Session, _p: &Value) -> Result<Value> {

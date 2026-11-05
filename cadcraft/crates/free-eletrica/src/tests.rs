@@ -2903,3 +2903,52 @@ fn legenda_e_descricao_nos_pontos_na_lista_e_na_prancha() {
     f.legenda = "x".repeat(201);
     assert!(familia::gravar(&mut d, "QDG", Some(&f)).is_err());
 }
+
+#[test]
+fn excluir_blocos_eletrodutos_e_tabelas_de_fabrica() {
+    let setup = Setup::default();
+    let mut d = metros();
+    biblioteca::garantir_base(&mut d, &setup, 1.0);
+    let a = biblioteca::inserir_ponto(&mut d, "TOM-DUP-ALTA", [0.0, 0.0], 0.0, &[], &setup).unwrap();
+    // Com inserção, só pedindo; o de fábrica não volta sozinho.
+    assert!(biblioteca::excluir_bloco(&mut d, "TOM-DUP-ALTA", false).is_err());
+    assert!(d.model.get(a).is_some());
+    assert_eq!(biblioteca::excluir_bloco(&mut d, "TOM-DUP-ALTA", true).unwrap(), 1);
+    assert!(d.model.get(a).is_none() && !d.blocks.contains_key("TOM-DUP-ALTA"));
+    assert!(familia::ler(&d, "TOM-DUP-ALTA").is_none());
+    assert!(!biblioteca::falta_base(&d), "excluído não conta como faltando");
+    biblioteca::garantir_base(&mut d, &setup, 1.0);
+    assert!(!d.blocks.contains_key("TOM-DUP-ALTA"));
+    assert!(biblioteca::excluir_bloco(&mut d, "NADA", true).is_err());
+    biblioteca::restaurar_base(&mut d);
+    assert!(biblioteca::falta_base(&d));
+    biblioteca::garantir_base(&mut d, &setup, 1.0);
+    assert!(d.blocks.contains_key("TOM-DUP-ALTA"));
+    // Sem a caixa de fábrica, dividir um trecho a traz de volta.
+    biblioteca::excluir_bloco(&mut d, biblioteca::BLOCO_CAIXA, true).unwrap();
+    let q = biblioteca::inserir_ponto(&mut d, "QDG", [0.0, 0.0], 0.0, &[], &setup).unwrap();
+    let f = biblioteca::inserir_ponto(&mut d, "TOM-SIM-BAIXA", [4.0, 0.0], 0.0, &[], &setup).unwrap();
+    let h = eletroduto::inserir(&mut d, q, f, rota::Instalacao::Teto, 0.0).unwrap();
+    assert!(eletroduto::dividir(&mut d, &setup, h, [2.0, 0.0], 1.0).is_ok());
+    // Eletroduto sai com a tag dele; outro objeto é recusado sem excluir nada.
+    fiacao::regenerar(&mut d, &setup, Some(&[h])).unwrap();
+    assert_eq!(fiacao::tags(&d).len(), 1);
+    assert!(eletroduto::excluir(&mut d, &setup, &[h, q]).is_err());
+    assert!(d.model.get(h).is_some());
+    assert_eq!(eletroduto::excluir(&mut d, &setup, &[h]).unwrap(), 1);
+    assert!(d.model.get(h).is_none() && fiacao::tags(&d).is_empty());
+    // Tabelas: a de fábrica também sai; sem nenhuma, as de fábrica voltam.
+    let mut s = Setup::default();
+    let total = s.tabelas_demanda().len();
+    let em_uso = s.tabela_demanda().id.clone();
+    assert!(s.remover_tabela(&em_uso));
+    assert_eq!(s.tabelas_demanda().len(), total - 1);
+    assert_ne!(s.tabela_demanda().id, em_uso);
+    assert_eq!(s.concessionaria, s.tabela_demanda().id);
+    assert!(!s.remover_tabela(&em_uso), "já saiu");
+    let ids: Vec<String> = s.tabelas_demanda().iter().map(|t| t.id.clone()).collect();
+    for id in &ids {
+        assert!(s.remover_tabela(id));
+    }
+    assert_eq!(s.tabelas_demanda().len(), total, "nunca sem nenhuma");
+}
