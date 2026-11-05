@@ -259,10 +259,19 @@ fn paleta_ferramentas_e_fluxo_completo() {
     h.query_all_by_label("Eletrodutos").last().unwrap().click();
     h.run_steps(3);
     h.get_by_label("Diâmetro mínimo");
-    h.get_by_label("Demanda").click();
+    h.get_by_label("Demanda / Concessionárias").click();
     h.run_steps(3);
     h.get_by_label("Concessionária");
     h.get_by_label("Tipo de edificação");
+    // A tabela própria nasce no rascunho e só vale com o OK das configurações.
+    h.get_by_label("+ Criar / Editar Tabela de Concessionária").click();
+    h.run_steps(3);
+    for campo in ["Nome da tabela", "Norma e revisão", "Copiar de", "+ Faixa", "+ Edificação", "Salvar tabela"] {
+        assert!(h.query_all_by_label(campo).count() >= 1, "{campo}");
+    }
+    h.get_by_label("Voltar sem salvar").click();
+    h.run_steps(3);
+    h.get_by_label("Concessionária");
     h.get_by_label("Cabos").click();
     h.run_steps(3);
     h.get_by_label("Fibra óptica N12");
@@ -523,12 +532,22 @@ fn paleta_ferramentas_e_fluxo_completo() {
     h.run_steps(3);
     h.get_by_label("Referência de altura padrão");
     h.get_by_label("Caixa física associada");
+    h.get_by_label("Classe de Demanda");
+    h.get_by_label("Fator de Demanda (0,00 a 1,00)");
+    h.get_by_label("Automático, pela tabela da concessionária").click();
+    h.run_steps(3);
+    let bloco = "MINHA-TOMADA";
+    let f = h.state_mut().run("eletrica.familia.ler", json!({ "bloco": bloco })).unwrap();
+    assert_eq!(f["fatorDemanda"].as_f64(), Some(1.0));
+    h.state_mut().run("eletrica.familia.definir", json!({ "bloco": bloco, "fatorDemanda": null })).unwrap();
+    h.run_steps(3);
     // Imagem do painel da família, quando pedida.
     if let Ok(saida) = std::env::var("FREE_ELETRICA_PNG_FAMILIA") {
         h.render().unwrap().save(saida).unwrap();
     }
     h.get_by_label("Inserir geometria base").click();
     h.run_steps(3);
+    assert!(h.query_all(egui_kittest::kittest::by().label_contains("hachura")).next().is_none(), "preencher é com a Hachura nativa");
     h.get_by_label("Triângulo de tomada").click();
     h.run_steps(3);
     assert_eq!(h.state().session.doc().unwrap().model.len(), 3);

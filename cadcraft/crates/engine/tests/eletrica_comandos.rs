@@ -11,6 +11,14 @@ use cadcraft_engine::{Input, Session};
 use free_eletrica::TipoPonto;
 use serde_json::{Value, json};
 
+/// As configurações são globais no processo: um teste que grava nelas passa por aqui, ou outro em
+/// paralelo sobrescreve o que ele acabou de gravar.
+static SETUP: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn trava_setup() -> std::sync::MutexGuard<'static, ()> {
+    SETUP.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 fn atributo(tag: &str, valor: &str) -> Attrib {
     Attrib {
         tag: tag.into(),
@@ -77,6 +85,7 @@ fn circuito(s: &Session, h: Handle) -> Option<String> {
 
 #[test]
 fn projeto_inteiro_por_comandos_sem_interface() {
+    let _setup = trava_setup();
     let mut s = Session::new();
     let (d, [qd, luz, int, tug]) = planta();
     s.open_drawing(d, "Planta", None);
@@ -135,6 +144,7 @@ fn projeto_inteiro_por_comandos_sem_interface() {
 
 #[test]
 fn comandos_eletricos_sem_quadro_dao_erro_e_nao_travam() {
+    let _setup = trava_setup();
     let mut s = Session::new();
     s.open_drawing(Drawing::new_metric(), "Vazio", None);
     assert!(s.execute("eletrica.rotear", &json!({})).is_err());
@@ -402,6 +412,7 @@ fn barra_muda_o_modelo_enquanto_o_comando_corre_e_tab_gira() {
 
 #[test]
 fn cabo_eletroduto_quadro_pai_e_materiais_por_comandos() {
+    let _setup = trava_setup();
     let mut s = Session::new();
     let mut d = Drawing::new_metric();
     d.header.set_i64("INSUNITS", 6);
@@ -492,6 +503,7 @@ fn cabo_eletroduto_quadro_pai_e_materiais_por_comandos() {
 
 #[test]
 fn tracados_dimensionamento_e_atributos_por_comandos() {
+    let _setup = trava_setup();
     let mut s = Session::new();
     let mut d = Drawing::new_metric();
     d.header.set_i64("INSUNITS", 6);
@@ -602,6 +614,7 @@ fn tracados_dimensionamento_e_atributos_por_comandos() {
 
 #[test]
 fn familia_e_altura_por_comandos_e_no_dxf() {
+    let _setup = trava_setup();
     let mut s = Session::new();
     let mut d = Drawing::new_metric();
     d.header.set_i64("INSUNITS", 6);
@@ -792,6 +805,7 @@ fn comando_usa_as_teclas_do_interruptor_e_grava_o_vinculo() {
 
 #[test]
 fn tags_tabela_e_inspecao_por_comandos() {
+    let _setup = trava_setup();
     let mut s = Session::new();
     let (d, [qd, luz, _int, tug]) = planta();
     s.open_drawing(d, "Planta", None);
@@ -962,4 +976,72 @@ fn propriedades_do_circuito_e_demanda_por_comandos() {
     let t = s.execute("eletrica.demanda.tabelas", &json!({})).unwrap();
     assert_eq!(t[0]["id"], "equatorial-nt001-r07");
     assert!(t[0]["fonte"].as_str().unwrap().contains("NT.00001.EQTL"));
+}
+
+#[test]
+fn classe_e_fator_de_demanda_por_comando() {
+    let mut s = Session::default();
+    s.open_drawing(Drawing::new_metric(), "Demanda", None);
+    s.execute("eletrica.bootstrap", &json!({})).unwrap();
+    let r = s.execute("eleponto", &json!({ "bloco": "TOM-TUE", "pontos": [[1.0, 1.0]] })).unwrap();
+    let h = r["pontos"][0].as_str().unwrap().to_string();
+    // Valores ruins não gravam nada.
+    assert!(s.execute("eletrica.ponto.demanda", &json!({ "pontos": [h] })).is_err());
+    assert!(s.execute("eletrica.ponto.demanda", &json!({ "pontos": [h], "classe": "XPTO" })).is_err());
+    assert!(s.execute("eletrica.ponto.demanda", &json!({ "pontos": [h], "fator": 1.5 })).is_err());
+    assert!(s.execute("eletrica.ponto.demanda", &json!({ "pontos": ["FFFFF"], "fator": 0.5 })).is_err());
+    let ponto = |s: &mut Session| {
+        let a = s.execute("eletrica.analisar", &json!({})).unwrap();
+        a["pontos"].as_array().unwrap().iter().find(|p| p["handle"] == h.as_str()).unwrap().clone()
+    };
+    s.execute("eletrica.ponto.demanda", &json!({ "pontos": [h], "classe": "MOTORES", "fator": 0.7 })).unwrap();
+    let p = ponto(&mut s);
+    assert_eq!((p["tipoCarga"].as_str(), p["fatorDemanda"].as_f64()), (Some("motores"), Some(0.7)));
+    // Null volta à família: a classe natural do bloco (TOM-TUE é aquecimento no atributo apagado) e a tabela.
+    s.execute("eletrica.ponto.demanda", &json!({ "pontos": [h], "fator": null })).unwrap();
+    assert!(ponto(&mut s)["fatorDemanda"].is_null());
+    // Família: a classe e o fator ficam no bloco e valem para as inserções sem valor próprio.
+    s.execute("eletrica.familia.definir", &json!({ "bloco": "TOM-TUE", "classeDemanda": "AR", "fatorDemanda": 0.8 })).unwrap();
+    let f = s.execute("eletrica.familia.ler", &json!({ "bloco": "TOM-TUE" })).unwrap();
+    assert_eq!((f["classeDemanda"].as_str(), f["fatorDemanda"].as_f64()), (Some("arCondicionado"), Some(0.8)));
+    assert_eq!(ponto(&mut s)["fatorDemanda"].as_f64(), Some(0.8));
+    assert!(s.execute("eletrica.familia.definir", &json!({ "bloco": "TOM-TUE", "fatorDemanda": 2 })).is_err());
+    let novo = s.execute("eleponto", &json!({ "bloco": "TOM-TUE", "pontos": [[2.0, 1.0]] })).unwrap();
+    let a = s.execute("eletrica.analisar", &json!({})).unwrap();
+    let inserido = a["pontos"].as_array().unwrap().iter().find(|p| p["handle"] == novo["pontos"][0]).unwrap().clone();
+    assert_eq!(inserido["tipoCarga"].as_str(), Some("arCondicionado"), "a inserção nova herda a classe da família");
+    s.execute("eletrica.familia.definir", &json!({ "bloco": "TOM-TUE", "classeDemanda": null, "fatorDemanda": null })).unwrap();
+    assert!(s.execute("eletrica.familia.ler", &json!({ "bloco": "TOM-TUE" })).unwrap()["classeDemanda"].is_null());
+}
+
+#[test]
+fn tabelas_de_demanda_por_comando() {
+    let _setup = trava_setup();
+    let mut s = Session::default();
+    let ids = |s: &mut Session| -> Vec<String> {
+        s.execute("eletrica.demanda.tabelas", &json!({})).unwrap().as_array().unwrap().iter().map(|t| t["id"].as_str().unwrap().to_string()).collect()
+    };
+    let de_fabrica = ids(&mut s);
+    assert!(["equatorial-nt001-r07", "cemig-nd51", "enel-go-ntc04-r4"].iter().all(|i| de_fabrica.iter().any(|d| d == i)), "{de_fabrica:?}");
+    assert!(s.execute("eletrica.demanda.salvar", &json!({})).is_err());
+    assert!(s.execute("eletrica.demanda.salvar", &json!({ "tabela": { "nome": "Sem edificação" } })).is_err());
+    let t = json!({
+        "nome": "Teste de comando",
+        "edificacoes": [{ "nome": "Casa", "modo": "totalNaFaixa", "faixas": [{ "ateKw": 5, "fator": 0.8 }, { "ateKw": null, "fator": 0.5 }] }],
+        "motores": [{ "ate": 1, "fator": 1.0 }]
+    });
+    let r = s.execute("eletrica.demanda.salvar", &json!({ "tabela": t })).unwrap();
+    let id = r["id"].as_str().unwrap().to_string();
+    assert!(ids(&mut s).contains(&id));
+    assert!(
+        s.execute(
+            "eletrica.demanda.salvar",
+            &json!({ "tabela": { "id": "cemig-nd51", "nome": "Outra", "edificacoes": [{ "nome": "Casa", "faixas": [{ "fator": 1 }] }] } })
+        )
+        .is_err(),
+        "as de fábrica não mudam"
+    );
+    assert_eq!(s.execute("eletrica.demanda.excluir", &json!({ "id": id })).unwrap()["excluida"], true);
+    assert_eq!(s.execute("eletrica.demanda.excluir", &json!({ "id": id })).unwrap()["excluida"], false);
+    assert!(!ids(&mut s).contains(&id));
 }

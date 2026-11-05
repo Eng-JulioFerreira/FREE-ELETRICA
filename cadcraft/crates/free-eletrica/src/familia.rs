@@ -24,6 +24,8 @@ const CHAVE_CAIXA: &str = "physical_box";
 const CHAVE_POTENCIA: &str = "power_va";
 const CHAVE_FP: &str = "power_factor";
 const CHAVE_TECLAS: &str = "keys";
+const CHAVE_CLASSE: &str = "demand_class";
+const CHAVE_FATOR: &str = "demand_factor";
 
 /// O sistema a que um elemento pertence.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
@@ -271,6 +273,10 @@ pub struct Familia {
     pub fp: Option<f64>,
     /// Número de teclas ou pontos.
     pub teclas: u8,
+    /// Classe de demanda. `None`: a do atributo TIPO_CARGA ou a natural do tipo de ponto.
+    pub classe_demanda: Option<crate::demanda::TipoCarga>,
+    /// Fator de demanda, de 0 a 1. `None`: automático, pela tabela da concessionária.
+    pub fator_demanda: Option<f64>,
 }
 
 impl Default for Familia {
@@ -296,6 +302,8 @@ impl Familia {
             potencia: None,
             fp: None,
             teclas: 1,
+            classe_demanda: None,
+            fator_demanda: None,
         }
     }
 
@@ -313,6 +321,11 @@ impl Familia {
             && !(f.is_finite() && f > 0.0 && f <= 1.0)
         {
             return Err(format!("fator de potência {f} inválido: use um valor acima de 0 e até 1"));
+        }
+        if let Some(f) = self.fator_demanda
+            && !(f.is_finite() && (0.0..=1.0).contains(&f))
+        {
+            return Err(format!("fator de demanda {f} inválido: use de 0,00 a 1,00"));
         }
         if !(1..=3).contains(&self.teclas) {
             return Err(format!("{} teclas: use de 1 a 3", self.teclas));
@@ -346,6 +359,8 @@ fn de_xdata(x: &[RawTag]) -> Option<Familia> {
         potencia: num(CHAVE_POTENCIA),
         fp: num(CHAVE_FP),
         teclas: num(CHAVE_TECLAS).map_or(base.teclas, |t| t as u8),
+        classe_demanda: valor(CHAVE_CLASSE).and_then(crate::demanda::TipoCarga::de_codigo),
+        fator_demanda: num(CHAVE_FATOR),
     };
     // Um arquivo editado à mão não derruba a leitura: volta ao natural da categoria.
     Some(if f.validar().is_ok() { f } else { base })
@@ -362,7 +377,7 @@ pub fn gravar(doc: &mut Drawing, bloco: &str, familia: Option<&Familia>) -> Resu
     let foreign = Arc::make_mut(&mut doc.foreign);
     let registro: &mut ForeignExtra = foreign.records.entry(chave(bloco)).or_default();
     let texto = |v: f64| v.to_string();
-    let pares: [(&str, Option<String>); 9] = [
+    let pares: [(&str, Option<String>); 11] = [
         (crate::rota::CHAVE_ESQUEMA, familia.map(|_| crate::rota::VERSAO_ESQUEMA.to_string())),
         (CHAVE_DOMINIO, familia.map(|f| f.dominio.codigo().to_string())),
         (CHAVE_CATEGORIA, familia.map(|f| f.categoria.codigo().to_string())),
@@ -372,6 +387,8 @@ pub fn gravar(doc: &mut Drawing, bloco: &str, familia: Option<&Familia>) -> Resu
         (CHAVE_POTENCIA, familia.and_then(|f| f.potencia).map(texto)),
         (CHAVE_FP, familia.and_then(|f| f.fp).map(texto)),
         (CHAVE_TECLAS, familia.map(|f| f.teclas.to_string())),
+        (CHAVE_CLASSE, familia.and_then(|f| f.classe_demanda).map(|c| c.codigo().to_string())),
+        (CHAVE_FATOR, familia.and_then(|f| f.fator_demanda).map(texto)),
     ];
     for (k, v) in &pares {
         xdata::gravar(&mut registro.xdata, k, v.as_deref());

@@ -23,8 +23,10 @@ pub const TAGS_ALTURA: &[&str] = &["ALTURA", "ALTURA_INSTALACAO", "H_INSTALACAO"
 pub const TAGS_QUADRO: &[&str] = &["QUADRO"];
 /// Fator de potência do ponto: "0,92", "0.92" ou "92%".
 pub const TAGS_FP: &[&str] = &["FP", "FATOR_POTENCIA", "FATOR_DE_POTENCIA", "COS_FI"];
-/// Tipo de carga na demanda: ILUM_TUG, AQUECIMENTO, ELETRODOMESTICOS, AR, BOMBA, OUTROS, RESERVA.
+/// Classe de demanda: ILUM_TUG, AQUECIMENTO, ELETRODOMESTICOS, AR, MOTORES, BOMBA, FATOR_MANUAL, OUTROS, RESERVA.
 pub const TAGS_CARGA: &[&str] = &["TIPO_CARGA", "CARGA"];
+/// Fator de demanda próprio do ponto, de 0 a 1: "0,70", "0.7" ou "70%". Vale no lugar da tabela.
+pub const TAGS_FATOR_DEMANDA: &[&str] = &["FATOR_DEMANDA", "FD"];
 /// A altura exata (m) de uma inserção que foge da legenda, no XDATA: é a que vale para o cálculo.
 pub const CHAVE_ALTURA: &str = "elevation_m";
 /// Tipo de interruptor: 1S, 2S, 3S, PARALELO, INTERMEDIARIO.
@@ -220,6 +222,8 @@ pub struct PontoEletrico {
     pub fp: Option<f64>,
     /// Tipo de carga do atributo TIPO_CARGA. `None`: o padrão do tipo do ponto.
     pub tipo_carga: Option<TipoCarga>,
+    /// Fator de demanda próprio, do ponto ou da família. `None`: o da tabela da concessionária.
+    pub fator_demanda: Option<f64>,
     /// Tipo de interruptor (atributo TIPO_INTERRUPTOR). `None`: um simples de uma tecla.
     pub tipo_interruptor: Option<TipoInterruptor>,
     /// Todos os atributos lidos, na ordem do bloco.
@@ -320,7 +324,8 @@ impl PontoEletrico {
             quadro: None,
             quadro_ref: texto(TAGS_QUADRO),
             fp: valor(TAGS_FP).and_then(fator_potencia).or_else(|| familia.as_ref().and_then(|f| f.fp)),
-            tipo_carga: valor(TAGS_CARGA).and_then(TipoCarga::de_texto),
+            tipo_carga: valor(TAGS_CARGA).and_then(TipoCarga::de_texto).or_else(|| familia.as_ref().and_then(|f| f.classe_demanda)),
+            fator_demanda: valor(TAGS_FATOR_DEMANDA).and_then(fator_de_demanda).or_else(|| familia.as_ref().and_then(|f| f.fator_demanda)),
             tipo_interruptor: valor(TAGS_INTERRUPTOR).and_then(TipoInterruptor::de_texto).or_else(|| {
                 familia.as_ref().filter(|f| f.categoria == FamilyCategory::Interruptor).and_then(|f| match f.teclas {
                     2 => Some(TipoInterruptor::Simples2),
@@ -393,7 +398,7 @@ impl PontoEletrico {
                 if let Some(t) = self.valor(TAGS_CARGA)
                     && self.tipo_carga.is_none()
                 {
-                    v.push(format!("TIPO_CARGA \"{t}\" não reconhecido: use ILUM_TUG, AQUECIMENTO, ELETRODOMESTICOS, AR, BOMBA, OUTROS ou RESERVA"));
+                    v.push(format!("TIPO_CARGA \"{t}\" não reconhecido: use ILUM_TUG, AQUECIMENTO, ELETRODOMESTICOS, AR, MOTORES, BOMBA, FATOR_MANUAL, OUTROS ou RESERVA"));
                 }
             }
         }
@@ -467,6 +472,16 @@ pub fn altura_padrao(tipo: TipoPonto, pe_direito: Option<f64>) -> f64 {
 
 /// Fator de potência: "0,92", "0.92", "92%" ou "92" (de 10 a 100 é porcentagem). Fora de
 /// (0, 1] não vale: "1,5" é erro, não 1,5 %.
+pub fn fator_de_demanda(texto: &str) -> Option<f64> {
+    if texto.trim_start().starts_with('-') {
+        return None;
+    }
+    let n = numero(texto)?;
+    let f = if texto.contains('%') || n > 1.0 { n / 100.0 } else { n };
+    (0.0..=1.0).contains(&f).then_some(f)
+}
+
+/// Fator de potência: "0,92", "0.92" ou "92%". `None` fora de (0, 1].
 pub fn fator_potencia(texto: &str) -> Option<f64> {
     let n = numero(texto)?;
     let f = if texto.contains('%') || (10.0..=100.0).contains(&n) { n / 100.0 } else { n };

@@ -742,25 +742,25 @@ fn tabelas_de_demanda_da_equatorial() {
     // Id desconhecido: a primeira tabela.
     assert_eq!(tabela("inexistente").id, t.id);
     // Tabela 5, residências: 100 % até 10 kW, 35 % nos 110 seguintes, 25 % acima de 120.
-    let res = t.edificacao("Residências e edifícios de apartamentos").faixas;
+    let res = &t.edificacao("Residências e edifícios de apartamentos").faixas;
     assert!(perto(por_faixas(res, 8_000.0), 8_000.0, 1e-6));
     assert!(perto(por_faixas(res, 15_000.0), 11_750.0, 1e-6));
     assert!(perto(por_faixas(res, 130_000.0), 10_000.0 + 38_500.0 + 2_500.0, 1e-6));
     // Hotéis: 50 % até 20, 40 % nos 80 seguintes, 30 % acima de 100.
-    assert!(perto(por_faixas(t.edificacao("Hotéis").faixas, 150_000.0), 57_000.0, 1e-6));
+    assert!(perto(por_faixas(&t.edificacao("Hotéis").faixas, 150_000.0), 57_000.0, 1e-6));
     assert!(perto(por_faixas(res, -5.0), 0.0, 1e-9));
     // Tabela 4: colunas até e acima de 3,5 kW.
-    assert_eq!((fator_aparelhos(t.aparelhos, 1, false), fator_aparelhos(t.aparelhos, 2, true)), (0.80, 0.65));
+    assert_eq!((fator_aparelhos(&t.aparelhos, 1, false), fator_aparelhos(&t.aparelhos, 2, true)), (0.80, 0.65));
     assert_eq!(
-        (fator_aparelhos(t.aparelhos, 28, true), fator_aparelhos(t.aparelhos, 100, false), fator_aparelhos(t.aparelhos, 100, true)),
+        (fator_aparelhos(&t.aparelhos, 28, true), fator_aparelhos(&t.aparelhos, 100, false), fator_aparelhos(&t.aparelhos, 100, true)),
         (0.24, 0.30, 0.16)
     );
     // Tabela 10 e bombas.
     assert_eq!(
-        (fator_quantidade(t.ar_condicionado, 2), fator_quantidade(t.ar_condicionado, 3), fator_quantidade(t.ar_condicionado, 15)),
+        (fator_quantidade(&t.ar_condicionado, 2), fator_quantidade(&t.ar_condicionado, 3), fator_quantidade(&t.ar_condicionado, 15)),
         (1.00, 0.88, 0.70)
     );
-    assert_eq!((fator_quantidade(t.bombas, 1), fator_quantidade(t.bombas, 3)), (1.0, 0.5));
+    assert_eq!((fator_quantidade(&t.bombas, 1), fator_quantidade(&t.bombas, 3)), (1.0, 0.5));
 }
 
 #[test]
@@ -768,10 +768,10 @@ fn demanda_por_tipo_de_carga() {
     use demanda::*;
     let t = tabela("equatorial-nt001-r07");
     let cargas = [
-        Cargas { tipo: TipoCarga::IluminacaoTug, aparelhos: vec![100.0, 160.0, 600.0, 600.0] },
-        Cargas { tipo: TipoCarga::Aquecimento, aparelhos: vec![5_400.0] },
-        Cargas { tipo: TipoCarga::Aquecimento, aparelhos: vec![2_000.0, 2_000.0] },
-        Cargas { tipo: TipoCarga::Reserva, aparelhos: vec![1_000.0] },
+        Cargas { tipo: TipoCarga::IluminacaoTug, aparelhos: vec![100.0, 160.0, 600.0, 600.0], fator: None },
+        Cargas { tipo: TipoCarga::Aquecimento, aparelhos: vec![5_400.0], fator: None },
+        Cargas { tipo: TipoCarga::Aquecimento, aparelhos: vec![2_000.0, 2_000.0], fator: None },
+        Cargas { tipo: TipoCarga::Reserva, aparelhos: vec![1_000.0], fator: None },
     ];
     let d = calcular(t, "", &cargas);
     assert_eq!(d.edificacao, "Residências e edifícios de apartamentos");
@@ -782,6 +782,154 @@ fn demanda_por_tipo_de_carga() {
     assert!(perto(d.instalada, 1_460.0 + 9_400.0, 1e-6));
     assert!(perto(d.demandada, 1_460.0 + 7_320.0, 1e-6));
     assert_eq!(TipoCarga::de_codigo("ar"), Some(TipoCarga::ArCondicionado));
+}
+
+#[test]
+fn presets_de_demanda_conferidos_nas_normas() {
+    use demanda::*;
+    assert_eq!(tabelas().len(), 3, "só as tabelas conferidas nas normas públicas");
+    for t in tabelas() {
+        t.validar().unwrap_or_else(|e| panic!("{}: {e}", t.nome));
+        assert!(!t.fonte.is_empty() && !t.propria, "{}", t.id);
+    }
+    // CEMIG, tabela 10: o fator da faixa vale para toda a carga.
+    let c = tabela("cemig-nd51");
+    assert_eq!(c.id, "cemig-nd51");
+    let r = c.edificacao("Residências");
+    assert_eq!(r.modo, ModoFaixas::TotalNaFaixa);
+    assert!(perto(r.demanda(800.0), 800.0 * 0.86, 1e-6));
+    assert!(perto(r.demanda(4_500.0), 4_500.0 * 0.68, 1e-6));
+    assert!(perto(r.demanda(9_500.0), 9_500.0 * 0.52, 1e-6));
+    assert!(perto(r.demanda(12_000.0), 12_000.0 * 0.45, 1e-6));
+    // Tabela 11, acumulada: escritórios 100 % até 20 e 70 % no excesso.
+    assert!(perto(c.edificacao("Escritórios, lojas e salas comerciais").demanda(30_000.0), 27_000.0, 1e-6));
+    // Tabela 13.
+    let n = |q: usize| fator_quantidade(&c.aquecimento, q);
+    assert_eq!((n(1), n(2), n(10), n(19), n(20), n(26), n(100)), (1.00, 0.92, 0.52, 0.40, 0.40, 0.37, 0.33));
+    assert_eq!(fator_quantidade(&c.ar_condicionado, 5), 0.70);
+    // Enel Goiás, tabela 2.
+    let e = tabela("enel-go-ntc04-r4");
+    let r = e.edificacao("Residências");
+    assert!(perto(r.demanda(5_500.0), 5_500.0 * 0.45, 1e-6));
+    assert!(perto(r.demanda(15_000.0), 15_000.0 * 0.24, 1e-6));
+    assert!(perto(e.edificacao("Hospitais").demanda(30_000.0), 14_000.0 + 4_000.0, 1e-6));
+    assert_eq!((fator_quantidade(&e.aquecimento, 2), fator_quantidade(&e.aquecimento, 70)), (0.72, 0.32));
+    assert_eq!((fator_quantidade(&e.ar_condicionado, 10), fator_quantidade(&e.ar_condicionado, 11)), (1.00, 0.90));
+}
+
+#[test]
+fn classe_e_fator_de_demanda_por_ponto_e_familia() {
+    use demanda::*;
+    let t = tabela("equatorial-nt001-r07");
+    // As classes da interface têm nome legível e voltam pelo texto do atributo.
+    for c in TipoCarga::CLASSES {
+        assert_eq!(TipoCarga::de_texto(c.nome_classe()), Some(c), "{}", c.nome_classe());
+        assert_eq!(TipoCarga::de_codigo(c.codigo()), Some(c));
+    }
+    // Um aparelho com fator próprio sai da contagem: o outro fica com o fator de um aparelho.
+    let d = calcular(
+        t,
+        "",
+        &[
+            Cargas { tipo: TipoCarga::Aquecimento, aparelhos: vec![2_000.0], fator: None },
+            Cargas { tipo: TipoCarga::Aquecimento, aparelhos: vec![2_000.0], fator: Some(0.5) },
+            Cargas { tipo: TipoCarga::FatorManual, aparelhos: vec![1_000.0], fator: Some(0.25) },
+            Cargas { tipo: TipoCarga::FatorManual, aparelhos: vec![400.0], fator: None },
+            Cargas { tipo: TipoCarga::Motores, aparelhos: vec![1_000.0, 1_000.0], fator: None },
+            Cargas { tipo: TipoCarga::Reserva, aparelhos: vec![1_000.0], fator: Some(0.5) },
+        ],
+    );
+    let linha = |tipo| d.linhas.iter().find(|l| l.tipo == tipo).unwrap();
+    assert!(perto(linha(TipoCarga::Aquecimento).demandada, 2_000.0 * 0.80 + 1_000.0, 1e-6));
+    assert_eq!(linha(TipoCarga::Aquecimento).aparelhos, 2);
+    assert!(linha(TipoCarga::Aquecimento).regra.contains("fator próprio"));
+    assert!(perto(linha(TipoCarga::FatorManual).demandada, 250.0 + 400.0, 1e-6));
+    assert!(perto(linha(TipoCarga::Motores).demandada, 2_000.0, 1e-6), "sem tabela de motores: 100 %");
+    assert!(perto(linha(TipoCarga::Reserva).demandada, 0.0, 1e-9));
+    // No bloco: o atributo do ponto vale sobre a família.
+    assert_eq!(ponto::fator_de_demanda("0,70"), Some(0.70));
+    assert_eq!(ponto::fator_de_demanda("70%"), Some(0.70));
+    assert_eq!(ponto::fator_de_demanda("0"), Some(0.0));
+    assert_eq!(ponto::fator_de_demanda("-1"), None);
+    assert_eq!(ponto::fator_de_demanda("abc"), None);
+    let mut doc = metros();
+    let mut f = familia::Familia::da_categoria(familia::FamilyCategory::PontoForca);
+    f.classe_demanda = Some(TipoCarga::Motores);
+    f.fator_demanda = Some(0.6);
+    familia::gravar(&mut doc, "MOTOR", Some(&f)).unwrap();
+    assert_eq!(familia::ler(&doc, "MOTOR"), Some(f.clone()));
+    let h = inserir(&mut doc, "MOTOR", 1.0, 0.0, &[("POTENCIA", "1000VA")]);
+    let p = ponto::ler_ponto(&doc, h).unwrap();
+    assert_eq!((p.tipo_carga, p.fator_demanda), (Some(TipoCarga::Motores), Some(0.6)));
+    editar::definir(&mut doc, h, ponto::TAGS_CARGA, Some("AR")).unwrap();
+    editar::definir(&mut doc, h, ponto::TAGS_FATOR_DEMANDA, Some("0,9")).unwrap();
+    let p = ponto::ler_ponto(&doc, h).unwrap();
+    assert_eq!((p.tipo_carga, p.fator_demanda), (Some(TipoCarga::ArCondicionado), Some(0.9)));
+    // Família com fator fora da faixa é recusada.
+    f.fator_demanda = Some(1.5);
+    assert!(familia::gravar(&mut doc, "MOTOR", Some(&f)).is_err());
+    // A hachura não é oferecida na família: preencher é com a Hachura nativa.
+    assert!(
+        biblioteca::GEOMETRIAS
+            .iter()
+            .all(|(forma, nome)| !forma.contains("Media") && !forma.contains("Alta") && !nome.to_lowercase().contains("hachura"))
+    );
+}
+
+#[test]
+fn tabela_de_demanda_propria() {
+    use demanda::*;
+    let mut s = Setup::default();
+    // Inválidas: sem nome, fator fora de 0 a 1, faixas fora de ordem, quantidades fora de ordem.
+    assert!(s.salvar_tabela(TabelaDemanda::em_branco("  ")).is_err());
+    let mut ruim = TabelaDemanda::em_branco("CPFL");
+    ruim.edificacoes[0].faixas = vec![Faixa { ate_kw: Some(10.0), fator: 1.5 }];
+    assert!(s.salvar_tabela(ruim).is_err());
+    let mut ruim = TabelaDemanda::em_branco("CPFL");
+    ruim.edificacoes[0].faixas = vec![Faixa { ate_kw: Some(10.0), fator: 1.0 }, Faixa { ate_kw: Some(5.0), fator: 0.5 }];
+    assert!(s.salvar_tabela(ruim).is_err());
+    let mut ruim = TabelaDemanda::em_branco("CPFL");
+    ruim.ar_condicionado = vec![PorQuantidade { ate: 5, fator: 1.0 }, PorQuantidade { ate: 2, fator: 0.5 }];
+    assert!(s.salvar_tabela(ruim).is_err());
+    // As de fábrica não mudam.
+    let mut copia = tabela("cemig-nd51").clone();
+    assert!(s.salvar_tabela(copia.clone()).is_err());
+    copia.id.clear();
+    copia.nome = "CEMIG revisada".into();
+    let id = s.salvar_tabela(copia).unwrap();
+    assert_eq!(id, "propria-cemig-revisada");
+    // A própria é escolhida e vale no cálculo; é editável com o mesmo id.
+    let mut t = TabelaDemanda::em_branco("Minha CPFL");
+    t.edificacoes[0].faixas = vec![Faixa { ate_kw: Some(10.0), fator: 0.8 }, Faixa { ate_kw: None, fator: 0.5 }];
+    t.motores = vec![PorQuantidade { ate: 1, fator: 1.0 }, PorQuantidade { ate: u32::MAX, fator: 0.7 }];
+    let id = s.salvar_tabela(t).unwrap();
+    s.concessionaria = id.clone();
+    s.normalizar();
+    assert_eq!(s.concessionaria, id);
+    assert_eq!(s.tabela_demanda().nome, "Minha CPFL");
+    let d = calcular(
+        s.tabela_demanda(),
+        &s.edificacao,
+        &[
+            Cargas { tipo: TipoCarga::IluminacaoTug, aparelhos: vec![12_000.0], fator: None },
+            Cargas { tipo: TipoCarga::Motores, aparelhos: vec![1_000.0, 1_000.0], fator: None },
+        ],
+    );
+    assert!(perto(d.demandada, 8_000.0 + 1_000.0 + 1_400.0, 1e-6), "{d:?}");
+    assert_eq!(s.tabelas_demanda().len(), demanda::tabelas().len() + 2);
+    // Viaja nas preferências.
+    let volta: Setup = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+    assert_eq!(volta.tabelas_proprias, s.tabelas_proprias);
+    // Um arquivo editado à mão com uma tabela ruim não chega ao cálculo.
+    let mut hostil = s.clone();
+    hostil.tabelas_proprias[1].edificacoes[0].faixas[0].fator = f64::NAN;
+    hostil.normalizar();
+    assert_eq!(hostil.tabelas_proprias.len(), 1);
+    assert_eq!(hostil.concessionaria, "equatorial-nt001-r07");
+    // Excluir a tabela em uso volta para a primeira de fábrica.
+    assert!(s.remover_tabela(&id));
+    assert!(!s.remover_tabela(&id));
+    assert_eq!(s.concessionaria, "equatorial-nt001-r07");
 }
 
 #[test]

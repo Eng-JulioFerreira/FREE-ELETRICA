@@ -186,6 +186,9 @@ pub fn inserir_ponto(
         if let Some(p) = f.potencia.filter(|_| livre("POTENCIA", &v)) {
             v.push(("POTENCIA".into(), format!("{}VA", crate::ponto::br(p))));
         }
+        if let Some(c) = f.classe_demanda.filter(|_| livre("TIPO_CARGA", &v)) {
+            v.push(("TIPO_CARGA".into(), c.codigo().to_string()));
+        }
         if let Some(fp) = f.fp.filter(|_| livre("FP", &v)) {
             v.push(("FP".into(), crate::ponto::br(fp)));
         }
@@ -526,10 +529,10 @@ pub fn garantir_base(doc: &mut Drawing, setup: &crate::setup::Setup, metros: f64
 // ---------------------------------------------------------------- utilitários do editor de blocos
 
 /// As geometrias de partida que o editor de blocos oferece: (código, nome).
-pub const GEOMETRIAS: [(&str, &str); 7] = [
+///
+/// Só contornos: preencher um símbolo é com a Hachura nativa do CADCraft.
+pub const GEOMETRIAS: [(&str, &str); 5] = [
     ("tomada", "Triângulo de tomada"),
-    ("tomadaMedia", "Tomada média (meia hachura)"),
-    ("tomadaAlta", "Tomada alta (hachura cheia)"),
     ("comando", "Círculo de comando"),
     ("luminaria", "Luminária octogonal"),
     ("contorno4x2", "Contorno 4x2"),

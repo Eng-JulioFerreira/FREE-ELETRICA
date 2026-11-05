@@ -53,13 +53,15 @@ pub fn specs() -> Vec<CommandSpec> {
             .interactive(|_| Ok(Box::new(PontoM::default()))),
         CommandSpec::new("eletrica.ponto.altura", "Point Elevation", run_altura)
             .params("{pontos: [hex], altura: m | null} (at the project's standard height or null: the visible ALTURA stays empty; otherwise the exact value goes to XDATA and the plan shows h=1,45m) → {pontos}"),
+        CommandSpec::new("eletrica.ponto.demanda", "Point Demand", run_ponto_demanda)
+            .params("{pontos: [hex], classe?: ILUM_TUG | AQUECIMENTO | AR | MOTORES | ELETRODOMESTICOS | FATOR_MANUAL | null, fator?: 0-1 | null} (null: back to the family's or to the utility's table) → {pontos}"),
         CommandSpec::new("eletrica.familia.ler", "Block Family", run_familia_ler)
             .params("{bloco? (default: the block being edited)} → the family, or null")
             .noundo(),
         CommandSpec::new("eletrica.familia.definir", "Family Properties", run_familia_definir)
-            .params("{bloco? (default: the block being edited), categoria?: NONE | ELECTRICAL_FIXTURE | LIGHTING_FIXTURE | LIGHTING_DEVICE | DATA_DEVICE | FIRE_SECURITY_DEVICE | ELECTRICAL_EQUIPMENT | TELECOM_ENCLOSURE | JUNCTION_BOX, dominio?: POWER | DATA_TELECOM | FIRE_SECURITY | INFRA, refAltura?: LOW | MEDIUM | HIGH | CEILING | FLOOR | FIXED, cotaFixa?: m, caixa?: NONE | 4X2 | 4X4 | OCTAGONAL | PULL_15X15 | PULL_20X20 | PULL_30X30, potencia?: VA | null, fp?: 0-1 | null, teclas?: 1-3, remover?: bool} → the family"),
+            .params("{bloco? (default: the block being edited), categoria?: NONE | ELECTRICAL_FIXTURE | LIGHTING_FIXTURE | LIGHTING_DEVICE | DATA_DEVICE | FIRE_SECURITY_DEVICE | ELECTRICAL_EQUIPMENT | TELECOM_ENCLOSURE | JUNCTION_BOX, dominio?: POWER | DATA_TELECOM | FIRE_SECURITY | INFRA, refAltura?: LOW | MEDIUM | HIGH | CEILING | FLOOR | FIXED, cotaFixa?: m, caixa?: NONE | 4X2 | 4X4 | OCTAGONAL | PULL_15X15 | PULL_20X20 | PULL_30X30, potencia?: VA | null, fp?: 0-1 | null, teclas?: 1-3, classeDemanda?: ILUM_TUG | AQUECIMENTO | AR | MOTORES | ELETRODOMESTICOS | FATOR_MANUAL | null, fatorDemanda?: 0-1 | null (null: automatic, from the utility's table), remover?: bool} → the family"),
         CommandSpec::new("eletrica.familia.geometria", "Family Base Geometry", run_familia_geometria)
-            .params("{forma: tomada | tomadaMedia | tomadaAlta | comando | luminaria | contorno4x2 | contorno4x4} → inserts it into the block being edited: {entidades}")
+            .params("{forma: tomada | comando | luminaria | contorno4x2 | contorno4x4} → inserts it into the block being edited: {entidades}")
             .enabled(no_editor_de_blocos),
         CommandSpec::new("eletrica.familia.atributos", "Family Attributes", run_familia_atributos)
             .params("{categoria? (default: the family's)} → creates the standard ATTDEFs missing from the block being edited: {criados}")
@@ -120,7 +122,15 @@ pub fn specs() -> Vec<CommandSpec> {
             "{quadro?: hex | TAG, circuito, grupoDr?: text | null, cabo?: FLEX_PVC_70 | UNI_PVC_70 | HEPR_XLPE_90 | LSZH_70 | LSZH_HEPR_90 | null, isolacao?: \"PVC\" | \"EPR\" | \"XLPE\" | null, esquema?: \"F+N\" | \"F+N+T\" | \"2F+T\" | \"3F+N+T\" | null, tensao?: V | null, fases?: \"R\" | \"RS\" ... | null (a value locks the phases), descricao?} (null: back to automatic) → {quadro, circuito}. Load type and power factor come from the block attributes TIPO_CARGA and FP.",
         ),
         CommandSpec::new("eletrica.demanda.tabelas", "Demand Tables", run_tabelas_demanda)
-            .params("{} → the utilities' demand tables (id, nome, fonte, edificacoes, aparelhos, arCondicionado, bombas)")
+            .params("{} → the factory and custom demand tables (id, nome, fonte, edificacoes, aparelhos, aquecimento, arCondicionado, bombas, motores, propria)")
+            .enabled(always)
+            .noundo(),
+        CommandSpec::new("eletrica.demanda.salvar", "Save Demand Table", run_salvar_tabela)
+            .params("{tabela: {id?, nome, fonte?, edificacoes: [{nome, modo: acumulada | totalNaFaixa, faixas: [{ateKw, fator}]}], aparelhos?, limiteAparelhoKw?, aquecimento?, arCondicionado?, bombas?, motores?}, usar?: bool} → creates or updates a custom table: {id}")
+            .enabled(always)
+            .noundo(),
+        CommandSpec::new("eletrica.demanda.excluir", "Delete Demand Table", run_excluir_tabela)
+            .params("{id} → deletes a custom table: {excluida}")
             .enabled(always)
             .noundo(),
         CommandSpec::new("eletrica.circuito.alvo", "Circuit Target", run_alvo)
@@ -511,7 +521,29 @@ fn run_equilibrar(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn run_tabelas_demanda(_s: &mut Session, _p: &Value) -> Result<Value> {
-    json_de(&ele::demanda::tabelas())
+    json_de(&ele::setup::atual().tabelas_demanda())
+}
+
+fn run_salvar_tabela(_s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "eletrica.demanda.salvar";
+    let v = p.get("tabela").cloned().ok_or_else(|| bad(CMD, "`tabela` is required"))?;
+    let tabela: ele::demanda::TabelaDemanda = serde_json::from_value(v).map_err(|e| bad(CMD, e.to_string()))?;
+    let mut setup = ele::setup::atual();
+    let id = setup.salvar_tabela(tabela).map_err(|e| bad(CMD, e))?;
+    if p.get("usar").and_then(Value::as_bool).unwrap_or(false) {
+        setup.concessionaria = id.clone();
+    }
+    ele::setup::definir(setup);
+    Ok(json!({ "id": id }))
+}
+
+fn run_excluir_tabela(_s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "eletrica.demanda.excluir";
+    let id = texto(CMD, p, "id")?;
+    let mut setup = ele::setup::atual();
+    let excluida = setup.remover_tabela(&id);
+    ele::setup::definir(setup);
+    Ok(json!({ "excluida": excluida }))
 }
 
 fn run_alvo(s: &mut Session, p: &Value) -> Result<Value> {
@@ -1478,6 +1510,44 @@ fn valores_com_altura(cmd: &str, p: &Value) -> Result<Vec<(String, String)>> {
     Ok(v)
 }
 
+fn run_ponto_demanda(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "eletrica.ponto.demanda";
+    let hs = handles(CMD, p, "pontos")?;
+    if p.get("classe").is_none() && p.get("fator").is_none() {
+        return Err(bad(CMD, "give `classe` or `fator`"));
+    }
+    // Tudo é conferido antes de gravar qualquer coisa.
+    let classe = match p.get("classe") {
+        None => None,
+        Some(Value::Null) => Some(None),
+        Some(v) => Some(Some(
+            v.as_str().and_then(ele::demanda::TipoCarga::de_codigo).ok_or_else(|| bad(CMD, format!("`classe` has an unknown value: {v}")))?,
+        )),
+    };
+    let fator = match p.get("fator") {
+        None => None,
+        Some(Value::Null) => Some(None),
+        Some(v) => {
+            Some(Some(v.as_f64().filter(|f| f.is_finite() && (0.0..=1.0).contains(f)).ok_or_else(|| bad(CMD, "`fator` must be from 0 to 1"))?))
+        }
+    };
+    for h in &hs {
+        if ele::ponto::ler_ponto(s.doc()?, *h).is_none() {
+            return Err(bad(CMD, format!("{} is not an electrical point", h.hex())));
+        }
+    }
+    let doc = s.doc_mut()?;
+    for h in &hs {
+        if let Some(c) = classe {
+            ele::editar::definir(doc, *h, ele::ponto::TAGS_CARGA, c.map(|c| c.codigo())).map_err(erro)?;
+        }
+        if let Some(f) = fator {
+            ele::editar::definir(doc, *h, ele::ponto::TAGS_FATOR_DEMANDA, f.map(ele::ponto::br).as_deref()).map_err(erro)?;
+        }
+    }
+    Ok(json!({ "pontos": hs.len() }))
+}
+
 fn run_altura(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "eletrica.ponto.altura";
     let hs = handles(CMD, p, "pontos")?;
@@ -1543,7 +1613,14 @@ fn run_familia_definir(s: &mut Session, p: &Value) -> Result<Value> {
         let atual = ele::familia::ler(s.doc()?, &bloco);
         // Trocar a categoria traz o que é natural dela; os valores padrão do projetista ficam.
         let mut f = match (atual, categoria) {
-            (Some(a), Some(c)) if a.categoria != c => Familia { potencia: a.potencia, fp: a.fp, teclas: a.teclas, ..Familia::da_categoria(c) },
+            (Some(a), Some(c)) if a.categoria != c => Familia {
+                potencia: a.potencia,
+                fp: a.fp,
+                teclas: a.teclas,
+                classe_demanda: a.classe_demanda,
+                fator_demanda: a.fator_demanda,
+                ..Familia::da_categoria(c)
+            },
             (Some(a), _) => a,
             (None, Some(c)) => Familia::da_categoria(c),
             (None, None) => return Err(bad(CMD, "the block has no family yet: give `categoria`")),
@@ -1565,6 +1642,12 @@ fn run_familia_definir(s: &mut Session, p: &Value) -> Result<Value> {
         }
         if let Some(v) = p.get("fp") {
             f.fp = if v.is_null() { None } else { Some(numero_finito(CMD, v, "fp")?) };
+        }
+        if let Some(v) = p.get("classeDemanda") {
+            f.classe_demanda = if v.is_null() { None } else { codigo_de(CMD, p, "classeDemanda", ele::demanda::TipoCarga::de_codigo)? };
+        }
+        if let Some(v) = p.get("fatorDemanda") {
+            f.fator_demanda = if v.is_null() { None } else { Some(numero_finito(CMD, v, "fatorDemanda")?) };
         }
         if let Some(v) = p.get("teclas").filter(|v| !v.is_null()) {
             f.teclas = v.as_u64().and_then(|n| u8::try_from(n).ok()).ok_or_else(|| bad(CMD, "`teclas` must be from 1 to 3"))?;

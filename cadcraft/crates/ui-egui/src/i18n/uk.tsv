@@ -1356,6 +1356,9 @@
 	Point Elevation	Висота точки
 	Block Family	Сімейство блока
 	Family Properties	Властивості сімейства
+	Point Demand	Попит точки
+	Save Demand Table	Зберегти таблицю попиту
+	Delete Demand Table	Видалити таблицю попиту
 	Family Base Geometry	Базова геометрія сімейства
 	Family Attributes	Атрибути сімейства
 	Family Connector	З'єднувач сімейства

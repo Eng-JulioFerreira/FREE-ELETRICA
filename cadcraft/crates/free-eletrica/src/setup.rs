@@ -409,6 +409,8 @@ pub struct Setup {
     pub concessionaria: String,
     /// Tipo de edificação da tabela de iluminação e tomadas.
     pub edificacao: String,
+    /// As tabelas de demanda cadastradas pelo projetista.
+    pub tabelas_proprias: Vec<crate::demanda::TabelaDemanda>,
 }
 
 impl Default for Setup {
@@ -440,6 +442,7 @@ impl Default for Setup {
             eletroduto_minimo: 20.0,
             concessionaria: "equatorial-nt001-r07".into(),
             edificacao: "Residências e edifícios de apartamentos".into(),
+            tabelas_proprias: Vec::new(),
         }
     }
 }
@@ -595,14 +598,65 @@ impl Setup {
             self.tipo_eletroduto = Setup::default().tipo_eletroduto;
         }
         // Concessionária e edificação sempre válidas (as tabelas mudam entre versões).
-        let tabela = crate::demanda::tabela(&self.concessionaria);
-        self.concessionaria = tabela.id.to_string();
-        self.edificacao = tabela.edificacao(&self.edificacao).nome.to_string();
+        // Uma tabela própria inválida (arquivo editado à mão) não entra no cálculo.
+        self.tabelas_proprias.retain(|t| {
+            !t.id.trim().is_empty() && t.validar().is_ok() && crate::demanda::tabelas().iter().all(|p| !p.id.eq_ignore_ascii_case(&t.id))
+        });
+        for t in &mut self.tabelas_proprias {
+            t.propria = true;
+        }
+        let tabela = self.tabela_demanda();
+        let (id, edificacao) = (tabela.id.clone(), tabela.edificacao(&self.edificacao).nome.clone());
+        self.concessionaria = id;
+        self.edificacao = edificacao;
     }
 
-    /// A tabela de demanda escolhida.
-    pub fn tabela_demanda(&self) -> &'static crate::demanda::TabelaDemanda {
-        crate::demanda::tabela(&self.concessionaria)
+    /// A tabela de demanda escolhida: uma própria ou uma de fábrica.
+    pub fn tabela_demanda(&self) -> &crate::demanda::TabelaDemanda {
+        self.tabelas_proprias
+            .iter()
+            .find(|t| t.id.eq_ignore_ascii_case(self.concessionaria.trim()))
+            .unwrap_or_else(|| crate::demanda::tabela(&self.concessionaria))
+    }
+
+    /// Todas as tabelas de demanda: as de fábrica e as próprias.
+    pub fn tabelas_demanda(&self) -> Vec<&crate::demanda::TabelaDemanda> {
+        crate::demanda::tabelas().iter().chain(self.tabelas_proprias.iter()).collect()
+    }
+
+    /// Cadastra ou atualiza uma tabela própria. Sem id, ele nasce do nome. As de fábrica não mudam:
+    /// copie uma para outro nome. Devolve o id.
+    pub fn salvar_tabela(&mut self, mut t: crate::demanda::TabelaDemanda) -> Result<String, String> {
+        t.validar()?;
+        t.propria = true;
+        t.nome = t.nome.trim().to_string();
+        if t.id.trim().is_empty() {
+            let base: String = crate::ponto::normalizar(&t.nome).to_lowercase().split(' ').filter(|p| !p.is_empty()).collect::<Vec<_>>().join("-");
+            t.id = format!("propria-{base}");
+        }
+        if crate::demanda::tabelas().iter().any(|p| p.id.eq_ignore_ascii_case(&t.id)) {
+            return Err("as tabelas de fábrica não podem ser alteradas: salve com outro nome".into());
+        }
+        if self.tabelas_proprias.iter().any(|o| !o.id.eq_ignore_ascii_case(&t.id) && o.nome.eq_ignore_ascii_case(&t.nome)) {
+            return Err(format!("já existe uma tabela \"{}\"", t.nome));
+        }
+        let id = t.id.clone();
+        match self.tabelas_proprias.iter_mut().find(|o| o.id.eq_ignore_ascii_case(&t.id)) {
+            Some(o) => *o = t,
+            None => self.tabelas_proprias.push(t),
+        }
+        Ok(id)
+    }
+
+    /// Exclui uma tabela própria. Se ela estava em uso, o projeto volta à primeira de fábrica.
+    pub fn remover_tabela(&mut self, id: &str) -> bool {
+        let antes = self.tabelas_proprias.len();
+        self.tabelas_proprias.retain(|t| !t.id.eq_ignore_ascii_case(id.trim()));
+        let saiu = self.tabelas_proprias.len() != antes;
+        if saiu {
+            self.normalizar();
+        }
+        saiu
     }
 
     /// Cadastra um cabo de telecom. O nome é obrigatório e único.

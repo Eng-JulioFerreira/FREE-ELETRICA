@@ -636,7 +636,7 @@ pub fn rotear(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle) -
     let cargas: Vec<demanda::Cargas> = linhas
         .iter()
         .flat_map(|l| analise.pontos.iter().filter(|p| l.circuito.pontos.contains(&p.handle) && p.tipo.e_carga()))
-        .filter_map(|p| Some(demanda::Cargas { tipo: p.tipo_carga_efetivo(), aparelhos: vec![p.potencia?] }))
+        .filter_map(|p| Some(demanda::Cargas { tipo: p.tipo_carga_efetivo(), aparelhos: vec![p.potencia?], fator: p.fator_demanda }))
         .collect();
     let demanda = demanda::calcular(setup.tabela_demanda(), &setup.edificacao, &cargas);
     let (tensao_fn, tensao_ff) = (cfg_base.tensao_fn, cfg_base.tensao_ff);

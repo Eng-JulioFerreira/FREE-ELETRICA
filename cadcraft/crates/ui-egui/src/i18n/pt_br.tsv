@@ -1270,6 +1270,9 @@
 	Point Elevation	Altura do ponto
 	Block Family	Família do bloco
 	Family Properties	Propriedades da família
+	Point Demand	Demanda do ponto
+	Save Demand Table	Salvar tabela de demanda
+	Delete Demand Table	Excluir tabela de demanda
 	Family Base Geometry	Geometria base da família
 	Family Attributes	Atributos da família
 	Family Connector	Ponto de conexão da família

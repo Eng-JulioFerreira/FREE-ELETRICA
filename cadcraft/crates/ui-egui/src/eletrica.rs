@@ -127,6 +127,9 @@ struct Rascunho {
     aba: Aba,
     novo_cabo: CaboTelecom,
     erro: Option<String>,
+    /// A tabela de demanda aberta no editor.
+    tabela_editada: Option<ele::demanda::TabelaDemanda>,
+    erro_tabela: Option<String>,
 }
 
 /// As abas do quadro de cargas.
@@ -190,7 +193,7 @@ impl Aba {
             Aba::Condutores => "Condutores",
             Aba::Eletrodutos => "Eletrodutos",
             Aba::Agrupamento => "Agrupamento",
-            Aba::Demanda => "Demanda",
+            Aba::Demanda => "Demanda / Concessionárias",
             Aba::Telecom => "Cabos",
         }
     }
@@ -292,6 +295,8 @@ fn abrir_setup() -> Result<Value, String> {
         aba: Aba::Criterios,
         novo_cabo: CaboTelecom { categoria: CategoriaTelecom::Utp, quantidade: 4, ..CaboTelecom::default() },
         erro: None,
+        tabela_editada: None,
+        erro_tabela: None,
     };
     trava(&JANELAS).setup = Some(rascunho);
     abrir(Qual::Setup)
@@ -1800,6 +1805,42 @@ fn janela_blocos(ui: &mut egui::Ui, t: &Tokens, st: &Estado, b: &mut Blocos, tem
     });
 }
 
+/// A classe e o fator de demanda de um ponto de carga, no inspetor de atributos.
+fn campos_de_demanda(ui: &mut egui::Ui, p: &PontoEletrico, acoes: &mut Vec<Acao>) {
+    let h = p.handle.hex();
+    egui::Grid::new("ele-atributos-demanda").num_columns(2).spacing(vec2(12.0, 4.0)).show(ui, |ui| {
+        ui.label("Classe de Demanda");
+        let atual = p.tipo_carga_efetivo();
+        egui::ComboBox::from_id_salt("ele-ponto-classe").selected_text(atual.nome_classe()).width(340.0).show_ui(ui, |ui| {
+            if ui.selectable_label(false, "Automática (a da família)").clicked() {
+                acoes.push(Acao::Rodar("eletrica.ponto.demanda", json!({ "pontos": [h], "classe": null })));
+            }
+            for c in ele::demanda::TipoCarga::CLASSES {
+                if ui.selectable_label(atual == c, c.nome_classe()).clicked() {
+                    acoes.push(Acao::Rodar("eletrica.ponto.demanda", json!({ "pontos": [h], "classe": c.codigo() })));
+                }
+            }
+        });
+        ui.end_row();
+        ui.label("Fator de Demanda (0,00 a 1,00)");
+        ui.horizontal(|ui| {
+            let mut automatico = p.fator_demanda.is_none();
+            if ui.checkbox(&mut automatico, "Automático, pela tabela").changed() {
+                acoes.push(Acao::Rodar(
+                    "eletrica.ponto.demanda",
+                    json!({ "pontos": [h], "fator": if automatico { Value::Null } else { json!(1.0) } }),
+                ));
+            }
+            if let Some(mut f) = p.fator_demanda
+                && ui.add(campo(&mut f, 0.0..=1.0, 0.01, 2, "")).changed()
+            {
+                acoes.push(Acao::Rodar("eletrica.ponto.demanda", json!({ "pontos": [h], "fator": f })));
+            }
+        });
+        ui.end_row();
+    });
+}
+
 /// O inspetor de atributos do bloco selecionado.
 fn janela_atributos(ui: &mut egui::Ui, app: &CadApp, t: &Tokens, acoes: &mut Vec<Acao>) {
     let Ok(doc) = app.session.doc() else {
@@ -1815,6 +1856,10 @@ fn janela_atributos(ui: &mut egui::Ui, app: &CadApp, t: &Tokens, acoes: &mut Vec
         _ => String::new(),
     };
     ui.label(RichText::new(format!("{nome} #{}", h.hex())).strong());
+    if let Some(p) = ele::ponto::ler_ponto(doc, h).filter(|p| p.tipo.e_carga()) {
+        campos_de_demanda(ui, &p, acoes);
+        ui.separator();
+    }
     if lista.is_empty() {
         ui.label(pequeno("Este bloco não tem atributos.", t.text_dim));
         return;
@@ -2782,6 +2827,28 @@ fn propriedades_da_familia(ui: &mut egui::Ui, t: &Tokens, nome: &str, familia: O
     if ui.add(egui::DragValue::new(&mut teclas).range(1..=3)).changed() {
         enviar(acoes, "teclas", json!(teclas));
     }
+    linha(ui, "Classe de Demanda");
+    let classe = f.classe_demanda.map_or("Automática (do tipo de ponto)", ele::demanda::TipoCarga::nome_classe);
+    egui::ComboBox::from_id_salt("ele-familia-classe").selected_text(classe).width(largura).show_ui(ui, |ui| {
+        if ui.selectable_label(f.classe_demanda.is_none(), "Automática (do tipo de ponto)").clicked() {
+            enviar(acoes, "classeDemanda", Value::Null);
+        }
+        for c in ele::demanda::TipoCarga::CLASSES {
+            if ui.selectable_label(f.classe_demanda == Some(c), c.nome_classe()).clicked() {
+                enviar(acoes, "classeDemanda", json!(c.codigo()));
+            }
+        }
+    });
+    linha(ui, "Fator de Demanda (0,00 a 1,00)");
+    let mut automatico = f.fator_demanda.is_none();
+    if ui.checkbox(&mut automatico, "Automático, pela tabela da concessionária").changed() {
+        enviar(acoes, "fatorDemanda", if automatico { Value::Null } else { json!(1.0) });
+    }
+    if let Some(mut fator) = f.fator_demanda
+        && ui.add(campo(&mut fator, 0.0..=1.0, 0.01, 2, "")).changed()
+    {
+        enviar(acoes, "fatorDemanda", json!(fator));
+    }
     ui.separator();
     ui.menu_button("Inserir geometria base", |ui| {
         for (forma, rotulo) in ele::biblioteca::GEOMETRIAS {
@@ -2828,7 +2895,7 @@ fn janela_setup(ctx: &egui::Context, t: &Tokens, tem_desenho: bool, acoes: &mut 
                 Aba::Condutores => aba_condutores(ui, t, &mut r.setup),
                 Aba::Eletrodutos => aba_eletrodutos(ui, t, &mut r.setup),
                 Aba::Agrupamento => aba_agrupamento(ui, t),
-                Aba::Demanda => aba_demanda(ui, t, &mut r.setup),
+                Aba::Demanda => aba_demanda(ui, t, &mut r),
                 Aba::Telecom => aba_telecom(ui, t, &mut r),
             }
             ui.separator();
@@ -3067,90 +3134,339 @@ fn aba_agrupamento(ui: &mut egui::Ui, t: &Tokens) {
     ));
 }
 
-fn aba_demanda(ui: &mut egui::Ui, t: &Tokens, s: &mut Setup) {
-    let tabela = s.tabela_demanda();
+/// O texto de uma faixa de quantidade: "1", "2 a 5", "6 ou mais".
+fn faixa_de_quantidade(de: u32, ate: u32) -> String {
+    match ate {
+        u32::MAX => format!("{de} ou mais"),
+        a if a == de => a.to_string(),
+        a => format!("{de} a {a}"),
+    }
+}
+
+fn aba_demanda(ui: &mut egui::Ui, t: &Tokens, r: &mut Rascunho) {
+    if r.tabela_editada.is_some() {
+        editor_de_tabela(ui, t, r);
+        return;
+    }
+    let s = &mut r.setup;
+    let tabela = s.tabela_demanda().clone();
+    let todas: Vec<(String, String)> = s.tabelas_demanda().iter().map(|t| (t.id.clone(), t.nome.clone())).collect();
     egui::Grid::new("ele-setup-demanda").num_columns(2).spacing(vec2(12.0, 6.0)).show(ui, |ui| {
         ui.label("Concessionária");
-        egui::ComboBox::from_id_salt("ele-concessionaria").selected_text(tabela.nome).width(300.0).show_ui(ui, |ui| {
-            for tb in ele::demanda::tabelas() {
-                if ui.selectable_label(tb.id == tabela.id, tb.nome).clicked() {
-                    s.concessionaria = tb.id.to_string();
+        egui::ComboBox::from_id_salt("ele-concessionaria").selected_text(tabela.nome.as_str()).width(320.0).show_ui(ui, |ui| {
+            for (id, nome) in &todas {
+                if ui.selectable_label(*id == tabela.id, nome.as_str()).clicked() {
+                    s.concessionaria = id.clone();
                 }
             }
         });
         ui.end_row();
         ui.label("Tipo de edificação");
-        let atual = tabela.edificacao(&s.edificacao).nome;
-        egui::ComboBox::from_id_salt("ele-edificacao").selected_text(atual).width(300.0).show_ui(ui, |ui| {
-            for e in tabela.edificacoes {
-                if ui.selectable_label(e.nome == atual, e.nome).clicked() {
-                    s.edificacao = e.nome.to_string();
+        let atual = tabela.edificacao(&s.edificacao).nome.clone();
+        egui::ComboBox::from_id_salt("ele-edificacao").selected_text(atual.as_str()).width(320.0).show_ui(ui, |ui| {
+            for e in &tabela.edificacoes {
+                if ui.selectable_label(e.nome == atual, e.nome.as_str()).clicked() {
+                    s.edificacao = e.nome.clone();
                 }
             }
         });
         ui.end_row();
     });
+    let mut abrir_editor = None;
+    let mut excluir = false;
+    ui.horizontal(|ui| {
+        if ui
+            .button("+ Criar / Editar Tabela de Concessionária")
+            .on_hover_text("Uma tabela própria abre para edição; com uma de fábrica escolhida, começa uma nova")
+            .clicked()
+        {
+            abrir_editor = Some(if tabela.propria { tabela.clone() } else { ele::demanda::TabelaDemanda::em_branco("Nova concessionária") });
+        }
+        if tabela.propria && ui.button("Excluir tabela").clicked() {
+            excluir = true;
+        }
+    });
     ui.add_space(4.0);
-    let ed = tabela.edificacao(&s.edificacao);
+    let ed = tabela.edificacao(&s.edificacao).clone();
     ui.label(RichText::new("Iluminação e tomadas de uso geral").strong());
+    if ed.modo == ele::demanda::ModoFaixas::TotalNaFaixa {
+        ui.label(pequeno("O fator da faixa em que o total cai vale para toda a potência.", t.text_dim));
+    }
     let mut inicio = 0.0;
-    for f in ed.faixas {
+    for f in &ed.faixas {
         let faixa = match f.ate_kw {
-            Some(ate) if inicio == 0.0 => format!("até {} kW", br(ate)),
-            Some(ate) => format!("de {} a {} kW", br(inicio), br(ate)),
+            Some(ate) if inicio == 0.0 => format!("até {} kVA", br(ate)),
+            Some(ate) => format!("de {} a {} kVA", br(inicio), br(ate)),
             None if inicio == 0.0 => "toda a potência".to_string(),
-            None => format!("acima de {} kW", br(inicio)),
+            None => format!("acima de {} kVA", br(inicio)),
         };
-        ui.label(format!("    {faixa}: {} %", br(f.fator * 100.0)));
+        ui.label(format!("    {faixa}: {} %", br((f.fator * 1000.0).round() / 10.0)));
         inicio = f.ate_kw.unwrap_or(inicio);
     }
-    egui::CollapsingHeader::new("Aquecimento e eletrodomésticos (por número de aparelhos)").id_salt("ele-demanda-aparelhos").show(ui, |ui| {
-        egui::ScrollArea::vertical().max_height(160.0).show(ui, |ui| {
-            egui::Grid::new("ele-demanda-tab4").num_columns(3).striped(true).spacing(vec2(16.0, 2.0)).show(ui, |ui| {
-                let lim = br(tabela.limite_aparelho_kw);
-                cabecalho(ui, t, &[("Aparelhos", 80.0, true), ("Até 3,5 kW", 90.0, true), ("Acima", 90.0, true)]);
-                let mut de = 1u32;
-                for q in tabela.aparelhos {
-                    let n = match q.ate {
-                        u32::MAX => format!("{de} ou mais"),
-                        a if a == de => a.to_string(),
-                        a => format!("{de} a {a}"),
-                    };
-                    celula(ui, 80.0, numero(n), true);
-                    celula(ui, 90.0, numero(fixo(q.ate_limite, 2)), true).on_hover_text(format!("potência individual até {lim} kW"));
-                    celula(ui, 90.0, numero(fixo(q.acima_limite, 2)), true);
+    let lista = |ui: &mut egui::Ui, nome: &str, tab: &[ele::demanda::PorQuantidade]| {
+        if tab.is_empty() {
+            ui.label(format!("{nome}: sem tabela, 100 %"));
+            return;
+        }
+        let mut de = 1u32;
+        let partes: Vec<String> = tab
+            .iter()
+            .map(|q| {
+                let n = faixa_de_quantidade(de, q.ate);
+                de = q.ate.saturating_add(1);
+                format!("{n}: {}", fixo(q.fator, 2))
+            })
+            .collect();
+        ui.add(egui::Label::new(format!("{nome}: {}", partes.join(" · "))).wrap());
+    };
+    egui::CollapsingHeader::new("Fatores por número de aparelhos").id_salt("ele-demanda-aparelhos").show(ui, |ui| {
+        egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
+            ui.set_max_width(580.0);
+            if !tabela.aquecimento.is_empty() {
+                lista(ui, "Aquecimento", &tabela.aquecimento);
+            }
+            lista(ui, "Ar condicionado", &tabela.ar_condicionado);
+            lista(ui, "Motores", &tabela.motores);
+            lista(ui, "Bombas d'água", &tabela.bombas);
+            if tabela.aparelhos.is_empty() {
+                ui.label("TUE geral: sem tabela, 100 %");
+            } else {
+                ui.label(RichText::new("TUE geral").strong());
+                egui::Grid::new("ele-demanda-tab4").num_columns(3).striped(true).spacing(vec2(16.0, 2.0)).show(ui, |ui| {
+                    let lim = br(tabela.limite_aparelho_kw);
+                    cabecalho(ui, t, &[("Aparelhos", 80.0, true), ("Até o limite", 90.0, true), ("Acima", 90.0, true)]);
+                    let mut de = 1u32;
+                    for q in &tabela.aparelhos {
+                        celula(ui, 80.0, numero(faixa_de_quantidade(de, q.ate)), true);
+                        celula(ui, 90.0, numero(fixo(q.ate_limite, 2)), true).on_hover_text(format!("potência individual até {lim} kW"));
+                        celula(ui, 90.0, numero(fixo(q.acima_limite, 2)), true);
+                        ui.end_row();
+                        de = q.ate.saturating_add(1);
+                    }
+                });
+            }
+        });
+    });
+    ui.add_space(4.0);
+    ui.set_max_width(600.0);
+    ui.add(egui::Label::new(pequeno(format!("Fonte: {}", tabela.fonte), t.text_dim)).wrap());
+    ui.add(
+        egui::Label::new(pequeno(
+            "A classe de demanda vem da família do bloco ou do Inspetor de atributos. Um ponto com fator próprio sai da contagem da tabela. Confira a revisão da norma em vigor na sua área de concessão. CPFL, Neoenergia, Copel, Celesc e Enel SP/RJ/CE não têm preset porque as tabelas não puderam ser conferidas nas normas públicas: cadastre a sua em + Criar / Editar.",
+            t.text_dim,
+        ))
+        .wrap(),
+    );
+    if excluir {
+        r.setup.remover_tabela(&tabela.id);
+    }
+    if let Some(e) = abrir_editor {
+        r.tabela_editada = Some(e);
+        r.erro_tabela = None;
+    }
+}
+
+/// As linhas de uma lista por número de aparelhos, com a última valendo para mais.
+fn editor_de_quantidades(ui: &mut egui::Ui, t: &Tokens, id: &str, nome: &str, lista: &mut Vec<ele::demanda::PorQuantidade>) {
+    egui::CollapsingHeader::new(format!("{nome} ({} linha(s))", lista.len())).id_salt((id, "cabeca")).show(ui, |ui| {
+        let mut sair = None;
+        egui::Grid::new((id, "grade")).num_columns(3).spacing(vec2(10.0, 2.0)).show(ui, |ui| {
+            cabecalho(ui, t, &[("Até (aparelhos)", 100.0, false), ("Fator", 70.0, false), ("", 60.0, false)]);
+            for (i, q) in lista.iter_mut().enumerate() {
+                if q.ate == u32::MAX {
+                    celula(ui, 100.0, "ou mais", false);
+                } else {
+                    ui.add(egui::DragValue::new(&mut q.ate).range(1..=100_000));
+                }
+                ui.add(campo(&mut q.fator, 0.0..=1.0, 0.01, 2, ""));
+                if ui.small_button("Excluir").clicked() {
+                    sair = Some(i);
+                }
+                ui.end_row();
+            }
+        });
+        if let Some(i) = sair {
+            lista.remove(i);
+        }
+        ui.horizontal(|ui| {
+            let aberta = lista.last().is_none_or(|q| q.ate != u32::MAX);
+            if ui.add_enabled(aberta, egui::Button::new("+ Linha").small()).clicked() {
+                let ate = lista.last().map_or(1, |q| q.ate.saturating_add(1));
+                let fator = lista.last().map_or(1.0, |q| q.fator);
+                lista.push(ele::demanda::PorQuantidade { ate, fator });
+            }
+            if ui.add_enabled(aberta, egui::Button::new("+ E acima").small()).clicked() {
+                let fator = lista.last().map_or(1.0, |q| q.fator);
+                lista.push(ele::demanda::PorQuantidade { ate: u32::MAX, fator });
+            }
+        });
+    });
+}
+
+/// O cadastro de uma tabela de concessionária: fica no rascunho até o OK das configurações.
+fn editor_de_tabela(ui: &mut egui::Ui, t: &Tokens, r: &mut Rascunho) {
+    use ele::demanda::{Edificacao, Faixa, ModoFaixas, PorQuantidadeDupla, TabelaDemanda};
+    let Some(e) = r.tabela_editada.as_mut() else { return };
+    ui.label(RichText::new("Tabela de concessionária").strong());
+    egui::ScrollArea::vertical().id_salt("ele-editor-tabela").max_height(460.0).show(ui, |ui| {
+        ui.set_min_width(580.0);
+        egui::Grid::new("ele-editor-tabela-dados").num_columns(2).spacing(vec2(12.0, 4.0)).show(ui, |ui| {
+            let rotulo = ui.label("Nome da tabela");
+            ui.add(egui::TextEdit::singleline(&mut e.nome).desired_width(360.0)).labelled_by(rotulo.id);
+            ui.end_row();
+            let rotulo = ui.label("Norma e revisão");
+            ui.add(egui::TextEdit::singleline(&mut e.fonte).desired_width(360.0)).labelled_by(rotulo.id);
+            ui.end_row();
+            ui.label("Copiar de");
+            egui::ComboBox::from_id_salt("ele-editor-copiar").selected_text("Escolha uma tabela").width(360.0).show_ui(ui, |ui| {
+                for base in ele::demanda::tabelas() {
+                    if ui.selectable_label(false, base.nome.as_str()).clicked() {
+                        let (id, nome, fonte) = (e.id.clone(), e.nome.clone(), e.fonte.clone());
+                        *e = TabelaDemanda { id, nome, fonte, propria: true, ..base.clone() };
+                    }
+                }
+            });
+            ui.end_row();
+        });
+        ui.add_space(4.0);
+        ui.label(RichText::new("Iluminação + TUG, por faixa de potência").strong());
+        let mut sair_edificacao = None;
+        for (i, ed) in e.edificacoes.iter_mut().enumerate() {
+            egui::CollapsingHeader::new(if ed.nome.is_empty() { "Edificação sem nome" } else { ed.nome.as_str() })
+                .id_salt(("ele-editor-ed", i))
+                .default_open(i == 0)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("Nome");
+                        ui.add(egui::TextEdit::singleline(&mut ed.nome).desired_width(220.0));
+                        egui::ComboBox::from_id_salt(("ele-editor-modo", i))
+                            .selected_text(if ed.modo == ModoFaixas::Acumulada {
+                                "Fator por faixa acumulada"
+                            } else {
+                                "Fator sobre toda a potência"
+                            })
+                            .width(190.0)
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(&mut ed.modo, ModoFaixas::Acumulada, "Fator por faixa acumulada");
+                                ui.selectable_value(&mut ed.modo, ModoFaixas::TotalNaFaixa, "Fator sobre toda a potência");
+                            });
+                        if ui.small_button("Excluir").clicked() {
+                            sair_edificacao = Some(i);
+                        }
+                    });
+                    let mut sair = None;
+                    egui::Grid::new(("ele-editor-faixas", i)).num_columns(3).spacing(vec2(10.0, 2.0)).show(ui, |ui| {
+                        cabecalho(ui, t, &[("Até (kVA)", 100.0, false), ("Fator", 70.0, false), ("", 60.0, false)]);
+                        for (k, f) in ed.faixas.iter_mut().enumerate() {
+                            match f.ate_kw.as_mut() {
+                                Some(a) => {
+                                    ui.add(campo(a, 0.0..=1_000_000.0, 0.5, 1, ""));
+                                }
+                                None => {
+                                    celula(ui, 100.0, "acima", false);
+                                }
+                            }
+                            ui.add(campo(&mut f.fator, 0.0..=1.0, 0.01, 2, ""));
+                            if ui.small_button("Excluir").clicked() {
+                                sair = Some(k);
+                            }
+                            ui.end_row();
+                        }
+                    });
+                    if let Some(k) = sair {
+                        ed.faixas.remove(k);
+                    }
+                    ui.horizontal(|ui| {
+                        let aberta = ed.faixas.last().is_none_or(|f| f.ate_kw.is_some());
+                        if ui.add_enabled(aberta, egui::Button::new("+ Faixa").small()).clicked() {
+                            let ate = ed.faixas.last().and_then(|f| f.ate_kw).unwrap_or(0.0) + 10.0;
+                            let fator = ed.faixas.last().map_or(1.0, |f| f.fator);
+                            ed.faixas.push(Faixa { ate_kw: Some(ate), fator });
+                        }
+                        if ui.add_enabled(aberta, egui::Button::new("+ E acima").small()).clicked() {
+                            let fator = ed.faixas.last().map_or(1.0, |f| f.fator);
+                            ed.faixas.push(Faixa { ate_kw: None, fator });
+                        }
+                    });
+                });
+        }
+        if let Some(i) = sair_edificacao {
+            e.edificacoes.remove(i);
+        }
+        if ui.small_button("+ Edificação").clicked() {
+            e.edificacoes.push(Edificacao {
+                nome: format!("Edificação {}", e.edificacoes.len() + 1),
+                modo: ModoFaixas::Acumulada,
+                faixas: vec![Faixa { ate_kw: None, fator: 1.0 }],
+            });
+        }
+        ui.add_space(4.0);
+        ui.label(RichText::new("Por número de aparelhos (lista vazia: 100 %)").strong());
+        editor_de_quantidades(ui, t, "ele-editor-aquecimento", "Aquecimento / Eletrotérmico", &mut e.aquecimento);
+        editor_de_quantidades(ui, t, "ele-editor-ar", "Ar-Condicionado / Climatização", &mut e.ar_condicionado);
+        editor_de_quantidades(ui, t, "ele-editor-motores", "Motores", &mut e.motores);
+        editor_de_quantidades(ui, t, "ele-editor-bombas", "Bombas d'água", &mut e.bombas);
+        egui::CollapsingHeader::new(format!("TUE Geral ({} linha(s))", e.aparelhos.len())).id_salt("ele-editor-tue").show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label("Limite da potência individual");
+                ui.add(campo(&mut e.limite_aparelho_kw, 0.0..=1_000.0, 0.1, 1, " kW"));
+            });
+            let mut sair = None;
+            egui::Grid::new("ele-editor-tue-grade").num_columns(4).spacing(vec2(10.0, 2.0)).show(ui, |ui| {
+                cabecalho(ui, t, &[("Até (aparelhos)", 100.0, false), ("Até o limite", 80.0, false), ("Acima", 70.0, false), ("", 60.0, false)]);
+                for (i, q) in e.aparelhos.iter_mut().enumerate() {
+                    if q.ate == u32::MAX {
+                        celula(ui, 100.0, "ou mais", false);
+                    } else {
+                        ui.add(egui::DragValue::new(&mut q.ate).range(1..=100_000));
+                    }
+                    ui.add(campo(&mut q.ate_limite, 0.0..=1.0, 0.01, 2, ""));
+                    ui.add(campo(&mut q.acima_limite, 0.0..=1.0, 0.01, 2, ""));
+                    if ui.small_button("Excluir").clicked() {
+                        sair = Some(i);
+                    }
                     ui.end_row();
-                    de = q.ate.saturating_add(1);
+                }
+            });
+            if let Some(i) = sair {
+                e.aparelhos.remove(i);
+            }
+            ui.horizontal(|ui| {
+                let aberta = e.aparelhos.last().is_none_or(|q| q.ate != u32::MAX);
+                let ultimo = e.aparelhos.last().copied().unwrap_or(PorQuantidadeDupla { ate: 0, ate_limite: 1.0, acima_limite: 1.0 });
+                if ui.add_enabled(aberta, egui::Button::new("+ Linha").small()).clicked() {
+                    e.aparelhos.push(PorQuantidadeDupla { ate: ultimo.ate.saturating_add(1), ..ultimo });
+                }
+                if ui.add_enabled(aberta, egui::Button::new("+ E acima").small()).clicked() {
+                    e.aparelhos.push(PorQuantidadeDupla { ate: u32::MAX, ..ultimo });
                 }
             });
         });
     });
-    egui::CollapsingHeader::new("Ar condicionado e bombas").id_salt("ele-demanda-ar").show(ui, |ui| {
-        let lista = |ui: &mut egui::Ui, nome: &str, tab: &[ele::demanda::PorQuantidade]| {
-            let mut de = 1u32;
-            let partes: Vec<String> = tab
-                .iter()
-                .map(|q| {
-                    let n = match q.ate {
-                        u32::MAX => format!("{de}+"),
-                        a if a == de => a.to_string(),
-                        a => format!("{de}-{a}"),
-                    };
-                    de = q.ate.saturating_add(1);
-                    format!("{n}: {}", fixo(q.fator, 2))
-                })
-                .collect();
-            ui.label(format!("{nome}: {}", partes.join(" · ")));
-        };
-        lista(ui, "Ar condicionado", tabela.ar_condicionado);
-        lista(ui, "Bombas d'água", tabela.bombas);
+    ui.separator();
+    let (mut salvar, mut voltar) = (false, false);
+    ui.horizontal(|ui| {
+        salvar = ui.button("Salvar tabela").clicked();
+        voltar = ui.button("Voltar sem salvar").clicked();
+        if let Some(m) = &r.erro_tabela {
+            ui.label(pequeno(m.as_str(), COR_AVISO));
+        }
     });
-    ui.add_space(4.0);
-    ui.label(pequeno(format!("Fonte: {}", tabela.fonte), t.text_dim));
-    ui.label(pequeno(
-        "O tipo de carga de cada ponto vem do atributo TIPO_CARGA do bloco (ILUM_TUG, AQUECIMENTO, ELETRODOMESTICOS, AR, BOMBA, OUTROS, RESERVA; sem ele, TUE é aquecimento). Outras cargas entram com 100 % e reservas ficam fora. Confira a revisão da norma em vigor na sua área de concessão.",
-        t.text_dim,
-    ));
+    if voltar {
+        r.tabela_editada = None;
+        r.erro_tabela = None;
+    } else if salvar {
+        let tabela = r.tabela_editada.clone().unwrap_or_default();
+        match r.setup.salvar_tabela(tabela) {
+            Ok(id) => {
+                r.setup.concessionaria = id;
+                r.setup.normalizar();
+                r.tabela_editada = None;
+                r.erro_tabela = None;
+            }
+            Err(m) => r.erro_tabela = Some(m),
+        }
+    }
 }
 
 fn aba_telecom(ui: &mut egui::Ui, t: &Tokens, r: &mut Rascunho) {
