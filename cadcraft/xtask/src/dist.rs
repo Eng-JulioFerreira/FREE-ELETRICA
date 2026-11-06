@@ -23,7 +23,7 @@ const ARQUIVOS: &[(&str, &str)] = &[
 ];
 
 /// A versão do Free Elétrica, que não é a do CADCraft.
-const VERSAO: &str = "0.2.0";
+const VERSAO: &str = "0.3.0";
 /// A pasta do pacote.
 const PASTA: &str = "FreeEletrica";
 /// O executável no pacote.

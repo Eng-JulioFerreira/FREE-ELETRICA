@@ -63,7 +63,8 @@ jobs:
           if gh release view "v$VERSAO" >/dev/null 2>&1; then
             gh release upload "v$VERSAO" "${arquivos[@]}" --clobber
           else
-            gh release create "v$VERSAO" "${arquivos[@]}" --target "$GITHUB_SHA" \
+            # Sai como rascunho: o AppImage é testado num Linux antes de a Release ficar pública.
+            gh release create "v$VERSAO" "${arquivos[@]}" --draft --target "$GITHUB_SHA" \
               --title "Free Elétrica v$VERSAO (Windows x64 e Linux x86_64)" \
               --notes "Versão compilada pronta para uso. Windows: baixe o .zip, extraia em qualquer pasta e execute FreeEletrica.exe. Linux: baixe o .AppImage, marque como executável (chmod +x) e execute. Não precisa instalar o Rust nem scripts."
           fi

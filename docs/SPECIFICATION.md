@@ -103,5 +103,5 @@ O ambiente de compilação e os portões de qualidade estão em [CLAUDE.md](../C
 | Comando | O quê |
 | :--- | :--- |
 | `scripts\package_release.ps1` | Compila em release e gera `dist/FreeEletrica/` e `dist/FreeEletrica-v<versão>-win64.zip` |
-| `cargo xtask dist --versao 0.2.0` | O mesmo, dentro de `cadcraft/`, com o ambiente carregado |
+| `cargo xtask dist --versao 0.3.0` | O mesmo, dentro de `cadcraft/`, com o ambiente carregado |
 | Workflow `Release` (`.github/workflows/release.yml`) | Faz o mesmo no GitHub Actions e publica na aba Releases; é disparado à mão |
