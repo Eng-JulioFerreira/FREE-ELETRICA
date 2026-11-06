@@ -32,8 +32,9 @@ divulgado para engenheiros e usuários finais: código em teste ou incompleto n�
 3. Criar o commit de release local e a tag (`v0.2.0`, `v0.3.0`...).
 4. Gerar os pacotes da versão: o `.zip` para Windows e o `.AppImage` para Linux. `scripts\package_release.ps1` gera
    `dist/FreeEletrica/` (executável, `templates/`, manuais e licenças, sem `.bat`) e `dist/FreeEletrica-vX.Y.Z-win64.zip`.
-   O empacotamento do `.AppImage` ainda não existe no projeto: precisa ser criado e testado em Linux antes da primeira
-   Release que o inclua. **Os dois pacotes só são gerados quando o usuário autorizar uma release com o gatilho acima.**
+   `scripts/package_appimage.sh` gera `dist/FreeEletrica-vX.Y.Z-x86_64.AppImage` num Linux (ou no WSL); o workflow
+   `release.yml` compila os dois no GitHub Actions (Windows e Ubuntu 22.04) e publica juntos. O AppImage precisa ser testado
+   num Linux antes da primeira Release que o inclua. **Os dois pacotes só são gerados quando o usuário autorizar uma release com o gatilho acima.**
 5. Fazer o `git push` para a branch principal do GitHub (`free-eletrica`) e publicar a Release com os pacotes (`gh release create`).
 
 ## Arquitetura do Free Elétrica 2.0

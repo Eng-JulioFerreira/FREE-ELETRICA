@@ -1,36 +1,69 @@
 # SPDX-License-Identifier: GPL-3.0-only
-# Compila no Windows, gera o pacote e publica na aba Releases. Disparado à mão, em Actions.
+# Compila no Windows e no Linux, gera o .zip e o .AppImage e publica os dois na aba Releases. Disparado à
+# mão, em Actions, só depois da autorização de release (veja a política de Git no CLAUDE.md).
 name: Release
 
 on:
   workflow_dispatch:
     inputs:
       versao:
-        description: "Versão, sem o v (ex.: 0.2.0)"
+        description: "Versão, sem o v (ex.: 0.3.0)"
         required: true
-        default: "0.2.0"
+        default: "0.3.0"
 
 permissions:
   contents: write
 
 jobs:
-  pacote:
+  windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - name: Compilar e empacotar
         shell: pwsh
         run: ./scripts/package_release.ps1 -Versao "${{ inputs.versao }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/FreeEletrica-v${{ inputs.versao }}-win64.zip
+
+  linux:
+    # Ubuntu antigo: o AppImage roda nas distribuições com a glibc dele ou mais nova.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bibliotecas do sistema
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config curl file desktop-file-utils \
+            libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libgl1-mesa-dev
+      - name: Compilar e empacotar
+        run: bash scripts/package_appimage.sh --versao "${{ inputs.versao }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: dist/FreeEletrica-v${{ inputs.versao }}-x86_64.AppImage
+
+  publicar:
+    needs: [windows, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: pacotes
+          merge-multiple: true
       - name: Publicar
-        shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
           VERSAO: ${{ inputs.versao }}
         run: |
-          $zip = "dist/FreeEletrica-v$env:VERSAO-win64.zip"
-          gh release view "v$env:VERSAO" *> $null
-          if ($LASTEXITCODE -eq 0) {
-            gh release upload "v$env:VERSAO" $zip --clobber
-          } else {
-            gh release create "v$env:VERSAO" $zip --target $env:GITHUB_SHA --title "Free Elétrica v$env:VERSAO (Windows x64 - Pronto para Uso)" --notes "Versão compilada pronta para uso. Baixe o arquivo .zip, extraia em qualquer pasta e execute o programa diretamente (não requer instalação do Rust nem scripts .bat)."
-          }
+          set -euo pipefail
+          arquivos=(pacotes/FreeEletrica-v$VERSAO-win64.zip pacotes/FreeEletrica-v$VERSAO-x86_64.AppImage)
+          if gh release view "v$VERSAO" >/dev/null 2>&1; then
+            gh release upload "v$VERSAO" "${arquivos[@]}" --clobber
+          else
+            gh release create "v$VERSAO" "${arquivos[@]}" --target "$GITHUB_SHA" \
+              --title "Free Elétrica v$VERSAO (Windows x64 e Linux x86_64)" \
+              --notes "Versão compilada pronta para uso. Windows: baixe o .zip, extraia em qualquer pasta e execute FreeEletrica.exe. Linux: baixe o .AppImage, marque como executável (chmod +x) e execute. Não precisa instalar o Rust nem scripts."
+          fi
