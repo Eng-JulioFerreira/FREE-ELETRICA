@@ -1539,3 +1539,78 @@ fn empilhar_pontos_por_comando() {
     assert!(s.execute("eletrica.ponto.empilhar", &json!({ "pontos": [outro] })).is_err());
     assert!(s.execute("eletrica.ponto.empilhar", &json!({ "pontos": [outro], "base": outro })).is_err());
 }
+
+#[test]
+fn telecom_por_comandos() {
+    let _setup = trava_setup();
+    let mut s = Session::new();
+    let mut d = Drawing::new_metric();
+    d.header.set_i64("INSUNITS", 6);
+    s.open_drawing(d, "Telecom", None);
+    s.execute("eletrica.bootstrap", &json!({})).unwrap();
+    let ponto = |s: &mut Session, b: &str, x: f64, y: f64| -> String {
+        s.execute("eleponto", &json!({ "bloco": b, "pontos": [[x, y]], "rotacaoAuto": false })).unwrap()["pontos"][0].as_str().unwrap().to_string()
+    };
+    // Sem rack, vincular é recusado; o digitado avisa e termina.
+    let a = ponto(&mut s, "RJ45", 4.0, 0.0);
+    assert!(s.execute("televincular", &json!({})).is_err());
+    s.start("televincular").unwrap();
+    assert!(s.running.is_none());
+    let rack = ponto(&mut s, "RACK", 0.0, 0.0);
+    let b = ponto(&mut s, "RJ45", 8.0, 0.0);
+    let duto = |s: &mut Session, de: &str, para: &str| {
+        s.execute("eleeletroduto", &json!({ "de": de, "para": para, "flecha": 0 })).unwrap()["eletroduto"].as_str().unwrap().to_string()
+    };
+    let tronco = duto(&mut s, &rack, &a);
+    duto(&mut s, &a, &b);
+    // Vincular e numerar: um rack só.
+    let v = s.execute("televincular", &json!({})).unwrap();
+    let ids: Vec<&str> = v["pontos"].as_array().unwrap().iter().map(|p| p["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, ["D-01", "D-02"]);
+    assert!(v["pontos"].as_array().unwrap().iter().all(|p| p["rack"] == rack.as_str() && p["cabo"] == "UTP Cat 6"));
+    assert!(s.execute("televincular", &json!({ "rack": a })).is_err(), "a não é rack");
+    assert!(s.execute("televincular", &json!({ "pontos": "x" })).is_err());
+    // Renumerar: um passo de desfazer.
+    s.execute("televincular", &json!({ "renumerar": true })).unwrap();
+    s.undo().unwrap();
+    // Dimensionar telecom: dois cabos no tronco, um eletroduto pela ocupação de 40 %.
+    let t = s.execute("telerotear", &json!({})).unwrap();
+    let trecho = t["trechos"].as_array().unwrap().iter().find(|x| x["eletroduto"] == tronco.as_str()).unwrap().clone();
+    assert_eq!(trecho["textoIds"], "D-01, D-02");
+    assert!(trecho["textoCabos"].as_str().unwrap().starts_with("2x Cat6 %%c"), "{trecho}");
+    assert!(trecho["ocupacao"].as_f64().unwrap() <= 0.40);
+    let enlaces = t["racks"][0]["enlaces"].as_array().unwrap();
+    assert_eq!(enlaces.len(), 2);
+    assert!(enlaces.iter().all(|e| e["status"] == "ok" && e["comprimento"].as_f64().unwrap() > 4.0), "{t}");
+    assert_eq!(t["racks"][0]["portas"], 2);
+    // Sem gravar: o mesmo resultado, só do rack pedido.
+    let sem = s.execute("eletrica.telecom", &json!({ "rack": "RACK" })).unwrap();
+    assert_eq!(sem["racks"].as_array().unwrap().len(), 1);
+    assert!(s.execute("eletrica.telecom", &json!({ "rack": "NAO-EXISTE" })).is_err());
+    // As tags: no meio dos eletrodutos de telecom; clicando, no ponto.
+    let r = s.execute("telefiacao", &json!({})).unwrap();
+    assert_eq!(r["criadas"], 2, "{r}");
+    assert_eq!(s.execute("telefiacao", &json!({ "limpar": true })).unwrap()["apagadas"], 2);
+    s.execute("telefiacao", &json!({ "ancora": [2.0, 0.0] })).unwrap();
+    assert_eq!(free_eletrica::fiacao::tags(s.doc().unwrap()).len(), 1);
+    s.start("telefiacao").unwrap();
+    s.input(Input::Enter).unwrap();
+    assert!(s.running.is_none());
+    assert_eq!(free_eletrica::fiacao::tags(s.doc().unwrap()).len(), 2);
+    // A tabela do rack: pelo JSON e clicando.
+    let tab = s.execute("teletabela", &json!({ "ponto": [20.0, 0.0] })).unwrap();
+    assert!(tab["tabela"].is_string());
+    assert!(s.execute("teletabela", &json!({})).is_err(), "sem ponto");
+    s.start("teletabela").unwrap();
+    s.input(Input::Point(Vec2::new(25.0, 5.0))).unwrap();
+    assert!(s.running.is_none());
+    let tabelas = free_eletrica::telecom::tabelas(s.doc().unwrap());
+    assert_eq!(tabelas.len(), 1, "um rack, uma tabela: move a que existe");
+    // Os materiais: os cabos de telecom e as terminações.
+    let m = s.execute("eletrica.materiais", &json!({})).unwrap();
+    assert!(m["cabosTelecom"].as_array().unwrap().iter().any(|c| c["nome"] == "UTP Cat 6" && c["metros"].as_f64().unwrap() > 0.0), "{m}");
+    assert!(m["telecom"].as_array().unwrap().iter().any(|c| c["nome"] == "Terminação no ponto - UTP Cat 6" && c["quantidade"] == 2), "{m}");
+    // ELEREGEN refaz a tabela do rack.
+    let reg = s.execute("eleregen", &json!({})).unwrap();
+    assert_eq!(reg["racks"], 1);
+}

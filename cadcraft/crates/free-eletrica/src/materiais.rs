@@ -57,6 +57,10 @@ pub struct Materiais {
     pub pontos_sem_caixa: usize,
     /// Eletrodutos soltos, fora da metragem.
     pub eletrodutos_soltos: usize,
+    /// Cabos de telecom por nome (NBR 14565): o comprimento de cada enlace, com as folgas, vezes os cabos dele.
+    pub cabos_telecom: Vec<crate::telecom::MetrosDeCabo>,
+    /// Terminações de telecom: no ponto e as portas no rack.
+    pub telecom: Vec<ItemContado>,
     pub avisos: Vec<String>,
 }
 
@@ -139,6 +143,9 @@ pub fn levantar(doc: &Drawing, analise: &Analise, setup: &Setup) -> Materiais {
     }
     m.caixas = contar(caixas.into_iter());
     m.pontos_sem_caixa = analise.pontos.iter().filter(|p| p.caixa.is_none()).count();
+    let (cabos_telecom, itens) = crate::telecom::materiais(&crate::telecom::rotear(doc, analise, setup));
+    m.cabos_telecom = cabos_telecom;
+    m.telecom = itens.into_iter().map(|(nome, quantidade)| ItemContado { nome, quantidade }).collect();
     m
 }
 

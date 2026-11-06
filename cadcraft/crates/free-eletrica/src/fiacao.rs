@@ -325,6 +325,8 @@ pub struct Trecho {
     pub diametro_travado: bool,
     /// Os condutores de proteção que o compartilhamento tirou do trecho: (seção, tipo de cabo).
     pub pe_removidos: Vec<(f64, crate::nbr5410::TipoCabo)>,
+    /// Os cabos de telecom que passam no trecho (NBR 14565): o eletroduto deles é dimensionado à parte.
+    pub cabos_telecom: Vec<crate::telecom::CaboNoTrecho>,
 }
 
 impl Trecho {
@@ -463,6 +465,7 @@ fn trecho_de(rede: &Rede, e: usize, circuitos: Vec<Condutores>) -> Option<Trecho
         ocupacao: None,
         diametro_travado: false,
         pe_removidos: Vec::new(),
+        cabos_telecom: Vec::new(),
     })
 }
 
@@ -620,6 +623,19 @@ pub fn todos_os_trechos(doc: &Drawing, analise: &Analise, setup: &Setup) -> (Vec
                 }
             }
             Err(e) => avisos.push(e),
+        }
+    }
+    // Os eletrodutos de telecom: os cabos que passam e o diâmetro pela ocupação de 40 %.
+    let telecom = crate::telecom::rotear(doc, analise, setup);
+    for tt in &telecom.trechos {
+        let Some(t) = mapa.get_mut(&tt.eletroduto.0) else { continue };
+        t.cabos_telecom = tt.cabos.clone();
+        if t.circuitos.is_empty() {
+            t.eletroduto = tt.eletroduto_escolhido.clone();
+            t.ocupacao = tt.ocupacao;
+            t.diametro_travado = tt.diametro_travado;
+        } else {
+            avisos.push(format!("eletroduto {} com circuitos de energia e cabos de telecom: separe-os", tt.eletroduto.hex()));
         }
     }
     avisos.sort();
@@ -833,6 +849,42 @@ fn bloco_da_tag(
     b
 }
 
+/// O conteúdo da tag de um eletroduto de telecom, em coordenadas locais como [`bloco_da_tag`]: em cima, os
+/// pontos que passam (`D-01..D-04`); embaixo, a quantidade e o tipo de cabo e o diâmetro (`4x Cat6 Ø25`).
+fn bloco_da_tag_telecom(
+    doc: &mut Drawing,
+    nome: &str,
+    cabos: &[crate::telecom::CaboNoTrecho],
+    diametro: Option<f64>,
+    ligacao: Option<LigacaoLocal>,
+    m: f64,
+) -> Block {
+    let mut b = Block::new(nome);
+    let (cima, baixo) = (crate::telecom::texto_ids(cabos), crate::telecom::texto_cabos(cabos, diametro));
+    let largura = largura_texto(&cima, ALTURA_TEXTO).max(largura_texto(&baixo, ALTURA_TEXTO)) / m;
+    let fora = largura / 2.0 + FOLGA_BASE / m;
+    let lado = match ligacao {
+        Some(LigacaoLocal::Lider { ancora }) if ancora[0] > 0.0 => -1.0,
+        _ => 1.0,
+    };
+    let centro = if matches!(ligacao, Some(LigacaoLocal::Lider { .. })) { lado * fora } else { 0.0 };
+    let afastamento = (FOLGA + ALTURA_TEXTO / 2.0) / m;
+    let mut pecas = vec![texto(cima, [centro, afastamento], ALTURA_TEXTO / m), texto(baixo, [centro, -afastamento], ALTURA_TEXTO / m)];
+    let reta = |a: [f64; 2], b: [f64; 2]| EntityKind::Line(Line { a: Vec3::new(a[0], a[1], 0.0), b: Vec3::new(b[0], b[1], 0.0) });
+    match ligacao {
+        Some(LigacaoLocal::Reta(c)) => pecas.push(reta([0.0, 0.0], c)),
+        Some(LigacaoLocal::Lider { ancora }) => {
+            pecas.push(reta(ancora, [0.0, 0.0]));
+            pecas.push(reta([0.0, 0.0], [centro + lado * fora, 0.0]));
+        }
+        None => {}
+    }
+    for k in pecas {
+        b.entities.push(Entity::new(doc.new_handle(), k));
+    }
+    b
+}
+
 /// O ângulo para o texto ler direito: da esquerda para a direita, ou de baixo para cima.
 pub fn angulo_de_leitura(a: f64) -> f64 {
     let pi = std::f64::consts::PI;
@@ -996,6 +1048,8 @@ pub struct Regeneracao {
     pub legendas: usize,
     /// Vistas frontais de quadro refeitas.
     pub frontais: usize,
+    /// Tabelas de rack (quadro VDI) refeitas.
+    pub racks: usize,
     pub avisos: Vec<String>,
 }
 
@@ -1017,10 +1071,13 @@ pub fn regenerar(doc: &mut Drawing, setup: &Setup, criar: Option<&[Handle]>) -> 
     garantir_blocos(doc, m);
 
     let existentes = tags(doc);
-    // O que existe de eletroduto: (handle, meio, ângulo, circuitos, diâmetro).
-    let mut alvos: Vec<(Handle, [f64; 2], f64, Vec<Condutores>, Option<f64>)> =
-        trechos.iter().map(|t| (t.handle, t.meio, t.angulo, t.circuitos.clone(), t.eletroduto.as_ref().map(|e| e.nominal))).collect();
-    alvos.extend(soltos.iter().map(|s| (s.eletroduto, s.meio, s.angulo, Vec::new(), None)));
+    // O que existe de eletroduto: (handle, meio, ângulo, circuitos, diâmetro, cabos de telecom).
+    type Alvo = (Handle, [f64; 2], f64, Vec<Condutores>, Option<f64>, Vec<crate::telecom::CaboNoTrecho>);
+    let mut alvos: Vec<Alvo> = trechos
+        .iter()
+        .map(|t| (t.handle, t.meio, t.angulo, t.circuitos.clone(), t.eletroduto.as_ref().map(|e| e.nominal), t.cabos_telecom.clone()))
+        .collect();
+    alvos.extend(soltos.iter().map(|s| (s.eletroduto, s.meio, s.angulo, Vec::new(), None, Vec::new())));
     for (tag, pai) in &existentes {
         if !alvos.iter().any(|a| a.0 == *pai) {
             doc.model.remove(*tag);
@@ -1028,7 +1085,7 @@ pub fn regenerar(doc: &mut Drawing, setup: &Setup, criar: Option<&[Handle]>) -> 
             reg.apagadas += 1;
         }
     }
-    for (h, meio, angulo, circuitos, diametro) in alvos {
+    for (h, meio, angulo, circuitos, diametro, cabos_telecom) in alvos {
         let ja = existentes.iter().find(|(_, p)| *p == h).map(|(t, _)| *t);
         if ja.is_none() && !criar.is_some_and(|l| l.contains(&h)) {
             continue;
@@ -1063,7 +1120,12 @@ pub fn regenerar(doc: &mut Drawing, setup: &Setup, criar: Option<&[Handle]>) -> 
             None => afastada.then_some(LigacaoLocal::Reta([-offset[0] * c - offset[1] * s, offset[0] * s - offset[1] * c])),
         };
         let nome = nome_do_bloco(h);
-        let bloco = bloco_da_tag(doc, &nome, &circuitos, diametro, ligacao, m, setup);
+        // Um eletroduto só de telecom leva a tag do cabeamento: os pontos em cima, os cabos e o diâmetro embaixo.
+        let bloco = if circuitos.is_empty() && !cabos_telecom.is_empty() {
+            bloco_da_tag_telecom(doc, &nome, &cabos_telecom, diametro, ligacao, m)
+        } else {
+            bloco_da_tag(doc, &nome, &circuitos, diametro, ligacao, m, setup)
+        };
         doc.blocks.insert(nome.clone(), Arc::new(bloco));
         let posicao = lider.map_or(Vec3::new(meio[0] + offset[0], meio[1] + offset[1], 0.0), |l| Vec3::new(l.tag[0], l.tag[1], 0.0));
         let mut xd = Vec::new();
@@ -1116,6 +1178,9 @@ pub fn regenerar(doc: &mut Drawing, setup: &Setup, criar: Option<&[Handle]>) -> 
     reg.tabelas = crate::tabela::regenerar(doc, &analise, setup)?;
     reg.unifilares = crate::unifilar::regenerar(doc, &analise, setup)?;
     reg.frontais = crate::frontal::regenerar(doc, &analise, setup)?;
+    let telecom = crate::telecom::rotear(doc, &analise, setup);
+    crate::telecom::gravar(doc, &telecom);
+    reg.racks = crate::telecom::regenerar_tabelas(doc, &telecom, setup);
     reg.legendas = crate::legenda::regenerar(doc, &analise, m);
     Ok(reg)
 }
@@ -1126,6 +1191,7 @@ pub fn regenerar_se_houver(doc: &mut Drawing, setup: &Setup) -> Result<Option<Re
         && crate::tabela::tabelas(doc).is_empty()
         && crate::unifilar::unifilares(doc).is_empty()
         && crate::frontal::vistas(doc).is_empty()
+        && crate::telecom::tabelas(doc).is_empty()
         && crate::legenda::inserida(doc).is_none()
     {
         return Ok(None);

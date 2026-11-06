@@ -248,8 +248,9 @@ Limites:
   para a Equatorial até o projetista cadastrar a tabela da concessionária dele. Sem tabela de motores, motores entram com 100 %.
 - **Alimentado por:** é gravado, validado contra ciclos e mostrado no unifilar. A demanda de um quadro ainda não soma a dos quadros
   que ele alimenta.
-- **Telecom:** a aba insere pontos, racks e eletrodutos e edita o catálogo de cabos. Ainda não há roteamento de cabos de telecom nem
-  ocupação de eletroduto por eles.
+- **Telecom:** o cabeamento é horizontal, do rack aos pontos; o backbone entre racks ainda não é calculado. As folgas de
+  terminação (3 m no rack, 0,30 m no ponto) são prática de instalação, não números da norma.
+- **Quadro VDI acoplado:** usa o lugar do quadro de cargas, e a aba dele continua com o nome do painel do CADCraft.
 - **Curva:** a sugestão (B em carga só resistiva, C nas outras) é prática de projeto, não regra da NBR 5410. Fica a critério do projetista.
 - **DR:** a corrente de cada grupo é uma sugestão pela soma de Ib, sem aplicar demanda.
 - **Perfis:** mudar a linha ou a cor de um perfil vale para os próximos trechos; os desenhados guardam as suas. A tabela de diâmetros
@@ -356,3 +357,22 @@ Ajustes de interface e de prancha:
   de 18, sem partir um dispositivo.
 - **Escala:** é um detalhe ampliado: um módulo DIN vale 25 cm no desenho, para os textos de 8 cm caberem nos dispositivos.
 - **Unifilar:** o DPS aparece na entrada, depois do geral, ligado ao terra.
+
+## Telecom (NBR 14565) e disciplinas
+
+- **Vincular e numerar (`TELEVINCULAR`):** `RACK_PAI`, `ID_PONTO` (`D-01`, `CFTV-01`, `AP-01`, `FO-01`, `TV-01`, pelo nome do bloco,
+  da legenda ou do cabo), `TIPO_CABO` e `QTD_CABOS`. Com um rack só, todos vão para ele; com mais, o rack escolhido ou o mais perto
+  pela rede. A numeração segue a distância até o rack.
+- **Estrela (`TELEROTEAR`):** o menor caminho de cada ponto até o rack, passando só por pontos de dados e caixas de passagem; um
+  módulo empilhado sai da caixa base. Cada ponto leva os cabos dele inteiros: um trecho por onde passam três pontos leva três cabos.
+- **Comprimento 3D:** o caminho em planta, as subidas e descidas até os blocos, o desnível do módulo empilhado e as folgas. Aviso
+  acima de 90 m num cabo UTP.
+- **Eletroduto:** o menor do tipo ou do perfil com até 40 % de ocupação; um diâmetro travado só tem a ocupação conferida. Um
+  eletroduto com circuitos de energia e cabos de telecom gera aviso.
+- **Tags (`TELEFIACAO`):** direto no eletroduto ou com linha de chamada, como as de fiação: os pontos em cima (`D-01..D-04`), a
+  quantidade, o cabo e o diâmetro embaixo (`4x Cat6 Ø25`).
+- **Quadro VDI / Rack:** porta, ponto, descrição, cabo, comprimento 3D e situação, acoplado embaixo do desenho; **Tabela do rack**
+  (`TELETABELA`) no desenho; cabos de telecom, terminações e portas na lista de materiais. O `ELEREGEN` refaz tags e tabelas.
+- **Disciplinas (`disciplina.rs`):** Elétrica (radial), Telecom (estrela) e Alarme de incêndio (NBR 17240, laço classe A ou B)
+  dizem qual é a central, quais pontos são de cada uma e por quais blocos um cabo passa. O alarme fica preparado, sem blocos nem
+  interface ainda.

@@ -57,6 +57,8 @@ divulgado para engenheiros e usuários finais: código em teste ou incompleto n�
 - **Decisões por quadro e por circuito:** sistema, tensão nominal, cabo padrão e alimentação ficam em cada quadro; esquema,
   cabo, curva e grupo DR em cada circuito; classe e fator de demanda na família e no ponto. As Configurações guardam o que vale
   para o projeto todo: critérios, catálogos de cabos, perfis de eletroduto e tabelas de demanda.
+- **Disciplinas no mesmo grafo:** `ele::disciplina` diz a central, os pontos e por onde passa o cabo de cada uma. Telecom
+  (`ele::telecom`, NBR 14565) é em estrela, um cabo inteiro de cada ponto até o rack; o alarme de incêndio (laço) fica preparado.
 - **Eletroduto no desenho:** a cor é do material e o tipo de linha é do caminhamento (teto contínua, parede tracejada ou
   pontilhada, piso traço e ponto).
 - **Toda janela que cria algo tem Excluir:** blocos e famílias, pontos, circuitos, grupos DR, eletrodutos, perfis, cabos e

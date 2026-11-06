@@ -422,6 +422,17 @@ impl Rede {
 
     /// Caminhos mínimos a partir de um nó (Dijkstra): distância (m) e a aresta de chegada.
     pub fn arvore(&self, origem: usize) -> Arvore {
+        self.arvore_por(origem, &|_| true)
+    }
+
+    /// Caminhos mínimos de uma disciplina: no meio do caminho, só os blocos por onde o cabo dela passa
+    /// ([`crate::disciplina::Disciplina::atravessa`]). O fim do caminho pode ser qualquer bloco.
+    pub fn arvore_da_disciplina(&self, origem: usize, d: crate::disciplina::Disciplina) -> Arvore {
+        self.arvore_por(origem, &|n| d.atravessa(n.tipo))
+    }
+
+    /// Caminhos mínimos que só continuam a partir da origem e dos nós em que `passa` é verdade.
+    pub fn arvore_por(&self, origem: usize, passa: &dyn Fn(&No) -> bool) -> Arvore {
         #[derive(PartialEq)]
         struct Item(f64, usize);
         impl Eq for Item {}
@@ -443,7 +454,7 @@ impl Rede {
             fila.push(Item(0.0, origem));
         }
         while let Some(Item(d, n)) = fila.pop() {
-            if d > distancia[n] {
+            if d > distancia[n] || (n != origem && !self.nos.get(n).is_some_and(passa)) {
                 continue;
             }
             for &(viz, e) in &self.adj[n] {

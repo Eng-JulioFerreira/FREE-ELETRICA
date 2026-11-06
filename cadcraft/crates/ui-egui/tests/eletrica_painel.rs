@@ -233,6 +233,28 @@ fn paleta_ferramentas_e_fluxo_completo() {
     assert_eq!(free_eletrica::biblioteca::modelo(h.state().session.state().unwrap().uid).unwrap().bloco, "RJ45");
     h.state_mut().session.input(Input::Enter).unwrap();
     h.run_steps(3);
+    // O cabeamento (NBR 14565): vincular, dimensionar, o quadro VDI acoplado, as tags e a tabela do rack.
+    for f in ["Cabeamento (NBR 14565)", "Numerar e vincular ao rack", "Dimensionar telecom...", "Tags de cabeamento", "Tabela do rack"] {
+        h.get_by_label(f);
+    }
+    h.get_by_label("Quadro VDI / Rack...").click();
+    h.run_steps(4);
+    h.get_by_label("Quadro VDI / Rack");
+    for b in ["Numerar e vincular", "Dimensionar telecom", "Tabela no desenho"] {
+        h.get_by_label(b);
+    }
+    assert!(h.state().ui.docking.layout.contains(&Panel::QuadroCargas), "acoplado embaixo do desenho");
+    // O quadro de cargas e o VDI dividem o lugar: abrir um fecha o outro; o X fecha.
+    h.state_mut().run("ui.eletrica.cargas", Value::Null).unwrap();
+    h.run_steps(4);
+    assert!(h.query_by_label("Quadro VDI / Rack").is_none());
+    h.state_mut().run("ui.eletrica.telecom.vdi", Value::Null).unwrap();
+    h.run_steps(4);
+    h.get_by_label("Quadro VDI / Rack");
+    h.get_by_label("Fechar").click();
+    h.run_steps(4);
+    assert!(h.query_by_label("Quadro VDI / Rack").is_none());
+    assert!(!h.state().ui.docking.layout.contains(&Panel::QuadroCargas));
     h.get_by_label("Elétrica").click();
     h.run_steps(3);
     // Nada fica aberto sem ser pedido.

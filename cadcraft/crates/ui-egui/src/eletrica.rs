@@ -83,6 +83,8 @@ struct Janelas {
     /// O quadro de cargas estava acoplado no quadro anterior: sumiu do layout sem Esc nem X, foi fechado pelo
     /// menu do painel.
     cargas_acoplado: bool,
+    /// O rack mostrado no quadro VDI.
+    rack_vdi: Option<Handle>,
     /// Havia um menu aberto no fim do quadro anterior: o Esc deste quadro foi dele.
     menu_aberto: bool,
 }
@@ -99,12 +101,20 @@ enum Qual {
     Pontos,
     Conferencia,
     Materiais,
+    /// O quadro VDI / rack: acoplado no mesmo lugar do quadro de cargas.
+    Vdi,
 }
 
-/// Abre uma janela, por cima das outras.
+/// Abre uma janela, por cima das outras. O quadro de cargas e o quadro VDI dividem o lugar acoplado embaixo do
+/// desenho: abrir um fecha o outro.
 fn abrir(q: Qual) -> Result<Value, String> {
     let mut j = trava(&JANELAS);
     j.abertas.retain(|x| *x != q);
+    match q {
+        Qual::Cargas => fechar(&mut j, Qual::Vdi),
+        Qual::Vdi => fechar(&mut j, Qual::Cargas),
+        _ => {}
+    }
     j.abertas.push(q);
     Ok(Value::Null)
 }
@@ -424,6 +434,19 @@ pub fn route(app: &mut CadApp, id: &str, _params: &Value) -> Option<Result<Value
         // Rotear fiação vive dentro do Quadro de cargas; ELEROTEAR abre o quadro de cargas.
         "ui.eletrica.cargas" | "elecargas" | "ui.eletrica.rotear" | "elerotear" => Some(abrir(Qual::Cargas)),
         "ui.eletrica.eletrodutos" => Some(abrir(Qual::Eletrodutos)),
+        "ui.eletrica.telecom.vdi" | "televdi" => Some(abrir(Qual::Vdi)),
+        // Dimensionar telecom grava o cálculo e mostra o resultado no quadro VDI.
+        "ui.eletrica.telecom.dimensionar" => Some(match app.run("telerotear", json!({})) {
+            Ok(v) => {
+                let avisos = v["avisos"].as_array().map_or(0, Vec::len);
+                app.set_status(format!(
+                    "Telecom dimensionado: {} trecho(s) de eletroduto, {avisos} aviso(s)",
+                    v["trechos"].as_array().map_or(0, Vec::len)
+                ));
+                abrir(Qual::Vdi)
+            }
+            Err(e) => Err(e.to_string()),
+        }),
         _ => None,
     }
 }
@@ -777,7 +800,7 @@ const PALETA_ELETRICA: [Secao; 6] = [
     },
 ];
 
-const PALETA_TELECOM: [Secao; 3] = [
+const PALETA_TELECOM: [Secao; 4] = [
     Secao {
         nome: "Pontos e Racks",
         ferramentas: &[
@@ -811,6 +834,42 @@ const PALETA_TELECOM: [Secao; 3] = [
                 "O mesmo eletroduto da aba Elétrica, escolhendo o perfil e o traçado na mini-barra",
             ),
             ferr(Icone::Lista, "Lista de eletrodutos...", "ui.eletrica.eletrodutos", "Trechos, com tipo, cota, diâmetro e ocupação"),
+        ],
+    },
+    Secao {
+        nome: "Cabeamento (NBR 14565)",
+        ferramentas: &[
+            ferr(
+                Icone::Etiqueta,
+                "Numerar e vincular ao rack",
+                "televincular",
+                "Liga cada ponto ao rack (com um só, automático) e numera: D-01, CFTV-01, AP-01, FO-01, com o cabo e a quantidade (TELEVINCULAR)",
+            ),
+            ferr(
+                Icone::Engrenagem,
+                "Dimensionar telecom...",
+                "ui.eletrica.telecom.dimensionar",
+                "Topologia em estrela: um cabo inteiro de cada ponto até o rack, comprimento 3D com alerta acima de 90 m e eletroduto com 40 % de ocupação (TELEROTEAR)",
+            ),
+            ferr(
+                Icone::Quadro,
+                "Quadro VDI / Rack...",
+                "ui.eletrica.telecom.vdi",
+                "Portas do rack com o ponto, a descrição, o cabo, o comprimento 3D e a situação de cada enlace",
+            ),
+            ferr(
+                Icone::Chamada,
+                "Tags de cabeamento",
+                "telefiacao",
+                "Direto no eletroduto ou com linha de chamada: os pontos em cima (D-01..D-04), os cabos e o diâmetro embaixo (TELEFIACAO)",
+            ),
+            ferr(Icone::Grade, "Tabela do rack", "teletabela", "Desenha a tabela do rack / quadro VDI num ponto da planta (TELETABELA)"),
+            ferr(
+                Icone::Prancheta,
+                "Lista de materiais...",
+                "ui.eletrica.materiais",
+                "Cabos de telecom por tipo, terminações nos pontos e portas no rack, junto do resto do projeto (ELEMATERIAIS)",
+            ),
         ],
     },
     Secao {
@@ -1038,6 +1097,7 @@ struct Estado {
     eletrodutos: Option<(((u64, u64), Setup), Arc<Eletrodutos>)>,
     destaque: Option<(ChaveDestaque, Arc<Destaque>)>,
     materiais: Option<(((u64, u64), Setup), Arc<ele::materiais::Materiais>)>,
+    telecom: Option<(((u64, u64), Setup), Arc<ele::telecom::Telecom>)>,
 }
 
 /// O que a aba Eletrodutos mostra.
@@ -1103,6 +1163,20 @@ impl Estado {
         let m = app.session.state().map(|st| ele::materiais::levantar(&st.doc, &self.analise, s)).unwrap_or_default();
         let r = Arc::new(m);
         self.materiais = Some((chave, r.clone()));
+        r
+    }
+
+    fn telecom(&mut self, app: &CadApp, s: &Setup) -> Arc<ele::telecom::Telecom> {
+        let Some(c) = self.chave else { return Arc::default() };
+        let chave = (c, s.clone());
+        if let Some((k, r)) = &self.telecom
+            && *k == chave
+        {
+            return r.clone();
+        }
+        let t = app.session.state().map(|st| ele::telecom::rotear(&st.doc, &self.analise, s)).unwrap_or_default();
+        let r = Arc::new(t);
+        self.telecom = Some((chave, r.clone()));
         r
     }
 
@@ -1270,11 +1344,13 @@ fn acoplar_quadro(app: &mut CadApp) {
     let acoplado = app.ui.docking.layout.contains(&panel);
     let (aberto, estava) = {
         let j = trava(&JANELAS);
-        (j.abertas.contains(&Qual::Cargas), j.cargas_acoplado)
+        (j.abertas.contains(&Qual::Cargas) || j.abertas.contains(&Qual::Vdi), j.cargas_acoplado)
     };
     if aberto && estava && !acoplado {
         // Fechado pelo menu do próprio painel.
-        fechar(&mut trava(&JANELAS), Qual::Cargas);
+        let mut j = trava(&JANELAS);
+        fechar(&mut j, Qual::Cargas);
+        fechar(&mut j, Qual::Vdi);
     } else if aberto && !acoplado {
         let primeira = !app.ui.docking.hidden.iter().any(|(p, _)| *p == panel);
         let abriu = crate::docking::command(app, false, &json!({ "operation": "open", "panel": panel.id() })).is_ok();
@@ -1293,9 +1369,9 @@ fn acoplar_quadro(app: &mut CadApp) {
 pub fn quadro_acoplado(app: &mut CadApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     let ctx = ui.ctx().clone();
-    let (mut cargas, mut destaque) = {
+    let (mut cargas, mut destaque, vdi, mut rack_vdi) = {
         let j = trava(&JANELAS);
-        (j.cargas.clone(), j.destaque.clone())
+        (j.cargas.clone(), j.destaque.clone(), j.abertas.contains(&Qual::Vdi), j.rack_vdi)
     };
     let mut st = ler_estado(app, &ctx);
     let s = setup();
@@ -1313,7 +1389,9 @@ pub fn quadro_acoplado(app: &mut CadApp, ui: &mut egui::Ui) {
         ui.painter().line_segment([c.right_top(), c.left_bottom()], Stroke::new(1.3, cor));
         crate::icons::describe_control(ui, &resp, "Fechar", None, false);
         fechar_quadro = resp.on_hover_text("Fechar (Esc)").clicked();
-        if st.chave.is_some() {
+        if st.chave.is_some() && vdi {
+            painel_vdi(ui, app, &t, &mut st, &s, &mut rack_vdi, &mut acoes);
+        } else if st.chave.is_some() {
             aba_cargas(ui, app, &t, &mut st, &s, &mut cargas, &mut destaque, &mut acoes);
         } else {
             ui.label(pequeno("Nenhum desenho aberto.", t.text_dim));
@@ -1323,12 +1401,114 @@ pub fn quadro_acoplado(app: &mut CadApp, ui: &mut egui::Ui) {
         let mut j = trava(&JANELAS);
         j.cargas = cargas;
         j.destaque = destaque;
+        j.rack_vdi = rack_vdi;
         if fechar_quadro {
-            fechar(&mut j, Qual::Cargas);
+            fechar(&mut j, if vdi { Qual::Vdi } else { Qual::Cargas });
         }
     }
     guardar(&ctx, st);
     executar(app, acoes);
+}
+
+/// O quadro VDI / rack acoplado: os enlaces de um rack, com a porta, o ponto, o cabo, o comprimento 3D e a
+/// situação de cada um, e as ações do cabeamento.
+fn painel_vdi(ui: &mut egui::Ui, app: &CadApp, t: &Tokens, st: &mut Estado, s: &Setup, rack: &mut Option<Handle>, acoes: &mut Vec<Acao>) {
+    let tel = st.telecom(app, s);
+    *rack = rack.filter(|h| tel.racks.iter().any(|r| r.rack == *h)).or_else(|| tel.racks.first().map(|r| r.rack));
+    let atual = tel.racks.iter().find(|r| Some(r.rack) == *rack);
+    ui.horizontal_wrapped(|ui| {
+        ui.label(RichText::new("Quadro VDI / Rack").strong());
+        if tel.racks.len() > 1 {
+            egui::ComboBox::from_id_salt("ele-vdi-rack").selected_text(atual.map_or("-", |r| r.tag.as_str())).show_ui(ui, |ui| {
+                for r in &tel.racks {
+                    if ui.selectable_label(Some(r.rack) == *rack, &r.tag).clicked() {
+                        *rack = Some(r.rack);
+                    }
+                }
+            });
+        } else if let Some(r) = atual {
+            ui.label(&r.tag);
+        }
+        ui.separator();
+        if ui
+            .button("Numerar e vincular")
+            .on_hover_text("Liga cada ponto de telecom ao rack e numera os sem identificação: D-01, CFTV-01, AP-01, FO-01 (TELEVINCULAR)")
+            .clicked()
+        {
+            acoes.push(Acao::RodarComStatus("televincular", json!({}), |v| {
+                format!("{} ponto(s) de telecom vinculado(s)", v["pontos"].as_array().map_or(0, Vec::len))
+            }));
+        }
+        if ui
+            .button("Dimensionar telecom")
+            .on_hover_text("Roteia em estrela até o rack, soma os cabos em cada eletroduto e escolhe o diâmetro com 40 % de ocupação (TELEROTEAR)")
+            .clicked()
+        {
+            acoes.push(Acao::RodarComStatus("telerotear", json!({}), |v| {
+                format!("Telecom dimensionado: {} aviso(s)", v["avisos"].as_array().map_or(0, Vec::len))
+            }));
+        }
+        if ui
+            .button("Tags de cabeamento")
+            .on_hover_text("Uma tag no meio de cada eletroduto de telecom: os pontos em cima, os cabos e o diâmetro embaixo (TELEFIACAO)")
+            .clicked()
+        {
+            acoes.push(Acao::Rodar("telefiacao", json!({})));
+        }
+        if ui.button("Tabela no desenho").on_hover_text("Clique no ponto da planta onde vai a tabela do rack (TELETABELA)").clicked() {
+            acoes.push(Acao::Iniciar("teletabela"));
+        }
+        if let Some(r) = atual
+            && ui.button("Copiar resumo").on_hover_text("Copia a tabela do rack em texto").clicked()
+        {
+            ui.ctx().copy_text(ele::telecom::resumo(r));
+        }
+    });
+    ui.add_space(4.0);
+    let Some(r) = atual else {
+        ui.label(pequeno("Nenhum rack / quadro VDI no desenho: insira um com Inserir rack, na aba Telecom.", t.text_dim));
+        return;
+    };
+    if r.enlaces.is_empty() {
+        ui.label(pequeno("Nenhum ponto de telecom ligado a este rack: use Numerar e vincular.", t.text_dim));
+    }
+    egui::ScrollArea::vertical().id_salt("ele-vdi-lista").auto_shrink([false, true]).show(ui, |ui| {
+        egui::Grid::new("ele-vdi").num_columns(6).striped(true).spacing(vec2(14.0, 2.0)).show(ui, |ui| {
+            for c in ["Porta", "ID do ponto", "Descrição", "Cabo", "Comprimento 3D", "Status"] {
+                ui.label(RichText::new(c).strong());
+            }
+            ui.end_row();
+            for e in &r.enlaces {
+                celula(ui, 50.0, numero(e.porta.clone()), true);
+                let id = if e.id.is_empty() { "sem número" } else { e.id.as_str() };
+                if ui.link(id).on_hover_text("Seleciona e mostra o ponto no desenho").clicked() {
+                    acoes.push(Acao::Selecionar(vec![e.ponto]));
+                    if let Some(p) = st.analise.ponto(e.ponto) {
+                        acoes.push(Acao::Localizar(vec![p.posicao]));
+                    }
+                }
+                celula(ui, 220.0, e.descricao.as_str(), false);
+                celula(ui, 140.0, if e.quantidade > 1 { format!("{}x {}", e.quantidade, e.cabo) } else { e.cabo.clone() }, false);
+                celula(ui, 90.0, numero(format!("{}{} m", if e.estimado { "~" } else { "" }, fixo(e.comprimento, 1))), true);
+                let cor = if e.status == ele::telecom::StatusEnlace::Ok { t.text } else { COR_AVISO };
+                ui.label(RichText::new(e.status.texto()).color(cor));
+                ui.end_row();
+            }
+        });
+    });
+    ui.label(pequeno(
+        format!(
+            "{} porta(s). Comprimento: caminho pelos eletrodutos, subidas e descidas até os blocos e folgas de {} m no rack e {} m no ponto. Limite do cabo horizontal UTP: 90 m (NBR 14565).",
+            r.portas,
+            fixo(ele::telecom::FOLGA_RACK, 1),
+            fixo(ele::telecom::FOLGA_PONTO, 2)
+        ),
+        t.text_dim,
+    ));
+    if !tel.sem_rack.is_empty() {
+        ui.label(pequeno(format!("{} ponto(s) sem rack: use Numerar e vincular.", tel.sem_rack.len()), COR_AVISO));
+    }
+    lista_avisos(ui, "ele-vdi-avisos", &tel.avisos);
 }
 
 /// Chamado a cada quadro, com ou sem a paleta visível: a abertura na primeira vez e as janelas.
@@ -1355,7 +1535,7 @@ pub fn janelas(app: &mut CadApp, ctx: &egui::Context) {
         let j = trava(&JANELAS);
         (j.abertas.clone(), j.pontos.clone(), j.dimensionar.clone(), j.blocos.clone())
     };
-    if abertas.iter().all(|q| *q == Qual::Cargas) {
+    if abertas.iter().all(|q| matches!(q, Qual::Cargas | Qual::Vdi)) {
         return;
     }
     let t = Tokens::get();
@@ -1371,7 +1551,7 @@ pub fn janelas(app: &mut CadApp, ctx: &egui::Context) {
                 trava(&JANELAS).setup.is_some()
             }
             // Acoplado embaixo do desenho (`quadro_acoplado`), não é janela.
-            Qual::Cargas => true,
+            Qual::Cargas | Qual::Vdi => true,
             Qual::Dimensionar => janela(ctx, "Dimensionar projeto", (260.0, 110.0), (1120.0, 680.0), |ui| {
                 janela_dimensionar(ui, app, &t, &mut st, &s, &mut dimensionar, &mut acoes)
             }),
@@ -2972,6 +3152,23 @@ fn lista_de_materiais(ui: &mut egui::Ui, t: &Tokens, m: &ele::materiais::Materia
         ui.label(pequeno(format!("{} eletroduto(s) solto(s) fora da metragem.", m.eletrodutos_soltos), COR_AVISO));
     }
     ui.add_space(6.0);
+    if !m.cabos_telecom.is_empty() || !m.telecom.is_empty() {
+        titulo(ui, t, "Cabos de telecom (NBR 14565)");
+        egui::Grid::new("ele-mat-telecom").num_columns(2).striped(true).spacing(vec2(16.0, 2.0)).show(ui, |ui| {
+            for c in &m.cabos_telecom {
+                celula(ui, 300.0, c.nome.as_str(), false);
+                celula(ui, 70.0, numero(format!("{} m", fixo(c.metros.ceil(), 0))), true);
+                ui.end_row();
+            }
+            for i in &m.telecom {
+                celula(ui, 300.0, i.nome.as_str(), false);
+                celula(ui, 70.0, numero(i.quantidade.to_string()), true);
+                ui.end_row();
+            }
+        });
+        ui.label(pequeno("Cada enlace com o caminho pelos eletrodutos e as folgas de terminação, vezes os cabos do ponto.", t.text_dim));
+        ui.add_space(6.0);
+    }
     let contados = |ui: &mut egui::Ui, id: &str, nome: &str, lista: &[ele::materiais::ItemContado]| {
         titulo(ui, t, nome);
         if lista.is_empty() {

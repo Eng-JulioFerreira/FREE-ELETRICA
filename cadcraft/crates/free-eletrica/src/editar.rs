@@ -15,7 +15,7 @@ use crate::quadro::{
 use crate::xdata;
 
 /// Grava (ou apaga) uma chave do XDATA do Free Elétrica num bloco.
-fn gravar_xdata(doc: &mut Drawing, h: Handle, chave: &str, valor: Option<&str>) -> Result<(), String> {
+pub(crate) fn gravar_xdata(doc: &mut Drawing, h: Handle, chave: &str, valor: Option<&str>) -> Result<(), String> {
     let mut e = (**doc.model.get(h).ok_or("objeto não encontrado")?).clone();
     if !matches!(e.kind, EntityKind::Insert(_)) {
         return Err("o objeto não é um bloco".into());

@@ -97,6 +97,20 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("elequadro_frontal", "Board Front View", run_frontal)
             .params("{quadro?: hex | TAG, ponto?: [x, y]} → the same as eletrica.quadro.frontal; typed, it asks for the board and the point")
             .interactive(|_| Ok(Box::new(UnifilarM { frontal: true, ..UnifilarM::default() }))),
+        CommandSpec::new("televincular", "Link Telecom Points", run_televincular)
+            .params("{rack?: hex | TAG (default: the only rack, or the nearest one through the conduits), pontos?: [hex] (default: every telecom point), renumerar?: bool (renumber every point, not only the ones without ID)} → writes RACK_PAI, ID_PONTO (D-01, CFTV-01, AP-01, FO-01, TV-01), TIPO_CABO and QTD_CABOS: {pontos: [{ponto, id, rack, cabo, quantidade}], avisos}")
+            .interactive(|_| Ok(Box::new(VincularM::default()))),
+        CommandSpec::new("telerotear", "Size Telecom", run_telerotear)
+            .params("{} → routes every telecom point to its rack in a star (NBR 14565), one whole cable per point through the conduits, sizes each telecom conduit at 40 % fill and stores the result in the drawing; updates tags and rack tables: {racks: [{rack, tag, portas, enlaces: [{ponto, id, descricao, cabo, quantidade, porta, comprimento, estimado, status}]}], semRack, trechos: [{eletroduto, cabos, eletrodutoEscolhido, ocupacao, textoIds, textoCabos}], avisos}"),
+        CommandSpec::new("eletrica.telecom", "Telecom Cabling", run_telecom)
+            .params("{rack?: hex | TAG} → the same result as telerotear without writing; with `rack`, only that rack: {racks, semRack, trechos, avisos}")
+            .noundo(),
+        CommandSpec::new("telefiacao", "Telecom Cabling Tags", run_telefiacao)
+            .params("{eletrodutos?: [hex], limpar?: bool, ancora?: [x, y], modo?: direct | leader, tag?: [x, y], eletroduto?: hex} → the same as elefiacao; without a point, a tag in the middle of every telecom conduit: point IDs above (D-01..D-04), cables and diameter below (4x Cat6 Ø25)")
+            .interactive(|_| Ok(Box::new(FiacaoM { telecom: true, ..FiacaoM::default() }))),
+        CommandSpec::new("teletabela", "Rack Table", run_teletabela)
+            .params("{rack?: hex | TAG (default: the first), ponto: [x, y]} → draws the rack (telecom enclosure) table: port, point ID, description, cable, 3D length and status; an existing one moves: {tabela}")
+            .interactive(|_| Ok(Box::new(TabelaRackM::default()))),
         CommandSpec::new("eletrica.quadro.equilibrar", "Balance Phases", run_equilibrar)
             .params("{quadro?: hex | TAG} → unlocks the phases of every circuit, so the balancing applies to all: {destravados, desequilibrio}"),
         CommandSpec::new("eletrica.atributos", "Block Attributes", run_atributos)
@@ -859,6 +873,231 @@ fn run_fiacao(s: &mut Session, p: &Value) -> Result<Value> {
     json_de(&regenerar_criando(s, &lista)?)
 }
 
+/// Os eletrodutos por onde passam cabos de telecom.
+fn eletrodutos_de_telecom(s: &Session) -> Result<Vec<Handle>> {
+    let a = analise(s)?;
+    Ok(ele::telecom::rotear(s.doc()?, &a, &ele::setup::atual()).trechos.iter().map(|t| t.eletroduto).collect())
+}
+
+/// O rack por handle ou TAG; sem nada, o primeiro do desenho.
+fn achar_rack(a: &ele::Analise, v: Option<&Value>) -> Result<Handle> {
+    let racks = ele::telecom::racks(a);
+    let achado = match v.filter(|v| !v.is_null()).and_then(Value::as_str) {
+        None => racks.first().copied(),
+        Some(t) => racks
+            .iter()
+            .find(|r| Handle::parse_hex(t) == Some(r.handle))
+            .or_else(|| racks.iter().find(|r| r.tag.as_deref().is_some_and(|tag| tag.eq_ignore_ascii_case(t))))
+            .copied(),
+    };
+    achado.map(|r| r.handle).ok_or_else(|| erro("nenhum rack / quadro VDI com esse nome no desenho"))
+}
+
+fn run_televincular(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "televincular";
+    let a = analise(s)?;
+    let rack = match p.get("rack").filter(|v| !v.is_null()) {
+        Some(v) => Some(achar_rack(&a, Some(v))?),
+        None => None,
+    };
+    let pontos = match p.get("pontos").filter(|v| !v.is_null()) {
+        Some(_) => Some(handles(CMD, p, "pontos")?),
+        None => None,
+    };
+    let renumerar = p.get("renumerar").and_then(Value::as_bool).unwrap_or(false);
+    let v = ele::telecom::vincular(s.doc_mut()?, &ele::setup::atual(), rack, pontos.as_deref(), renumerar).map_err(|e| bad(CMD, e))?;
+    json_de(&v)
+}
+
+fn run_telerotear(s: &mut Session, _p: &Value) -> Result<Value> {
+    let setup = ele::setup::atual();
+    let a = analise(s)?;
+    let t = ele::telecom::rotear(s.doc()?, &a, &setup);
+    ele::telecom::gravar(s.doc_mut()?, &t);
+    ele::fiacao::regenerar_se_houver(s.doc_mut()?, &setup).map_err(erro)?;
+    json_de(&t)
+}
+
+fn run_telecom(s: &mut Session, p: &Value) -> Result<Value> {
+    let a = analise(s)?;
+    let mut t = ele::telecom::rotear(s.doc()?, &a, &ele::setup::atual());
+    if let Some(v) = p.get("rack").filter(|v| !v.is_null()) {
+        let r = achar_rack(&a, Some(v))?;
+        t.racks.retain(|x| x.rack == r);
+    }
+    json_de(&t)
+}
+
+fn run_telefiacao(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "telefiacao";
+    if p.get("ancora").is_some() || p.get("tag").is_some() || p.get("modo").is_some() {
+        return run_fiacao(s, p);
+    }
+    let lista = match p.get("eletrodutos") {
+        Some(_) => handles(CMD, p, "eletrodutos")?,
+        None => eletrodutos_de_telecom(s)?,
+    };
+    if p.get("limpar").and_then(Value::as_bool).unwrap_or(false) {
+        let n = ele::fiacao::limpar(s.doc_mut()?, Some(&lista));
+        return Ok(json!({ "apagadas": n }));
+    }
+    if lista.is_empty() {
+        return Err(erro("nenhum eletroduto leva cabos de telecom: vincule os pontos ao rack e ligue-os com eletrodutos"));
+    }
+    preparar(s)?;
+    json_de(&regenerar_criando(s, &lista)?)
+}
+
+fn run_teletabela(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "teletabela";
+    let a = analise(s)?;
+    let r = achar_rack(&a, p.get("rack"))?;
+    let pos = p.get("ponto").and_then(ponto_de).ok_or_else(|| bad(CMD, "`ponto` ([x, y]) is required"))?;
+    let h = ele::telecom::inserir_tabela(s.doc_mut()?, &a, &ele::setup::atual(), r, pos).map_err(erro)?;
+    Ok(json!({ "tabela": h.hex() }))
+}
+
+/// O rack num clique: o handle, se for um rack.
+fn rack_valido(s: &Session, h: Handle) -> Result<bool> {
+    Ok(ele::telecom::racks(&analise(s)?).iter().any(|r| r.handle == h))
+}
+
+/// TELEVINCULAR digitado: com um rack só, vincula e numera tudo de uma vez. Com mais de um: o rack (Enter: o
+/// mais perto de cada ponto) e os pontos (Enter: todos).
+#[derive(Default)]
+struct VincularM {
+    rack: Option<Option<Handle>>,
+}
+
+impl VincularM {
+    fn executar(s: &mut Session, rack: Option<Handle>, pontos: Option<&[Handle]>) -> Result<Step> {
+        match ele::telecom::vincular(s.doc_mut()?, &ele::setup::atual(), rack, pontos, false) {
+            Ok(v) => {
+                s.echo(format!("{} ponto(s) de telecom vinculado(s) e numerado(s).", v.pontos.len()));
+                for a in &v.avisos {
+                    s.echo(a.clone());
+                }
+            }
+            Err(e) => s.echo(e),
+        }
+        Ok(Step::Done)
+    }
+}
+
+impl Interactive for VincularM {
+    fn name(&self) -> &'static str {
+        "TELEVINCULAR"
+    }
+    fn begin(&mut self, s: &mut Session) -> Result<Step> {
+        s.set_selection(Vec::new());
+        match ele::telecom::racks(&analise(s)?).len() {
+            0 => {
+                s.echo("Nenhum rack / quadro VDI no desenho: insira um com Inserir rack.");
+                Ok(Step::Done)
+            }
+            1 => Self::executar(s, None, None),
+            _ => Ok(Step::Continue),
+        }
+    }
+    fn prompt(&self, _s: &Session) -> Prompt {
+        match self.rack {
+            None => Prompt::new("Selecione o rack", Accept::SELECT).default("O mais perto de cada ponto"),
+            Some(_) => Prompt::new("Selecione os pontos de telecom", Accept::SELECT).default("Todos"),
+        }
+    }
+    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        match (self.rack, i) {
+            (_, Input::Cancel) => Ok(Step::Done),
+            (None, Input::Enter) => Self::executar(s, None, None),
+            (None, Input::Pick(hs)) => {
+                s.set_selection(Vec::new());
+                for h in hs {
+                    if rack_valido(s, h)? {
+                        self.rack = Some(Some(h));
+                        return Ok(Step::Continue);
+                    }
+                }
+                s.echo("Selecione um rack / quadro VDI.");
+                Ok(Step::Continue)
+            }
+            (Some(r), Input::Enter) => Self::executar(s, r, None),
+            (Some(r), Input::Pick(hs)) => {
+                s.set_selection(Vec::new());
+                let a = analise(s)?;
+                let pontos: Vec<Handle> = ele::telecom::pontos(&a).iter().map(|p| p.handle).filter(|h| hs.contains(h)).collect();
+                if pontos.is_empty() {
+                    s.echo("Selecione pontos de telecom.");
+                    return Ok(Step::Continue);
+                }
+                Self::executar(s, r, Some(&pontos))
+            }
+            _ => Ok(Step::Continue),
+        }
+    }
+}
+
+/// TELETABELA digitado: o rack (Enter: o primeiro) e o ponto de inserção.
+#[derive(Default)]
+struct TabelaRackM {
+    rack: Option<Handle>,
+}
+
+impl Interactive for TabelaRackM {
+    fn name(&self) -> &'static str {
+        "TELETABELA"
+    }
+    fn begin(&mut self, s: &mut Session) -> Result<Step> {
+        s.set_selection(Vec::new());
+        let a = analise(s)?;
+        let racks = ele::telecom::racks(&a);
+        if racks.is_empty() {
+            s.echo("Nenhum rack / quadro VDI no desenho: insira um com Inserir rack.");
+            return Ok(Step::Done);
+        }
+        if let [r] = racks.as_slice() {
+            self.rack = Some(r.handle);
+        }
+        Ok(Step::Continue)
+    }
+    fn prompt(&self, _s: &Session) -> Prompt {
+        match self.rack {
+            None => Prompt::new("Selecione o rack", Accept::SELECT).default("Primeiro"),
+            Some(_) => Prompt::new("Ponto de inserção da tabela do rack", Accept::POINT),
+        }
+    }
+    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        match (self.rack, i) {
+            (_, Input::Cancel) | (Some(_), Input::Enter) => Ok(Step::Done),
+            (None, Input::Enter) => {
+                self.rack = ele::telecom::racks(&analise(s)?).first().map(|r| r.handle);
+                Ok(Step::Continue)
+            }
+            (None, Input::Pick(hs)) => {
+                s.set_selection(Vec::new());
+                for h in hs {
+                    if rack_valido(s, h)? {
+                        self.rack = Some(h);
+                        return Ok(Step::Continue);
+                    }
+                }
+                s.echo("Selecione um rack / quadro VDI.");
+                Ok(Step::Continue)
+            }
+            (Some(r), Input::Point(p)) => {
+                let a = analise(s)?;
+                match ele::telecom::inserir_tabela(s.doc_mut()?, &a, &ele::setup::atual(), r, [p.x, p.y]) {
+                    Ok(_) => Ok(Step::Done),
+                    Err(e) => {
+                        s.echo(e);
+                        Ok(Step::Continue)
+                    }
+                }
+            }
+            _ => Ok(Step::Continue),
+        }
+    }
+}
+
 fn run_modo_fiacao(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "eletrica.fiacao.modo";
     let uid = s.state()?.uid;
@@ -880,12 +1119,14 @@ fn run_regen(s: &mut Session, _p: &Value) -> Result<Value> {
 
 /// ELEFIACAO digitado, até Enter. Direto no eletroduto: um clique no trecho. Com linha de chamada: o ponto no
 /// eletroduto e o início da base. A mini-barra (ou `Direto` e `Chamada` digitados) troca o modo. Enter no
-/// começo põe uma tag no meio de todos os eletrodutos.
+/// começo põe uma tag no meio de todos os eletrodutos. TELEFIACAO é o mesmo, e o Enter vale só para os
+/// eletrodutos de telecom.
 #[derive(Default)]
 struct FiacaoM {
     /// O primeiro clique: o eletroduto e o ponto nele.
     ancora: Option<(Handle, [f64; 2])>,
     feitas: usize,
+    telecom: bool,
 }
 
 impl FiacaoM {
@@ -905,7 +1146,7 @@ impl FiacaoM {
 
 impl Interactive for FiacaoM {
     fn name(&self) -> &'static str {
-        "ELEFIACAO"
+        if self.telecom { "TELEFIACAO" } else { "ELEFIACAO" }
     }
     fn begin(&mut self, s: &mut Session) -> Result<Step> {
         s.set_selection(Vec::new());
@@ -939,7 +1180,11 @@ impl Interactive for FiacaoM {
             }
             Input::Enter if self.feitas > 0 => Ok(Step::Done),
             Input::Enter => {
-                let todos = todos_os_eletrodutos(s)?;
+                let todos = if self.telecom { eletrodutos_de_telecom(s)? } else { todos_os_eletrodutos(s)? };
+                if todos.is_empty() {
+                    s.echo("Nenhum eletroduto leva cabos de telecom: vincule os pontos ao rack e ligue-os com eletrodutos.");
+                    return Ok(Step::Done);
+                }
                 Self::executar(s, todos)
             }
             Input::Keyword(k) | Input::Text(k) => {

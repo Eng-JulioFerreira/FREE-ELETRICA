@@ -12,6 +12,7 @@ pub mod biblioteca;
 pub mod borda;
 pub mod circuito;
 pub mod demanda;
+pub mod disciplina;
 pub mod editar;
 pub mod eletroduto;
 pub mod familia;
@@ -26,6 +27,7 @@ pub mod quadro;
 pub mod rota;
 pub mod setup;
 pub mod tabela;
+pub mod telecom;
 pub mod unifilar;
 pub mod xdata;
 

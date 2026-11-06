@@ -26,6 +26,8 @@ Os pontos de registro no código do CADCraft estão em [arquitetura.md](arquitet
 | `nbr5410`, `quadro`, `demanda` | Dimensionamento, `TipoCabo`, `Esquema`, `Curva`, configuração de cada quadro, grupos de DR, alimentador, presets e tabelas de demanda |
 | `fiacao`, `tabela`, `unifilar`, `frontal`, `materiais`, `inspecao` | Tags, tabela, diagrama unifilar e vista frontal do quadro no desenho, lista de materiais e inspeção visual |
 | `setup` | As configurações, nas preferências do programa: catálogos de cabos, perfis de eletroduto e tabelas de demanda próprias |
+| `disciplina` | Elétrica (radial), Telecom (estrela) e Alarme de incêndio (laço classe A ou B, preparado): a central, os pontos e por onde o cabo de cada uma passa |
+| `telecom` | Cabeamento NBR 14565: vincular e numerar os pontos ao rack, rotear em estrela, comprimento 3D com o limite de 90 m, eletroduto com 40 % de ocupação, tags e tabela do rack |
 
 ## O grafo de eletrodutos
 
@@ -64,9 +66,11 @@ continuam sendo lidos.
 | Quadro (`INSERT`) | `SISTEMA_QUADRO`, `TENSAO_NOMINAL`, `CABO_PADRAO_QUADRO`, `ALIMENTADO_POR`; `DESC.`, `SECAO.`, `DISJ.`, `CURVA.`, `CABO.`, `CABONOME.`, `ESQUEMA.`, `TENSAO.`, `FASE.`, `DR.`, `DIM.` + circuito |
 | Eletroduto | `schema_ver`, `from_handle`, `to_handle`, `install_elevation`, `conduit_type`, `conduit_profile`, `nominal_diameter_mm`, `manual_diameter_lock`, `passing_wires.<n>`, `tag_handle` |
 | Tag de fiação | `schema_ver`, `parent_conduit_handle`, `anchor_x`, `anchor_y`, `user_offset_x`, `user_offset_y` |
+| Ponto de telecom (`INSERT`) | `RACK_PAI` (handle do rack, no XDATA); `ID_PONTO`, `TIPO_CABO` e `QTD_CABOS` no atributo ou no XDATA; `telecom_link_m` (comprimento do último cálculo) |
+| Eletroduto de telecom | `telecom_cables.<n>` (`ID:cabo:quantidade;...`) e `nominal_diameter_mm` |
 
 O tipo de linha e a cor do perfil ficam na própria entidade do eletroduto. O diagrama unifilar é o bloco
-`UNIFILAR_<handle do quadro>`; a vista frontal, `QUADRO_FRONTAL_<handle do quadro>`; e a tabela, `QUADRO_TABELA_<handle do quadro>`.
+`UNIFILAR_<handle do quadro>`; a vista frontal, `QUADRO_FRONTAL_<handle do quadro>`; a tabela, `QUADRO_TABELA_<handle do quadro>`; e a tabela do rack, `TELECOM_RACK_<handle do rack>`.
 
 As configurações do Setup, incluindo PE compartilhado, FCA fixo, catálogos, perfis e tabelas de demanda próprias, ficam nas
 preferências do programa, não no DXF.
@@ -85,10 +89,12 @@ próprio `CommandSpec`.
 | Eletrodutos | `eleeletroduto`, `eletrica.eletroduto.modelo`, `.dividir`, `.definir`, `eletrica.eletrodutos` |
 | Cálculo | `eletrica.dimensionar`, `eletrica.rotear`, `eletrica.sobrescrever`, `eletrica.quadro`, `eletrica.quadro.equilibrar`, `eletrica.cargas`, `eletrica.demanda.tabelas`, `.salvar`, `.excluir`, `eletrica.setup` |
 | Documentação | `elefiacao` (com `ancora`: direto no eletroduto; com `tag` também: linha de chamada), `eletrica.fiacao.modo`, `eleregen`, `elequadro_tabela`, `eletrica.unifilar`, `eleunifilar`, `eletrica.quadro.frontal`, `elequadro_frontal`, `elelegenda`, `eletrica.materiais`, `eletrica.inspecionar`, `eletrica.analisar` |
+| Telecom | `televincular`, `telerotear`, `eletrica.telecom`, `telefiacao` (os mesmos modos do `elefiacao`), `teletabela` |
 
 Comandos que só existem na interface, porque abrem janelas: `ELETRICA`, `ELECONFIG`, `ELEPONTOS`, `ELEBLOCOS`, `ELEATRIBUTOS`,
-`ELECARGAS`, `ELEROTEAR`, `ELEDIMENSIONAR`, `ELEMATERIAIS`, `ELECONFERIR`, `ELEINSPECAO`. `ELETRICA` abre a aba Installations
-das Tool Sets; `ELECARGAS` e `ELEROTEAR` acoplam o quadro de cargas embaixo do desenho até ele ser fechado.
+`ELECARGAS`, `ELEROTEAR`, `ELEDIMENSIONAR`, `ELEMATERIAIS`, `ELECONFERIR`, `ELEINSPECAO`, `TELEVDI`. `ELETRICA` abre a aba
+Installations das Tool Sets; `ELECARGAS` e `ELEROTEAR` acoplam o quadro de cargas embaixo do desenho, e `TELEVDI`, o quadro VDI /
+rack no mesmo lugar, até ser fechado.
 
 ## Compilar e empacotar
 

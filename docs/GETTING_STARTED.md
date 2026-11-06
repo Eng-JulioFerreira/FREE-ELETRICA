@@ -40,7 +40,15 @@ Para um símbolo próprio, use **Blocos e famílias...** e **+ Criar novo bloco 
 **Classe de Demanda** e o **Fator de Demanda**. Para mudar valores de um bloco já inserido, selecione-o e abra o
 **Inspetor de atributos...**: um ponto pode ter classe e fator próprios, que valem sobre os da família.
 
-Na aba **Telecom** da paleta, **Inserir ponto de dados** e **Inserir rack** já começam com o bloco certo.
+Na aba **Telecom** da paleta, **Inserir ponto de dados** e **Inserir rack** já começam com o bloco certo. Ligue os pontos ao
+rack com eletrodutos (um cabo de telecom passa por outros pontos de dados e por caixas de passagem, nunca por uma caixa de
+tomada) e use a seção **Cabeamento (NBR 14565)**:
+
+- **Numerar e vincular ao rack:** liga cada ponto ao rack (com um rack só, automático) e numera `D-01`, `CFTV-01`, `AP-01`,
+  `FO-01`, com o cabo (`UTP Cat 6` por padrão) e a quantidade de cabos.
+- **Dimensionar telecom...:** um cabo inteiro de cada ponto até o rack, o comprimento 3D com as folgas e o aviso acima de 90 m,
+  e o diâmetro de cada eletroduto com 40 % de ocupação. O resultado abre no **Quadro VDI / Rack**, embaixo do desenho.
+- **Tags de cabeamento** e **Tabela do rack** desenham o resultado; **Atualizar tags e tabelas** refaz tudo.
 
 ## 3. Crie os circuitos e os comandos
 
