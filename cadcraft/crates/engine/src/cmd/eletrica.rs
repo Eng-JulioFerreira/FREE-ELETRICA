@@ -63,8 +63,11 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("eletrica.ponto.documentacao", "Point Documentation", run_ponto_documentacao)
             .params("{pontos: [hex], legenda?: text | null, descMaterial?: text | null} (null or empty: back to the family's) → {pontos}"),
         CommandSpec::new("elelegenda", "Symbol Legend", run_legenda)
-            .params("{ponto: [x, y]} → draws the symbol legend of the points in the drawing as a block at the point (moves it if there is one): {legenda, linhas}")
-            .interactive(|_| Ok(Box::new(LegendaM))),
+            .params("{ponto: [x, y]} → draws the electrical symbol legend (electrical points and boxes) as a block at the point (moves it if there is one): {legenda, linhas}")
+            .interactive(|_| Ok(Box::new(LegendaM { disciplina: ele::disciplina::Disciplina::Eletrica }))),
+        CommandSpec::new("telelegenda", "Telecom Symbol Legend", run_telelegenda)
+            .params("{ponto: [x, y]} → draws the telecom symbol legend (telecom points and racks) as a block at the point (moves it if there is one): {legenda, linhas}")
+            .interactive(|_| Ok(Box::new(LegendaM { disciplina: ele::disciplina::Disciplina::Telecom }))),
         CommandSpec::new("eletrica.familia.excluir", "Delete Block Family", run_familia_excluir)
             .params("{bloco, comInsercoes?: bool (also deletes its insertions)} → deletes the block and its family; a factory block stays out until restored: {insercoes}"),
         CommandSpec::new("eletrica.familia.ler", "Block Family", run_familia_ler)
@@ -86,7 +89,7 @@ pub fn specs() -> Vec<CommandSpec> {
             .params("{} → {cabos: [{secao, tipo, metros}], eletrodutos: [{tipo, diametro, metros}], caixas, pontos, disjuntores, pontosSemCaixa, eletrodutosSoltos, avisos}")
             .noundo(),
         CommandSpec::new("eletrica.dimensionar", "Size Board", run_dimensionar)
-            .params("{quadro?: hex | TAG (default: every board), compartilharPe?: bool, temperaturaAmbiente?: °C, fcaManual?: number | null, unifilar?: bool (also generates or updates the single-line diagram)} → applies the options, sizes the circuits, stores the result on the boards and updates tags, tables and diagrams: {quadros: [{tag, circuitos, avisos}], circuitos, avisos, unifilares}"),
+            .params("{quadro?: hex | TAG (default: every board), compartilharPe?: bool, temperaturaAmbiente?: °C, fcaManual?: number | null, criterioDisjuntor?: correnteProjetoIb | capacidadeCaboIz, metodoInstalacao?: A1 | A2 | B1 | B2 | C | D | E | F, unifilar?: bool (also generates or updates the single-line diagram)} → applies the options, sizes the circuits, stores the result on the boards and updates tags, tables and diagrams: {quadros: [{tag, circuitos, avisos}], circuitos, avisos, unifilares}"),
         CommandSpec::new("eletrica.unifilar", "Single-Line Diagram", run_unifilar)
             .params("{quadro?: hex | TAG, ponto?: [x, y]} → generates or updates the board's single-line diagram; an existing one only moves when `ponto` is given: {unifilar}"),
         CommandSpec::new("eleunifilar", "Single-Line Diagram", run_unifilar)
@@ -148,7 +151,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("eletrica.sobrescrever", "Override Circuit", run_sobrescrever)
             .params("{quadro?: hex | TAG, circuito, secao?: mm², disjuntor?: A} (no value: back to the automatic choice) → {quadro, circuito}"),
         CommandSpec::new("eletrica.quadro", "Board Settings", run_quadro)
-            .params("{quadro?: hex | TAG, sistema?: \"F+N+T\" | \"2F+N+T\" | \"2F+T\" | \"3F+N+T\" | null, tensaoNominal?: \"127/220\" | \"220/380\" | null, cabo?: FLEX_PVC_70 | UNI_PVC_70 | HEPR_XLPE_90 | LSZH_70 | LSZH_HEPR_90 | null, alimentadoPor?: \"CONCESSIONARIA\" | hex | TAG | null, montagem?: EMBUTIR | SOBREPOR | null, observacoes?: text | null, modulos?: number | null (null: the estimate), reservas?: number | null (null: the NBR 5410 minimum), isolacao?: \"PVC\" | \"EPR\" | \"XLPE\" | null (from drawings before the board's cable)} (null: back to what the block says) → {quadro, isolacao, config}"),
+            .params("{quadro?: hex | TAG, sistema?: \"F+N+T\" | \"2F+N+T\" | \"2F+T\" | \"3F+N+T\" | null, tensaoNominal?: \"127/220\" | \"220/380\" | null, cabo?: FLEX_PVC_70 | UNI_PVC_70 | HEPR_XLPE_90 | LSZH_70 | LSZH_HEPR_90 | null, alimentadoPor?: \"CONCESSIONARIA\" | hex | TAG | null, montagem?: EMBUTIR | SOBREPOR | null, observacoes?: text | null, modulos?: number | null (null: the estimate), reservas?: number | null (null: the NBR 5410 minimum), isolacao?: \"PVC\" | \"EPR\" | \"XLPE\" | null (from drawings before the board's cable), disjuntorGeral?: A | null, secaoGeral?: mm² | null (main breaker and feeder section locked by hand), usarDps?: bool | null, classeDps?: \"I\" | \"II\" | \"I+II\" | null, disjuntorDps?: A | null (breaker dedicated to the SPD), metodo?: A1 | A2 | B1 | B2 | C | D | E | F | null (installation method, NBR 5410 table 33), modulosPorTrilho?: 12 | 16 | 18 | 24 | null, barramentoFase?: PENTE | ESCAMA | null, barramentoNt?: TOPO_BASE | LATERAIS | null} (null: back to what the block says) → {quadro, isolacao, config}"),
         CommandSpec::new("eletrica.cargas", "Load Schedule", run_cargas)
             .params("{quadro?: hex | TAG} → [{id, descricao, circuito}] (circuits with points and the ones created empty)")
             .noundo(),
@@ -160,7 +163,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("eletrica.circuito.juntar", "Merge Circuits", run_juntar)
             .params("{quadro?: hex | TAG, de, para} (the points of `de` go to `para`) → {quadro, de, para, pontos}"),
         CommandSpec::new("eletrica.circuito.definir", "Circuit Properties", run_definir).params(
-            "{quadro?: hex | TAG, circuito, grupoDr?: text | null, cabo?: FLEX_PVC_70 | UNI_PVC_70 | HEPR_XLPE_90 | LSZH_70 | LSZH_HEPR_90 | null, caboNome?: catalog name | null, curva?: B | C | D | null, isolacao?: \"PVC\" | \"EPR\" | \"XLPE\" | null, esquema?: \"F+N\" | \"F+N+T\" | \"2F+T\" | \"2F+N+T\" | \"3F+T\" | \"3F+N+T\" | null, tensao?: V | null, fases?: \"R\" | \"RS\" ... | null (a value locks the phases), descricao?} (null: back to automatic) → {quadro, circuito}. Load type and power factor come from the block attributes TIPO_CARGA and FP.",
+            "{quadro?: hex | TAG, circuito, grupoDr?: text | null, cabo?: FLEX_PVC_70 | UNI_PVC_70 | HEPR_XLPE_90 | LSZH_70 | LSZH_HEPR_90 | null, caboNome?: catalog name | null, curva?: B | C | D | null, isolacao?: \"PVC\" | \"EPR\" | \"XLPE\" | null, esquema?: \"F+N\" | \"F+N+T\" | \"2F+T\" | \"2F+N+T\" | \"3F+T\" | \"3F+N+T\" | null, tensao?: V | null, fases?: \"R\" | \"RS\" ... | null (a value locks the phases), metodo?: A1 | A2 | B1 | B2 | C | D | E | F | null (installation method of the circuit), descricao?} (null: back to automatic) → {quadro, circuito}. Load type and power factor come from the block attributes TIPO_CARGA and FP.",
         ),
         CommandSpec::new("eletrica.demanda.tabelas", "Demand Tables", run_tabelas_demanda)
             .params("{} → the factory and custom demand tables (id, nome, fonte, edificacoes, aparelhos, aquecimento, arCondicionado, bombas, motores, propria)")
@@ -345,7 +348,39 @@ fn run_quadro(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let modulos = contagem("modulos", ele::quadro::MAXIMO_MODULOS)?;
     let reservas = contagem("reservas", ele::quadro::MAXIMO_RESERVAS)?;
+    // A proteção geral, o DPS, o método e a montagem DIN: o motor confere cada valor.
+    use ele::quadro as eq;
+    let opcoes = [
+        ("disjuntorGeral", eq::CHAVE_DISJ_GERAL),
+        ("secaoGeral", eq::CHAVE_SECAO_GERAL),
+        ("usarDps", eq::CHAVE_USAR_DPS),
+        ("classeDps", eq::CHAVE_CLASSE_DPS),
+        ("disjuntorDps", eq::CHAVE_DISJ_DPS),
+        ("metodo", eq::CHAVE_METODO_QUADRO),
+        ("modulosPorTrilho", eq::CHAVE_MODULOS_TRILHO),
+        ("barramentoFase", eq::CHAVE_BARRAMENTO_FASE),
+        ("barramentoNt", eq::CHAVE_BARRAMENTO_NT),
+    ];
+    let mut valores: Vec<(&str, &str, Option<String>)> = Vec::new();
+    for (k, chave) in opcoes {
+        match p.get(k) {
+            None => {}
+            Some(Value::Null) => valores.push((k, chave, None)),
+            Some(Value::Bool(b)) => valores.push((k, chave, Some(if *b { "1" } else { "0" }.to_string()))),
+            Some(Value::Number(n)) => valores.push((k, chave, Some(n.to_string()))),
+            Some(Value::String(t)) => valores.push((k, chave, Some(t.clone()))),
+            Some(_) => return Err(bad(CMD, format!("`{k}` must be a number, text, true/false or null"))),
+        }
+    }
+    // Confere tudo numa cópia antes de gravar: um valor ruim não deixa o quadro pela metade.
+    let mut prova = s.doc()?.clone();
+    for (k, chave, v) in &valores {
+        ele::editar::definir_opcao_quadro(&mut prova, q, chave, v.as_deref()).map_err(|e| bad(CMD, format!("`{k}`: {e}")))?;
+    }
     let doc = s.doc_mut()?;
+    for (_, chave, v) in &valores {
+        ele::editar::definir_opcao_quadro(doc, q, chave, v.as_deref()).map_err(erro)?;
+    }
     if let Some(v) = montagem {
         ele::editar::definir_montagem(doc, q, v).map_err(erro)?;
     }
@@ -378,7 +413,8 @@ fn run_quadro(s: &mut Session, p: &Value) -> Result<Value> {
             && montagem.is_none()
             && observacoes.is_none()
             && modulos.is_none()
-            && reservas.is_none())
+            && reservas.is_none()
+            && valores.is_empty())
     {
         ele::editar::definir_isolacao(doc, q, isolacao).map_err(erro)?;
     }
@@ -442,12 +478,23 @@ struct Propriedades {
     esquema: Option<Option<ele::nbr5410::Esquema>>,
     tensao: Option<Option<f64>>,
     fases: Option<Option<String>>,
+    metodo: Option<Option<ele::nbr5410::MetodoInstalacao>>,
     descricao: Option<String>,
 }
 
 impl Propriedades {
     fn ler(cmd: &str, p: &Value) -> Result<Self> {
         let mut d = Propriedades::default();
+        if let Some(v) = p.get("metodo") {
+            d.metodo = Some(match v {
+                Value::Null => None,
+                v => Some(
+                    v.as_str()
+                        .and_then(ele::nbr5410::MetodoInstalacao::de_codigo)
+                        .ok_or_else(|| bad(cmd, "`metodo` must be A1, A2, B1, B2, C, D, E or F"))?,
+                ),
+            });
+        }
         if let Some(v) = p.get("isolacao") {
             d.isolacao = Some(match v {
                 Value::Null => None,
@@ -525,6 +572,7 @@ impl Propriedades {
             && self.esquema.is_none()
             && self.tensao.is_none()
             && self.fases.is_none()
+            && self.metodo.is_none()
             && self.descricao.is_none()
     }
 
@@ -558,6 +606,9 @@ impl Propriedades {
         if let Some(f) = &self.fases {
             ele::editar::travar_fases(doc, q, id, f.as_deref()).map_err(erro)?;
         }
+        if let Some(m) = self.metodo {
+            ele::editar::definir_metodo(doc, q, id, m).map_err(erro)?;
+        }
         if let Some(d) = &self.descricao {
             ele::editar::definir_descricao(doc, q, id, Some(d.trim())).map_err(erro)?;
         }
@@ -575,7 +626,7 @@ fn run_definir(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let d = Propriedades::ler(CMD, p)?;
     if d.vazio() {
-        return Err(bad(CMD, "give `cabo`, `caboNome`, `curva`, `grupoDr`, `isolacao`, `esquema`, `tensao`, `fases` or `descricao`"));
+        return Err(bad(CMD, "give `cabo`, `caboNome`, `curva`, `grupoDr`, `isolacao`, `esquema`, `tensao`, `fases`, `metodo` or `descricao`"));
     }
     d.gravar(s, q, &id)?;
     Ok(json!({ "quadro": q.hex(), "circuito": id }))
@@ -598,7 +649,7 @@ fn run_dimensionar(s: &mut Session, p: &Value) -> Result<Value> {
     }
     // As premissas valem daqui em diante, como as das configurações.
     let mut opcoes = serde_json::Map::new();
-    for k in ["compartilharPe", "temperaturaAmbiente", "fcaManual"] {
+    for k in ["compartilharPe", "temperaturaAmbiente", "fcaManual", "criterioDisjuntor", "metodoInstalacao"] {
         if let Some(v) = p.get(k) {
             opcoes.insert(k.to_string(), v.clone());
         }
@@ -2332,19 +2383,28 @@ fn run_ponto_documentacao(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn run_legenda(s: &mut Session, p: &Value) -> Result<Value> {
-    const CMD: &str = "elelegenda";
-    let pos = p.get("ponto").and_then(ponto_de).ok_or_else(|| bad(CMD, "`ponto` ([x, y]) is required"))?;
-    let (a, m) = (analise(s)?, metros(s)?);
-    let h = ele::legenda::inserir(s.doc_mut()?, &a, pos, m).map_err(erro)?;
-    Ok(json!({ "legenda": h.hex(), "linhas": ele::legenda::linhas(&a).len() }))
+    legenda_da_disciplina(s, p, "elelegenda", ele::disciplina::Disciplina::Eletrica)
 }
 
-/// ELELEGENDA digitado: o ponto de inserção.
-struct LegendaM;
+fn run_telelegenda(s: &mut Session, p: &Value) -> Result<Value> {
+    legenda_da_disciplina(s, p, "telelegenda", ele::disciplina::Disciplina::Telecom)
+}
+
+fn legenda_da_disciplina(s: &mut Session, p: &Value, cmd: &str, d: ele::disciplina::Disciplina) -> Result<Value> {
+    let pos = p.get("ponto").and_then(ponto_de).ok_or_else(|| bad(cmd, "`ponto` ([x, y]) is required"))?;
+    let (a, m) = (analise(s)?, metros(s)?);
+    let h = ele::legenda::inserir(s.doc_mut()?, &a, pos, m, Some(d)).map_err(erro)?;
+    Ok(json!({ "legenda": h.hex(), "linhas": ele::legenda::linhas(&a, Some(d)).len() }))
+}
+
+/// ELELEGENDA e TELELEGENDA digitados: o ponto de inserção.
+struct LegendaM {
+    disciplina: ele::disciplina::Disciplina,
+}
 
 impl Interactive for LegendaM {
     fn name(&self) -> &'static str {
-        "ELELEGENDA"
+        if self.disciplina == ele::disciplina::Disciplina::Telecom { "TELELEGENDA" } else { "ELELEGENDA" }
     }
     fn begin(&mut self, s: &mut Session) -> Result<Step> {
         s.set_selection(Vec::new());
@@ -2356,7 +2416,8 @@ impl Interactive for LegendaM {
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
         match i {
             Input::Point(q) => {
-                run_legenda(s, &json!({ "ponto": [q.x, q.y] }))?;
+                let cmd = if self.disciplina == ele::disciplina::Disciplina::Telecom { "telelegenda" } else { "elelegenda" };
+                legenda_da_disciplina(s, &json!({ "ponto": [q.x, q.y] }), cmd, self.disciplina)?;
                 Ok(Step::Done)
             }
             Input::Cancel | Input::Enter => Ok(Step::Done),

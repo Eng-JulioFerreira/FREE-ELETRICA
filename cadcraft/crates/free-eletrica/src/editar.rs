@@ -275,6 +275,63 @@ pub fn definir_modulos(doc: &mut Drawing, quadro: Handle, n: Option<u32>) -> Res
     gravar_xdata(doc, quadro, crate::quadro::CHAVE_MODULOS, n.map(|n| n.to_string()).as_deref())
 }
 
+/// O método de instalação de um circuito; `None` volta ao do quadro.
+pub fn definir_metodo(doc: &mut Drawing, quadro: Handle, circuito: &str, metodo: Option<crate::nbr5410::MetodoInstalacao>) -> Result<(), String> {
+    gravar_xdata(doc, quadro, &chave_do_circuito(crate::quadro::CHAVE_METODO, circuito)?, metodo.map(crate::nbr5410::MetodoInstalacao::codigo))
+}
+
+/// Grava (`Some`) ou tira (`None`) uma opção da proteção geral, do DPS, do método ou da montagem DIN do
+/// quadro. O valor é conferido e gravado na forma canônica; uma chave que não é dessas é recusada.
+pub fn definir_opcao_quadro(doc: &mut Drawing, quadro: Handle, chave: &str, valor: Option<&str>) -> Result<(), String> {
+    use crate::quadro as q;
+    if ler_ponto(doc, quadro).is_none_or(|p| p.tipo != crate::ponto::TipoPonto::Quadro) {
+        return Err("o objeto não é um quadro".into());
+    }
+    let positivo = |v: &str, maximo: f64| crate::ponto::numero(v).filter(|x| x.is_finite() && *x > 0.0 && *x <= maximo);
+    let canonico: Option<String> = match valor.map(str::trim).filter(|v| !v.is_empty()) {
+        None => None,
+        Some(v) => Some(match chave {
+            q::CHAVE_DISJ_GERAL | q::CHAVE_DISJ_DPS => positivo(v, 6300.0).ok_or("corrente do disjuntor inválida")?.to_string(),
+            q::CHAVE_SECAO_GERAL => crate::ponto::numero(v)
+                .filter(|s| crate::nbr5410::indice_secao(*s).is_some())
+                .ok_or_else(|| format!("a seção {v} mm² não está na tabela"))?
+                .to_string(),
+            q::CHAVE_USAR_DPS => match v.to_ascii_lowercase().as_str() {
+                "1" | "true" | "sim" => "1".into(),
+                "0" | "false" | "nao" | "não" => "0".into(),
+                _ => return Err("use 1 (com DPS) ou 0 (sem DPS)".into()),
+            },
+            q::CHAVE_CLASSE_DPS => q::ClasseDps::de_codigo(v).ok_or("classe do DPS: I, II ou I+II")?.codigo().into(),
+            q::CHAVE_METODO_QUADRO => {
+                crate::nbr5410::MetodoInstalacao::de_codigo(v).ok_or("método de instalação: A1, A2, B1, B2, C, D, E ou F")?.codigo().into()
+            }
+            q::CHAVE_MODULOS_TRILHO => {
+                v.parse::<u32>().ok().filter(|n| q::MODULOS_POR_TRILHO.contains(n)).ok_or("módulos por trilho: 12, 16, 18 ou 24")?.to_string()
+            }
+            q::CHAVE_BARRAMENTO_FASE => q::TipoBarramentoFase::de_codigo(v).ok_or("barramento das fases: PENTE ou ESCAMA")?.codigo().into(),
+            q::CHAVE_BARRAMENTO_NT => {
+                q::PosicaoBarramentoNt::de_codigo(v).ok_or("barramentos de neutro e terra: TOPO_BASE ou LATERAIS")?.codigo().into()
+            }
+            _ => return Err(format!("\"{chave}\" não é uma opção do quadro")),
+        }),
+    };
+    if !matches!(
+        chave,
+        q::CHAVE_DISJ_GERAL
+            | q::CHAVE_DISJ_DPS
+            | q::CHAVE_SECAO_GERAL
+            | q::CHAVE_USAR_DPS
+            | q::CHAVE_CLASSE_DPS
+            | q::CHAVE_METODO_QUADRO
+            | q::CHAVE_MODULOS_TRILHO
+            | q::CHAVE_BARRAMENTO_FASE
+            | q::CHAVE_BARRAMENTO_NT
+    ) {
+        return Err(format!("\"{chave}\" não é uma opção do quadro"));
+    }
+    gravar_xdata(doc, quadro, chave, canonico.as_deref())
+}
+
 /// Quantos circuitos reserva o quadro tem. `None` volta ao mínimo da NBR 5410.
 pub fn definir_reservas(doc: &mut Drawing, quadro: Handle, n: Option<u32>) -> Result<(), String> {
     if n.is_some_and(|n| n > crate::quadro::MAXIMO_RESERVAS) {

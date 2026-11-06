@@ -50,7 +50,10 @@ pub struct Materiais {
     pub pontos: Vec<ItemContado>,
     /// Os pontos pela descrição comercial, a do bloco ou a da família.
     pub conjuntos: Vec<ItemContado>,
+    /// Disjuntores por polos, corrente e curva: os dos circuitos, o geral e o do DPS.
     pub disjuntores: Vec<ItemContado>,
+    /// Os outros componentes dos quadros: DR, DPS, barramentos e as caixas com a capacidade em módulos DIN.
+    pub quadros: Vec<ItemContado>,
     /// Circuitos por grupo de DR.
     pub grupos_dr: Vec<ItemContado>,
     /// Pontos sem caixa física: blocos sem família, que não dizem qual é.
@@ -79,31 +82,33 @@ pub fn levantar(doc: &Drawing, analise: &Analise, setup: &Setup) -> Materiais {
     // Chaves numéricas em milésimos: f64 não ordena num mapa.
     let chave = |v: f64| (v * 1000.0).round() as i64;
     let mut cabos: BTreeMap<(i64, String), ItemCabo> = BTreeMap::new();
-    let mut disjuntores: Vec<f64> = Vec::new();
+    let mut disjuntores: Vec<String> = Vec::new();
+    let mut componentes: Vec<String> = Vec::new();
     let mut grupos: Vec<String> = Vec::new();
     for q in analise.quadros() {
         match quadro::rotear(doc, analise, setup, q.handle) {
             Ok(r) => {
                 for l in &r.linhas {
-                    if let Some(secao) = l.escolha.secao {
-                        let item = cabos.entry((chave(secao), l.nome_cabo.clone())).or_insert_with(|| ItemCabo {
-                            secao,
+                    // Fases, neutro e PE, cada um na seção dele (tabelas 48 e 58).
+                    for (secao, metros) in &l.cabo_por_secao {
+                        let item = cabos.entry((chave(*secao), l.nome_cabo.clone())).or_insert_with(|| ItemCabo {
+                            secao: *secao,
                             tipo: l.tipo_cabo,
                             nome: l.nome_cabo.clone(),
                             metros: 0.0,
                         });
-                        item.metros += l.cabo;
+                        item.metros += metros;
                     }
-                    disjuntores.extend(l.escolha.disjuntor);
+                    disjuntores.extend(l.escolha.disjuntor.map(|d| nome_do_disjuntor(l.esquema.fases(), d, Some(l.curva))));
                 }
-                disjuntores.extend(r.alimentador.disjuntor);
+                componentes_do_quadro(&r, &mut disjuntores, &mut componentes);
                 grupos.extend(r.linhas.iter().filter_map(|l| l.grupo_dr.as_ref().map(|g| format!("{}: {g}", r.tag))));
             }
             Err(e) => m.avisos.push(e),
         }
     }
-    disjuntores.sort_by(f64::total_cmp);
-    m.disjuntores = contar_disjuntores(&disjuntores);
+    m.disjuntores = contar(disjuntores.into_iter());
+    m.quadros = contar(componentes.into_iter());
     m.grupos_dr = contar(grupos.into_iter());
 
     let (trechos, soltos, avisos) = fiacao::todos_os_trechos(doc, analise, setup);
@@ -149,14 +154,40 @@ pub fn levantar(doc: &Drawing, analise: &Analise, setup: &Setup) -> Materiais {
     m
 }
 
-fn contar_disjuntores(ordenados: &[f64]) -> Vec<ItemContado> {
-    let mut v: Vec<ItemContado> = Vec::new();
-    for d in ordenados {
-        let nome = format!("{} A", crate::ponto::br(*d));
-        match v.last_mut() {
-            Some(u) if u.nome == nome => u.quantidade += 1,
-            _ => v.push(ItemContado { nome, quantidade: 1 }),
+/// O nome de compra de um disjuntor: `Disjuntor 2P 20 A - curva C`.
+pub fn nome_do_disjuntor(polos: u8, corrente: f64, curva: Option<crate::nbr5410::Curva>) -> String {
+    let curva = curva.map_or(String::new(), |c| format!(" - curva {}", c.codigo()));
+    format!("Disjuntor {}P {} A{curva}", polos.clamp(1, 3), crate::ponto::br(corrente))
+}
+
+/// O geral, o disjuntor do DPS, os DR, os DPS, os barramentos e a caixa de um quadro, pela montagem dele.
+fn componentes_do_quadro(r: &quadro::ResumoQuadro, disjuntores: &mut Vec<String>, componentes: &mut Vec<String>) {
+    use crate::frontal::TipoDispositivo as T;
+    let a = &r.alimentador;
+    let fases = r.fases_quadro.clamp(1, 3);
+    disjuntores.extend(a.disjuntor.map(|d| nome_do_disjuntor(fases, d, Some(crate::nbr5410::Curva::C))));
+    disjuntores.extend(a.disjuntor_dps.map(|d| nome_do_disjuntor(fases, d, Some(crate::nbr5410::Curva::C))));
+    let mo = crate::frontal::montagem(r);
+    for d in &mo.dispositivos {
+        match d.tipo {
+            T::Dr => componentes.push(format!("Interruptor DR {}P {} - 30 mA", d.modulos, d.topo.trim_start_matches("DR ").replace('A', " A"))),
+            T::Dps => componentes.push(format!("DPS Classe {} - {} V", a.classe_dps.codigo(), crate::ponto::br(a.dps_uc.ceil()))),
+            _ => {}
         }
     }
-    v
+    componentes.push(format!("Barramento de neutro - {} bornes", mo.bornes_neutro));
+    componentes.push(format!("Barramento de terra - {} bornes", mo.bornes_terra));
+    let tipo = match mo.barramento_fase {
+        quadro::TipoBarramentoFase::Pente => "pente",
+        quadro::TipoBarramentoFase::EscamaDePeixe => "espinha de peixe",
+    };
+    for t in 0..mo.trilhos {
+        let polos: u32 = mo.dispositivos.iter().filter(|d| d.trilho == t && matches!(d.tipo, T::Disjuntor | T::Dr)).map(|d| d.modulos).sum();
+        if polos > 0 {
+            componentes.push(format!("Barramento {tipo} {}F - {polos} polos", mo.fases));
+        }
+    }
+    let capacidade = mo.modulos_por_trilho * u32::try_from(mo.trilhos).unwrap_or(1);
+    let montagem = r.config.montagem.map_or(String::new(), |m| format!(" {}", m.nome()));
+    componentes.push(format!("Quadro de distribuição{montagem} - {capacidade} módulos DIN ({} trilhos de {})", mo.trilhos, mo.modulos_por_trilho));
 }

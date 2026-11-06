@@ -1440,7 +1440,7 @@ fn corrente_corrigida_e_alimentador() {
     assert!(perto(a.dps_uc, 1.1 * 220.0, 1e-9));
     // Corrente acima da tabela: sem seção, sem disjuntor e sem DR.
     let cfg = nbr5410::Config { isolacao: nbr5410::Isolacao::Pvc, ..Config::default() };
-    let grande = quadro::alimentador(5000.0, 3, 220.0, &cfg);
+    let grande = quadro::alimentador(5000.0, 3, 220.0, &cfg, &quadro::ConfigQuadro::default());
     assert_eq!((grande.secao, grande.disjuntor, grande.dr), (None, None, None));
 }
 
@@ -2091,6 +2091,30 @@ fn lista_de_materiais_separa_por_tipo_e_diametro() {
     assert_eq!(qtd(&m.pontos, "TUG"), 2);
     assert_eq!(qtd(&m.pontos, "Dados/Telecom"), 1);
     assert_eq!(m.disjuntores.iter().map(|i| i.quantidade).sum::<usize>(), 3, "dois circuitos e o geral: {:?}", m.disjuntores);
+    // Cada disjuntor com polos, corrente e curva; o geral com os polos do quadro.
+    assert!(
+        m.disjuntores.iter().all(|i| i.nome.starts_with("Disjuntor ") && i.nome.contains("P ") && i.nome.contains(" - curva ")),
+        "{:?}",
+        m.disjuntores
+    );
+    // O quadro: DPS (um por fase), barramentos de neutro, terra e das fases, e a caixa com a capacidade DIN.
+    let r = quadro::rotear(&d, &analisar(&d), &setup, q).unwrap();
+    let fases = usize::from(r.fases_quadro.clamp(1, 3));
+    let dps = format!("DPS Classe II - {} V", crate::ponto::br(r.alimentador.dps_uc.ceil()));
+    assert_eq!(qtd(&m.quadros, &dps), fases, "{:?}", m.quadros);
+    for prefixo in ["Barramento de neutro - ", "Barramento de terra - ", "Barramento pente ", "Quadro de distribuição"] {
+        assert!(m.quadros.iter().any(|i| i.nome.starts_with(prefixo)), "falta {prefixo}: {:?}", m.quadros);
+    }
+    assert!(m.quadros.iter().any(|i| i.nome.ends_with("módulos DIN (1 trilhos de 12)")), "{:?}", m.quadros);
+    // Com um grupo de DR, o interruptor DR; sem DPS, nenhum; o disjuntor do DPS entra nos disjuntores.
+    editar::definir_grupo_dr(&mut d, q, "1", Some("IDR1")).unwrap();
+    editar::definir_opcao_quadro(&mut d, q, quadro::CHAVE_DISJ_DPS, Some("32")).unwrap();
+    let m = materiais::levantar(&d, &analisar(&d), &setup);
+    assert!(m.quadros.iter().any(|i| i.nome.starts_with("Interruptor DR 2P ") && i.nome.ends_with(" A - 30 mA")), "{:?}", m.quadros);
+    assert_eq!(m.disjuntores.iter().map(|i| i.quantidade).sum::<usize>(), 4, "com o do DPS: {:?}", m.disjuntores);
+    editar::definir_opcao_quadro(&mut d, q, quadro::CHAVE_USAR_DPS, Some("0")).unwrap();
+    let m = materiais::levantar(&d, &analisar(&d), &setup);
+    assert!(!m.quadros.iter().any(|i| i.nome.starts_with("DPS")) && m.disjuntores.iter().map(|i| i.quantidade).sum::<usize>() == 3);
     assert_eq!(m.pontos_sem_caixa, 0);
     // Desenho vazio.
     assert_eq!(materiais::levantar(&metros(), &analisar(&metros()), &setup), materiais::Materiais::default());
@@ -2498,7 +2522,8 @@ fn calculo_so_grava_ao_processar_e_acusa_o_que_mudou() {
     editar::definir_sobrescrita(&mut d, qd, "3", Some(25.0), None).unwrap();
     assert_eq!(textos(&d), velho);
     editar::processar_calculo(&mut d, &setup, None).unwrap();
-    assert!(textos(&d).iter().any(|t| t == "#25"), "{:?}", textos(&d));
+    // Com 25 mm² na fase, o PE cai para 16 mm² (tabela 58): a tag diz os dois.
+    assert!(textos(&d).iter().any(|t| t == "#25 T16"), "{:?}", textos(&d));
 }
 
 #[test]
@@ -2962,7 +2987,7 @@ fn familia_propria_com_caixa_e_haste_marcadas_empilha() {
     f.desc_material = "Tomada 2P+T 10 A".into();
     familia::gravar(&mut d, "MINHA-TOMADA", Some(&f)).unwrap();
     let an = analisar(&d);
-    assert_eq!(legenda::linhas(&an), vec![("MINHA-TOMADA".to_string(), "TUG (teste)".to_string())]);
+    assert_eq!(legenda::linhas(&an, None), vec![("MINHA-TOMADA".to_string(), "TUG (teste)".to_string())]);
     let m = materiais::levantar(&d, &an, &setup);
     assert_eq!(m.conjuntos.len(), 1);
     assert_eq!((m.conjuntos[0].nome.as_str(), m.conjuntos[0].quantidade), ("Tomada 2P+T 10 A", 3));
@@ -3112,8 +3137,8 @@ fn legenda_e_descricao_nos_pontos_na_lista_e_na_prancha() {
     assert_eq!(p(&d, b).desc_material, p(&d, a).desc_material);
     // A legenda da prancha: uma linha por tipo, com o símbolo e o nome; regenerar não mexe no lugar.
     let an = analisar(&d);
-    assert_eq!(legenda::linhas(&an).len(), 3);
-    let h = legenda::inserir(&mut d, &an, [5.0, 5.0], 1.0).unwrap();
+    assert_eq!(legenda::linhas(&an, None).len(), 3);
+    let h = legenda::inserir(&mut d, &an, [5.0, 5.0], 1.0, None).unwrap();
     let textos = |d: &Drawing| -> Vec<String> {
         d.blocks[legenda::BLOCO]
             .entities
@@ -3144,7 +3169,7 @@ fn legenda_e_descricao_nos_pontos_na_lista_e_na_prancha() {
     assert_eq!(reg.legendas, 1);
     assert!(textos(&d).contains(&"Outra".to_string()));
     assert_eq!(legenda::inserida(&d), Some(h));
-    assert!(legenda::inserir(&mut d, &analisar(&Drawing::new_metric()), [f64::NAN, 0.0], 1.0).is_err());
+    assert!(legenda::inserir(&mut d, &analisar(&Drawing::new_metric()), [f64::NAN, 0.0], 1.0, None).is_err());
     // Texto grande demais na família é recusado.
     let mut f = familia::ler(&d, "QDG").unwrap();
     f.legenda = "x".repeat(201);
@@ -3654,7 +3679,7 @@ fn modulos_empilhados_numa_caixa() {
     let caixas_4x2 = m.caixas.iter().find(|c| c.nome.starts_with("4x2")).map_or(0, |c| c.quantidade);
     assert_eq!(caixas_4x2, 2 + 1, "a pilha (2 alturas) e a tomada longe");
     // Legenda: o módulo empilhado conta como o bloco dele.
-    assert!(legenda::linhas(&analisar(&d)).iter().all(|(b, _)| !b.ends_with(biblioteca::SUFIXO_EMPILHADO)));
+    assert!(legenda::linhas(&analisar(&d), None).iter().all(|(b, _)| !b.ends_with(biblioteca::SUFIXO_EMPILHADO)));
     assert!(!biblioteca::blocos(&d).iter().any(|b| b.nome.ends_with(biblioteca::SUFIXO_EMPILHADO)));
     // Explícito: empilhar na base; erros sem travar.
     assert_eq!(biblioteca::empilhar(&mut d, longe, Some(segunda), 1.0).unwrap(), Some(base), "na base da pilha");
@@ -4023,4 +4048,217 @@ fn disciplinas_no_mesmo_grafo() {
     let p = |h: Handle| an.ponto(h).unwrap();
     assert!(D::Telecom.e_central(p(rack)) && D::Telecom.e_ponto(p(rj)) && !D::Telecom.e_ponto(p(rack)));
     assert_eq!((D::do_ponto(p(cx)), D::do_ponto(p(tug))), (None, Some(D::Eletrica)));
+}
+
+#[test]
+fn metodos_de_instalacao_e_criterio_do_disjuntor() {
+    use nbr5410::{CriterioDisjuntor as C, Isolacao, MetodoInstalacao as M};
+    // Tabelas 36 e 37: o B1 continua o mesmo; os outros métodos mudam a capacidade.
+    assert_eq!(nbr5410::capacidade_no_metodo(1, 2, Isolacao::Pvc, M::B1), Some(24.0));
+    assert_eq!(nbr5410::capacidade_no_metodo(1, 2, Isolacao::Pvc, M::A1), Some(19.5));
+    assert_eq!(nbr5410::capacidade_no_metodo(1, 3, Isolacao::Pvc, M::C), Some(24.0));
+    assert_eq!(nbr5410::capacidade_no_metodo(5, 2, Isolacao::Epr, M::D), Some(95.0));
+    // Tabelas 38 e 39: E e F; o F começa em 25 mm².
+    assert_eq!(nbr5410::capacidade_no_metodo(0, 2, Isolacao::Pvc, M::E), Some(22.0));
+    assert_eq!(nbr5410::capacidade_no_metodo(5, 2, Isolacao::Pvc, M::F), None);
+    assert_eq!(nbr5410::capacidade_no_metodo(6, 3, Isolacao::Epr, M::F), Some(135.0));
+    for m in M::TODOS {
+        assert_eq!(M::de_codigo(m.codigo()), Some(m));
+    }
+    // O critério: Ib = 12 A em 2,5 mm² B1 (Iz = 24 A): o menor acima de Ib é 16 A; o maior até Iz, 20 A.
+    assert_eq!(C::CorrenteProjetoIb.escolher(12.0, 24.0), Some(16.0));
+    assert_eq!(C::CapacidadeCaboIz.escolher(12.0, 24.0), Some(20.0));
+    assert_eq!(C::CapacidadeCaboIz.escolher(30.0, 24.0), None);
+    let c = Circuito {
+        id: "1".into(),
+        quadro: None,
+        pontos: Vec::new(),
+        natureza: circuito::Natureza::Tug,
+        potencia: 1524.0,
+        tensao: Some(127.0),
+        fases: 1,
+        cargas: 1,
+        interruptores: 0,
+        avisos: Vec::new(),
+    };
+    let ib = nbr5410::dimensionar(&c, &Config::default());
+    let iz = nbr5410::dimensionar(&c, &Config { criterio: C::CapacidadeCaboIz, ..Config::default() });
+    assert_eq!((ib.secao, ib.disjuntor), (Some(2.5), Some(16.0)));
+    assert_eq!((iz.secao, iz.disjuntor), (Some(2.5), Some(20.0)));
+    // Em A1 (parede isolante) a mesma carga pede o mesmo cabo, com Iz menor.
+    let a1 = nbr5410::dimensionar(&c, &Config { metodo: M::A1, ..Config::default() });
+    assert_eq!(a1.iz, Some(19.5));
+}
+
+#[test]
+fn neutro_e_pe_reduzidos_pelas_tabelas_48_e_58() {
+    // Tabela 58: igual até 16; 16 de 25 a 35; metade acima (a comercial logo acima).
+    let pe: Vec<f64> = [2.5, 16.0, 25.0, 35.0, 50.0, 70.0, 95.0, 120.0].map(nbr5410::secao_pe).to_vec();
+    assert_eq!(pe, [2.5, 16.0, 16.0, 16.0, 25.0, 35.0, 50.0, 70.0]);
+    // Tabela 48: só a partir de 35 mm².
+    let n: Vec<f64> = [16.0, 25.0, 35.0, 50.0, 70.0, 95.0, 120.0].map(nbr5410::secao_neutro).to_vec();
+    assert_eq!(n, [16.0, 25.0, 25.0, 25.0, 35.0, 50.0, 70.0]);
+    use nbr5410::Esquema as E;
+    assert_eq!(quadro::secoes_de_neutro_e_pe(E::Fffnt, Some(70.0)), (Some(35.0), Some(35.0)));
+    assert_eq!(quadro::secoes_de_neutro_e_pe(E::Fnt, Some(70.0)), (Some(70.0), Some(35.0)), "monofásico: neutro igual à fase");
+    assert_eq!(quadro::secoes_de_neutro_e_pe(E::Ffft, Some(4.0)), (None, Some(4.0)));
+    assert_eq!(quadro::secoes_de_neutro_e_pe(E::Fn, Some(4.0)), (Some(4.0), None));
+    // Na tag: a seção da fase, e o neutro e o PE quando são menores.
+    let k = fiacao::Condutores {
+        circuito: "1".into(),
+        fases: 3,
+        neutro: true,
+        protecao: true,
+        secao: Some(50.0),
+        secao_neutro: Some(25.0),
+        secao_pe: Some(25.0),
+        ..fiacao::Condutores::default()
+    };
+    assert_eq!(k.texto_secao().unwrap(), "#50 N25 T25");
+    let k = fiacao::Condutores { secao: Some(2.5), secao_neutro: Some(2.5), secao_pe: Some(2.5), neutro: true, protecao: true, ..k };
+    assert_eq!(k.texto_secao().unwrap(), "#2,5");
+}
+
+#[test]
+fn protecao_geral_travada_e_dps_do_quadro() {
+    let setup = Setup::default();
+    let mut d = metros();
+    let q = qd(&mut d, 0.0, 0.0);
+    let t = tug(&mut d, 3.0, 0.0, "1");
+    eletroduto::inserir(&mut d, q, t, rota::Instalacao::Teto, 0.0).unwrap();
+    let r = quadro::rotear(&d, &analisar(&d), &setup, q).unwrap();
+    let a = &r.alimentador;
+    assert!(a.dps && a.classe_dps == quadro::ClasseDps::II && a.disjuntor_dps.is_none() && !a.secao_travada && !a.disjuntor_travado);
+    // Travados à mão: a seção, o disjuntor, sem DPS... e a norma confere sem impedir.
+    editar::definir_opcao_quadro(&mut d, q, quadro::CHAVE_SECAO_GERAL, Some("10")).unwrap();
+    editar::definir_opcao_quadro(&mut d, q, quadro::CHAVE_DISJ_GERAL, Some("100")).unwrap();
+    editar::definir_opcao_quadro(&mut d, q, quadro::CHAVE_CLASSE_DPS, Some("I+II")).unwrap();
+    editar::definir_opcao_quadro(&mut d, q, quadro::CHAVE_DISJ_DPS, Some("125")).unwrap();
+    let r = quadro::rotear(&d, &analisar(&d), &setup, q).unwrap();
+    let a = &r.alimentador;
+    assert_eq!((a.secao, a.disjuntor, a.secao_travada, a.disjuntor_travado), (Some(10.0), Some(100.0), true, true));
+    assert_eq!((a.classe_dps, a.disjuntor_dps), (quadro::ClasseDps::IeII, Some(125.0)));
+    assert!(r.avisos.iter().any(|x| x.contains("acima da capacidade do alimentador")), "{:?}", r.avisos);
+    assert!(r.avisos.iter().any(|x| x.contains("disjuntor do DPS")), "{:?}", r.avisos);
+    // Só a seção travada: o disjuntor sai dela, pelo critério.
+    editar::definir_opcao_quadro(&mut d, q, quadro::CHAVE_DISJ_GERAL, None).unwrap();
+    let r = quadro::rotear(&d, &analisar(&d), &setup, q).unwrap();
+    assert!(r.alimentador.disjuntor.is_some_and(|x| x <= r.alimentador.iz.unwrap()) && !r.alimentador.disjuntor_travado);
+    // Sem DPS: nem o disjuntor dele.
+    editar::definir_opcao_quadro(&mut d, q, quadro::CHAVE_USAR_DPS, Some("0")).unwrap();
+    let r = quadro::rotear(&d, &analisar(&d), &setup, q).unwrap();
+    assert!(!r.alimentador.dps && r.alimentador.disjuntor_dps.is_none());
+    // Uma chave que não é do quadro é recusada; valores inválidos também.
+    assert!(editar::definir_opcao_quadro(&mut d, q, "OUTRA", Some("1")).is_err());
+    assert!(editar::definir_opcao_quadro(&mut d, q, quadro::CHAVE_SECAO_GERAL, Some("7")).is_err());
+    assert!(editar::definir_opcao_quadro(&mut d, q, quadro::CHAVE_MODULOS_TRILHO, Some("13")).is_err());
+    // O método do quadro e o de um circuito: B1 → A1 no quadro, C no circuito.
+    editar::definir_opcao_quadro(&mut d, q, quadro::CHAVE_METODO_QUADRO, Some("A1")).unwrap();
+    let r = quadro::rotear(&d, &analisar(&d), &setup, q).unwrap();
+    assert_eq!((r.linhas[0].metodo, r.linhas[0].metodo_proprio), (nbr5410::MetodoInstalacao::A1, false));
+    editar::definir_metodo(&mut d, q, "1", Some(nbr5410::MetodoInstalacao::C)).unwrap();
+    let r = quadro::rotear(&d, &analisar(&d), &setup, q).unwrap();
+    assert_eq!((r.linhas[0].metodo, r.linhas[0].metodo_proprio), (nbr5410::MetodoInstalacao::C, true));
+}
+
+#[test]
+fn vista_frontal_e_unifilar_seguem_o_dps_e_a_montagem_do_quadro() {
+    use frontal::TipoDispositivo as T;
+    let setup = Setup::default();
+    let mut d = metros();
+    let q = qd(&mut d, 0.0, 0.0);
+    for i in 1..=4 {
+        let t = tug(&mut d, 3.0, f64::from(i), &i.to_string());
+        eletroduto::inserir(&mut d, q, t, rota::Instalacao::Teto, 0.0).unwrap();
+    }
+    let resumo = |d: &Drawing| quadro::rotear(d, &analisar(d), &setup, q).unwrap();
+    let tipos = |mo: &frontal::Montagem| mo.dispositivos.iter().map(|x| x.tipo).collect::<Vec<_>>();
+    // O padrão: DPS classe II, sem disjuntor próprio, barramento pente, neutro e terra em cima e embaixo.
+    let mo = frontal::montagem(&resumo(&d));
+    assert!(tipos(&mo).contains(&T::Dps) && !tipos(&mo).contains(&T::DisjuntorDps));
+    assert_eq!((mo.barramento_fase, mo.posicao_nt), (quadro::TipoBarramentoFase::Pente, quadro::PosicaoBarramentoNt::TopoBase));
+    // Com o disjuntor exclusivo do DPS: ele vem antes dos DPS, com os polos do quadro.
+    editar::definir_opcao_quadro(&mut d, q, quadro::CHAVE_DISJ_DPS, Some("40")).unwrap();
+    editar::definir_opcao_quadro(&mut d, q, quadro::CHAVE_CLASSE_DPS, Some("I")).unwrap();
+    let mo = frontal::montagem(&resumo(&d));
+    let i = tipos(&mo).iter().position(|x| *x == T::DisjuntorDps).unwrap();
+    assert_eq!(tipos(&mo)[i + 1], T::Dps);
+    assert_eq!(mo.dispositivos[i].base, "40A");
+    assert_eq!(mo.dispositivos[i + 1].base, "CLASSE I");
+    let an = analisar(&d);
+    unifilar::gerar(&mut d, &an, &setup, q, Some([20.0, 0.0])).unwrap();
+    let nome_u = format!("{}{}", unifilar::PREFIXO, q.hex());
+    let textos_u = |d: &Drawing| textos_do_bloco(d, &nome_u).into_iter().map(|t| t.0).collect::<Vec<_>>();
+    assert!(textos_u(&d).contains(&"DPS I".to_string()) && textos_u(&d).contains(&"40 A".to_string()), "{:?}", textos_u(&d));
+    // Sem DPS: nem os módulos nem o disjuntor dele, e o unifilar não o desenha.
+    editar::definir_opcao_quadro(&mut d, q, quadro::CHAVE_USAR_DPS, Some("0")).unwrap();
+    let mo = frontal::montagem(&resumo(&d));
+    assert!(!tipos(&mo).iter().any(|x| matches!(x, T::Dps | T::DisjuntorDps)));
+    let an = analisar(&d);
+    unifilar::regenerar(&mut d, &an, &setup).unwrap();
+    assert!(!textos_u(&d).iter().any(|t| t.starts_with("DPS ")), "{:?}", textos_u(&d));
+    // O trilho escolhido vale sempre: 24 módulos num trilho só.
+    editar::definir_opcao_quadro(&mut d, q, quadro::CHAVE_MODULOS_TRILHO, Some("24")).unwrap();
+    let mo = frontal::montagem(&resumo(&d));
+    assert_eq!((mo.modulos_por_trilho, mo.trilhos), (24, 1));
+    editar::definir_opcao_quadro(&mut d, q, quadro::CHAVE_MODULOS_TRILHO, Some("12")).unwrap();
+    let mo = frontal::montagem(&resumo(&d));
+    assert_eq!(mo.modulos_por_trilho, 12);
+    assert_eq!(mo.trilhos, usize::try_from(mo.modulos().div_ceil(12)).unwrap().max(1));
+    assert!(mo.dispositivos.iter().all(|x| x.posicao + x.modulos <= 12));
+    // Neutro e terra nas laterais, e espinha de peixe: a caixa fica mais larga e os nomes mudam.
+    let largura = |d: &Drawing| {
+        let nome = format!("{}{}", frontal::PREFIXO, q.hex());
+        d.blocks[&nome]
+            .entities
+            .iter()
+            .filter_map(|e| if let EntityKind::Line(l) = &e.kind { Some(l.a.x.max(l.b.x)) } else { None })
+            .fold(0.0, f64::max)
+    };
+    let an = analisar(&d);
+    frontal::gerar(&mut d, &an, &setup, q, Some([0.0, -20.0])).unwrap();
+    let antes = largura(&d);
+    editar::definir_opcao_quadro(&mut d, q, quadro::CHAVE_BARRAMENTO_NT, Some("LATERAIS")).unwrap();
+    editar::definir_opcao_quadro(&mut d, q, quadro::CHAVE_BARRAMENTO_FASE, Some("ESCAMA")).unwrap();
+    let an = analisar(&d);
+    frontal::regenerar(&mut d, &an, &setup).unwrap();
+    let nome = format!("{}{}", frontal::PREFIXO, q.hex());
+    let textos: Vec<String> = textos_do_bloco(&d, &nome).into_iter().map(|t| t.0).collect();
+    assert!(textos.contains(&"NEUTRO (N)".to_string()) && textos.contains(&"TERRA (PE)".to_string()), "{textos:?}");
+    assert!(largura(&d) > antes, "{} > {antes}", largura(&d));
+}
+
+#[test]
+fn legenda_separada_por_disciplina() {
+    use disciplina::Disciplina as D;
+    let setup = Setup::default();
+    let mut d = metros();
+    biblioteca::garantir_base(&mut d, &setup, 1.0);
+    for (b, x) in [("QDG", 0.0), ("TOM-SIM-BAIXA", 1.0), ("CX-OCT", 2.0), ("RJ45", 3.0), ("RACK", 4.0)] {
+        biblioteca::inserir_ponto(&mut d, b, [x, 0.0], 0.0, &[], &setup).unwrap();
+    }
+    let an = analisar(&d);
+    let blocos = |dis| legenda::linhas(&an, dis).into_iter().map(|(b, _)| b).collect::<Vec<_>>();
+    // A elétrica tem os pontos elétricos e as caixas; a de telecom, o ponto de dados e o rack.
+    let eletrica = blocos(Some(D::Eletrica));
+    assert!(
+        eletrica.contains(&"QDG".to_string()) && eletrica.contains(&"CX-OCT".to_string()) && !eletrica.contains(&"RJ45".to_string()),
+        "{eletrica:?}"
+    );
+    let telecom = blocos(Some(D::Telecom));
+    assert_eq!(telecom.len(), 2, "{telecom:?}");
+    assert!(telecom.contains(&"RJ45".to_string()) && telecom.contains(&"RACK".to_string()));
+    assert_eq!(blocos(None).len(), eletrica.len() + telecom.len());
+    // Blocos e títulos próprios; regenerar refaz as duas.
+    let he = legenda::inserir(&mut d, &an, [10.0, 0.0], 1.0, Some(D::Eletrica)).unwrap();
+    let ht = legenda::inserir(&mut d, &an, [20.0, 0.0], 1.0, Some(D::Telecom)).unwrap();
+    assert_ne!(he, ht);
+    assert_eq!(legenda::inserida_de(&d, Some(D::Telecom)), Some(ht));
+    let titulo = |nome: &str| textos_do_bloco(&d, nome).into_iter().map(|t| t.0).find(|t| t.starts_with("LEGENDA")).unwrap();
+    assert_eq!(titulo("LEGENDA_SIMBOLOS_ELETRICA"), "LEGENDA DE SÍMBOLOS ELÉTRICOS");
+    assert_eq!(titulo("LEGENDA_SIMBOLOS_TELECOM"), "LEGENDA DE SÍMBOLOS TELECOM");
+    assert_eq!(fiacao::regenerar(&mut d, &setup, None).unwrap().legendas, 2);
+    // Inserir de novo a mesma disciplina só move.
+    assert_eq!(legenda::inserir(&mut d, &an, [30.0, 0.0], 1.0, Some(D::Telecom)).unwrap(), ht);
+    assert_eq!(legenda::legendas(&d).len(), 2);
 }

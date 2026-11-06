@@ -28,14 +28,15 @@ pub const PREFIXO: &str = "QUADRO_FRONTAL_";
 /// A largura de um módulo DIN e a altura de um dispositivo no desenho (m).
 pub const W: f64 = 0.25;
 const H: f64 = 0.80;
-/// Módulos por trilho: 12 num quadro pequeno; acima disso, trilhos de 18.
-pub const MODULOS_POR_TRILHO: [u32; 2] = [12, 18];
+/// Sem trilho escolhido no quadro: 12 módulos num quadro pequeno; acima disso, trilhos de 18.
+pub const MODULOS_POR_TRILHO_PADRAO: [u32; 2] = [12, 18];
 /// O passo entre os trilhos, a folga do chassi e a borda entre a caixa e o chassi (m).
 const PASSO_TRILHO: f64 = H + 0.40;
 const FOLGA: f64 = 0.30;
 const BORDA: f64 = 0.10;
-/// A faixa de cada barramento, em cima e embaixo do chassi (m).
+/// A faixa de cada barramento, em cima e embaixo do chassi, ou dos lados, com eles nas laterais (m).
 const FAIXA_BARRA: f64 = 0.55;
+const FAIXA_LATERAL: f64 = 0.70;
 /// O texto de dentro dos dispositivos (m).
 const TEXTO: f64 = 0.08;
 /// A distância padrão entre o quadro e a vista (m), abaixo do unifilar.
@@ -51,6 +52,8 @@ const COR_TERRA: u8 = 3;
 #[serde(rename_all = "camelCase")]
 pub enum TipoDispositivo {
     Geral,
+    /// O disjuntor exclusivo de proteção do DPS.
+    DisjuntorDps,
     Dps,
     Dr,
     Disjuntor,
@@ -81,6 +84,10 @@ pub struct Montagem {
     pub modulos_por_trilho: u32,
     pub bornes_neutro: usize,
     pub bornes_terra: usize,
+    /// As fases do quadro (polos do barramento das fases).
+    pub fases: u32,
+    pub barramento_fase: quadro::TipoBarramentoFase,
+    pub posicao_nt: quadro::PosicaoBarramentoNt,
 }
 
 impl Montagem {
@@ -97,9 +104,14 @@ fn dispositivos(r: &ResumoQuadro) -> Vec<Dispositivo> {
     let fases = u32::from(r.fases_quadro.clamp(1, 3));
     let a = &r.alimentador;
     let mut v = vec![d(TipoDispositivo::Geral, fases, "GERAL".into(), corrente(a.disjuntor))];
-    // Um DPS por fase, classe II (NBR 5410, 6.3.5).
-    for _ in 0..fases {
-        v.push(d(TipoDispositivo::Dps, 1, "DPS".into(), "CLASSE II".into()));
+    // Um DPS por fase (NBR 5410, 6.3.5), da classe do quadro, depois do disjuntor exclusivo dele, se houver.
+    if a.dps {
+        if let Some(dd) = a.disjuntor_dps {
+            v.push(d(TipoDispositivo::DisjuntorDps, fases, "DPS".into(), corrente(Some(dd))));
+        }
+        for _ in 0..fases {
+            v.push(d(TipoDispositivo::Dps, 1, "DPS".into(), format!("CLASSE {}", a.classe_dps.codigo())));
+        }
     }
     let circuito =
         |l: &quadro::Linha| d(TipoDispositivo::Disjuntor, u32::from(l.esquema.fases()), l.circuito.id.clone(), corrente(l.escolha.disjuntor));
@@ -120,8 +132,8 @@ fn dispositivos(r: &ResumoQuadro) -> Vec<Dispositivo> {
 pub fn montagem(r: &ResumoQuadro) -> Montagem {
     let mut v = dispositivos(r);
     let total: u32 = v.iter().map(|d| d.modulos).sum();
-    let [pequeno, grande] = MODULOS_POR_TRILHO;
-    let por_trilho = if total <= pequeno { pequeno } else { grande };
+    let [pequeno, grande] = MODULOS_POR_TRILHO_PADRAO;
+    let por_trilho = r.config.modulos_por_trilho.unwrap_or(if total <= pequeno { pequeno } else { grande });
     let (mut trilho, mut pos) = (0usize, 0u32);
     for d in &mut v {
         if pos > 0 && pos + d.modulos > por_trilho {
@@ -141,6 +153,9 @@ pub fn montagem(r: &ResumoQuadro) -> Montagem {
         bornes_neutro: com(&|l| l.esquema.neutro()) + 1,
         bornes_terra: com(&|l| l.esquema.protecao()) + 1,
         dispositivos: v,
+        fases: u32::from(r.fases_quadro.clamp(1, 3)),
+        barramento_fase: r.config.barramento_fase.unwrap_or_default(),
+        posicao_nt: r.config.posicao_barramento_nt.unwrap_or_default(),
     }
 }
 
@@ -214,6 +229,61 @@ impl Pecas {
         self.texto_com(nome, [x, y + 0.14], TEXTO, HAlign::Center, Some(cor));
     }
 
+    /// Um barramento vertical, nas laterais: a régua com os bornes, centrada em (`x`, `y`), e o nome em pé.
+    fn barramento_vertical(&mut self, x: f64, y: f64, bornes: usize, nome: &str, cor: u8) {
+        let passo = 0.10;
+        let comprimento = passo * bornes.max(1) as f64 + passo;
+        let (y0, y1) = (y - comprimento / 2.0, y + comprimento / 2.0);
+        self.retangulo_com(x - 0.05, y0, x + 0.05, y1, Some(cor), None);
+        for i in 0..bornes.max(1) {
+            self.circulo([x, y1 - passo * (i as f64 + 1.0)], 0.025, Some(cor));
+        }
+        let p = Vec3::new(self.u(x - 0.16), self.u(y), 0.0);
+        let k = EntityKind::Text(Text {
+            insert: p,
+            align_pt: Some(p),
+            height: self.u(TEXTO),
+            value: nome.to_string(),
+            rotation: std::f64::consts::FRAC_PI_2,
+            width_factor: 1.0,
+            oblique: 0.0,
+            style: "Standard".into(),
+            halign: HAlign::Center,
+            valign: VAlign::Middle,
+        });
+        self.lista.push((k, Some(cor), None));
+    }
+
+    /// O barramento das fases de um trilho, sobre os dispositivos `alimentados` (topo em `y`). Pente: uma
+    /// régua por fase, com um dente para cada polo. Espinha de peixe: uma espinha só, com uma derivação para
+    /// cada polo.
+    fn barramento_de_fase(&mut self, mo: &Montagem, alimentados: &[&Dispositivo], inicio: f64, y: f64) {
+        let polos: Vec<f64> = alimentados.iter().flat_map(|d| (0..d.modulos).map(move |k| inicio + W * (f64::from(d.posicao + k) + 0.5))).collect();
+        let (Some(a), Some(b)) = (polos.iter().copied().reduce(f64::min), polos.iter().copied().reduce(f64::max)) else { return };
+        let (a, b) = (a - W * 0.3, b + W * 0.3);
+        match mo.barramento_fase {
+            quadro::TipoBarramentoFase::Pente => {
+                for f in 0..mo.fases.clamp(1, 3) {
+                    let yf = y + 0.05 + 0.04 * f64::from(f);
+                    self.linha_com([a, yf], [b, yf], None, None);
+                }
+                for (i, x) in polos.iter().enumerate() {
+                    // Cada polo pega a fase seguinte: R, S, T, R...
+                    let yf = y + 0.05 + 0.04 * (i as u32 % mo.fases.clamp(1, 3)) as f64;
+                    self.linha_com([*x, y], [*x, yf], None, None);
+                }
+            }
+            quadro::TipoBarramentoFase::EscamaDePeixe => {
+                let espinha = y + 0.15;
+                self.retangulo(a, espinha - 0.02, b, espinha + 0.02);
+                for x in &polos {
+                    self.linha_com([*x - 0.04, espinha - 0.02], [*x, y], None, None);
+                    self.linha_com([*x + 0.04, espinha - 0.02], [*x, y], None, None);
+                }
+            }
+        }
+    }
+
     /// Um dispositivo no trilho, com o canto de baixo à esquerda em (`x`, `y`).
     fn dispositivo(&mut self, d: &Dispositivo, x: f64, y: f64) {
         let w = W * f64::from(d.modulos);
@@ -276,45 +346,66 @@ pub fn titulo(tag: &str) -> String {
     format!("VISTA FRONTAL / LAYOUT DE MONTAGEM - {tag}")
 }
 
-/// O conteúdo do bloco, com o canto superior esquerdo da caixa na origem.
+/// O conteúdo do bloco, com o canto superior esquerdo da caixa na origem. Os barramentos de neutro e terra
+/// ficam em cima e embaixo dos trilhos ou nas laterais (neutro à esquerda, terra à direita), e o das fases
+/// liga os disjuntores de cada trilho: pente (uma régua por fase) ou espinha de peixe.
 fn pecas(mo: &Montagem, m: f64) -> Vec<(EntityKind, Option<u8>, Option<&'static str>)> {
     let mut p = Pecas { lista: Vec::new(), m };
     let comprimento = W * f64::from(mo.modulos_por_trilho);
     let titulo = titulo(&mo.tag);
     let largura_titulo = titulo.chars().count() as f64 * ALTURA_TITULO * LARGURA_CARACTERE;
-    let interna = (comprimento + 2.0 * FOLGA).max(0.10 * (mo.bornes_neutro.max(mo.bornes_terra) + 1) as f64 + 2.0 * FOLGA + 2.4);
+    let laterais = mo.posicao_nt == quadro::PosicaoBarramentoNt::Laterais;
+    // A área dos trilhos e, em volta dela, a dos barramentos de neutro e terra.
+    let trilhos_largura = if laterais {
+        comprimento + 2.0 * FOLGA
+    } else {
+        (comprimento + 2.0 * FOLGA).max(0.10 * (mo.bornes_neutro.max(mo.bornes_terra) + 1) as f64 + 2.0 * FOLGA + 2.4)
+    };
+    let (margem_x, margem_y) = if laterais { (FAIXA_LATERAL, 0.15) } else { (0.0, FAIXA_BARRA) };
+    let interna = trilhos_largura + 2.0 * margem_x;
     let largura = interna + 2.0 * BORDA;
-    let altura_interna = 2.0 * FAIXA_BARRA + PASSO_TRILHO * mo.trilhos as f64;
+    let altura_trilhos = PASSO_TRILHO * mo.trilhos as f64;
+    let altura_interna = 2.0 * margem_y + altura_trilhos;
     let altura = altura_interna + 2.0 * BORDA;
     // O título, em cima da caixa.
     p.texto_com(&titulo, [largura.max(largura_titulo) / 2.0, 0.25], ALTURA_TITULO, HAlign::Center, None);
     // A caixa e o chassi (o espelho): a borda dupla.
     p.retangulo(0.0, -altura, largura, 0.0);
     p.retangulo(BORDA, -altura + BORDA, largura - BORDA, -BORDA);
-    let (x0, topo) = (BORDA, -BORDA);
-    let meio = largura / 2.0;
-    p.barramento(meio, topo - FAIXA_BARRA / 2.0 - 0.07, mo.bornes_neutro, "BARRAMENTO DE NEUTRO (N)", COR_NEUTRO);
-    p.barramento(meio, -altura + BORDA + FAIXA_BARRA / 2.0 - 0.07, mo.bornes_terra, "BARRAMENTO DE TERRA (PE)", COR_TERRA);
+    let topo = -BORDA;
+    let x0 = BORDA + margem_x;
+    if laterais {
+        let meio_y = topo - margem_y - altura_trilhos / 2.0;
+        p.barramento_vertical(BORDA + FAIXA_LATERAL / 2.0, meio_y, mo.bornes_neutro, "NEUTRO (N)", COR_NEUTRO);
+        p.barramento_vertical(largura - BORDA - FAIXA_LATERAL / 2.0, meio_y, mo.bornes_terra, "TERRA (PE)", COR_TERRA);
+    } else {
+        let meio = largura / 2.0;
+        p.barramento(meio, topo - FAIXA_BARRA / 2.0 - 0.07, mo.bornes_neutro, "BARRAMENTO DE NEUTRO (N)", COR_NEUTRO);
+        p.barramento(meio, -altura + BORDA + FAIXA_BARRA / 2.0 - 0.07, mo.bornes_terra, "BARRAMENTO DE TERRA (PE)", COR_TERRA);
+    }
     // Os trilhos: o perfil DIN aparece nas pontas e nos espaços sem dispositivo.
-    let inicio = x0 + (interna - comprimento) / 2.0;
+    let inicio = x0 + (trilhos_largura - comprimento) / 2.0;
     for t in 0..mo.trilhos {
-        let y = topo - FAIXA_BARRA - PASSO_TRILHO * t as f64 - (PASSO_TRILHO - H) / 2.0 - H;
+        let y = topo - margem_y - PASSO_TRILHO * t as f64 - (PASSO_TRILHO - H) / 2.0 - H;
         let meio_y = y + H / 2.0;
         let ocupado: u32 = mo.dispositivos.iter().filter(|d| d.trilho == t).map(|d| d.modulos).sum();
         let fim = inicio + W * f64::from(ocupado);
-        for (a, b) in [(x0 + 0.06, inicio), (fim, x0 + interna - 0.06)] {
+        for (a, b) in [(x0 + 0.06, inicio), (fim, x0 + trilhos_largura - 0.06)] {
             if b - a > 1e-9 {
                 p.retangulo(a, meio_y - 0.0875, b, meio_y + 0.0875);
             }
         }
-        p.texto_com(&format!("TRILHO DIN {}", t + 1), [x0 + 0.06, y + H + 0.08], TEXTO, HAlign::Left, None);
+        p.texto_com(&format!("TRILHO DIN {}", t + 1), [x0 + 0.06, y - 0.10], TEXTO, HAlign::Left, None);
         for d in mo.dispositivos.iter().filter(|d| d.trilho == t) {
             p.dispositivo(d, inicio + W * f64::from(d.posicao), y);
         }
+        // O barramento das fases sobre os disjuntores e DR do trilho.
+        let alimentados: Vec<&Dispositivo> =
+            mo.dispositivos.iter().filter(|d| d.trilho == t && matches!(d.tipo, TipoDispositivo::Disjuntor | TipoDispositivo::Dr)).collect();
+        p.barramento_de_fase(mo, &alimentados, inicio, y + H);
     }
     p.lista
 }
-
 fn gravar_bloco(doc: &mut Drawing, r: &ResumoQuadro) {
     let m = if r.metros_por_unidade > 0.0 { r.metros_por_unidade } else { 1.0 };
     let nome = nome_do_bloco(r.quadro);

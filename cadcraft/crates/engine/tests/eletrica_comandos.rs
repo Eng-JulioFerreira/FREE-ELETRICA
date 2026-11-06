@@ -1330,6 +1330,16 @@ fn documentacao_dos_pontos_e_legenda_por_comando() {
     s.input(Input::Point(Vec2::new(20.0, 20.0))).unwrap();
     assert!(s.running.is_none());
     assert_eq!(s.doc().unwrap().model.len(), antes, "a legenda é uma só");
+    // A legenda de telecom é outra, só com os pontos de telecom.
+    s.execute("eleponto", &json!({ "bloco": "RJ45", "pontos": [[40.0, 0.0]] })).unwrap();
+    let r = s.execute("telelegenda", &json!({ "ponto": [50.0, 10.0] })).unwrap();
+    assert_eq!(r["linhas"], 1);
+    assert_ne!(r["legenda"], s.execute("elelegenda", &json!({ "ponto": [10.0, 10.0] })).unwrap()["legenda"]);
+    assert!(s.execute("telelegenda", &json!({})).is_err());
+    s.start("telelegenda").unwrap();
+    s.input(Input::Point(Vec2::new(60.0, 10.0))).unwrap();
+    assert!(s.running.is_none());
+    assert_eq!(free_eletrica::legenda::legendas(s.doc().unwrap()).len(), 2);
 }
 
 #[test]
@@ -1360,7 +1370,8 @@ fn excluir_por_comandos() {
     assert!(s.execute("eletrica.familia.excluir", &json!({ "bloco": "TOM-SIM-ALTA" })).is_err());
     assert_eq!(s.execute("eletrica.familia.excluir", &json!({ "bloco": "TOM-SIM-ALTA", "comInsercoes": true })).unwrap()["insercoes"], 1);
     assert!(!s.execute("eletrica.blocos", &json!({})).unwrap().as_array().unwrap().iter().any(|b| b["nome"] == "TOM-SIM-ALTA"));
-    let legenda = s.doc().unwrap().blocks.get(free_eletrica::legenda::BLOCO).unwrap().clone();
+    // ELELEGENDA desenha a legenda elétrica.
+    let legenda = s.doc().unwrap().blocks.get(free_eletrica::legenda::bloco(Some(free_eletrica::disciplina::Disciplina::Eletrica))).unwrap().clone();
     assert!(!legenda.entities.iter().any(|e| matches!(&e.kind, EntityKind::Insert(i) if i.block == "TOM-SIM-ALTA")));
     s.execute("eletrica.bootstrap", &json!({})).unwrap();
     assert!(!s.execute("eletrica.blocos", &json!({})).unwrap().as_array().unwrap().iter().any(|b| b["nome"] == "TOM-SIM-ALTA"));
@@ -1613,4 +1624,60 @@ fn telecom_por_comandos() {
     // ELEREGEN refaz a tabela do rack.
     let reg = s.execute("eleregen", &json!({})).unwrap();
     assert_eq!(reg["racks"], 1);
+}
+
+#[test]
+fn protecao_geral_dps_metodo_e_criterio_por_comandos() {
+    let _setup = trava_setup();
+    let mut s = Session::new();
+    let mut d = Drawing::new_metric();
+    d.header.set_i64("INSUNITS", 6);
+    s.open_drawing(d, "Protecao", None);
+    s.execute("eletrica.bootstrap", &json!({})).unwrap();
+    let um = |v: Value| v["pontos"][0].as_str().unwrap().to_string();
+    let q = um(s.execute("eleponto", &json!({ "bloco": "QDG", "pontos": [[0.0, 0.0]] })).unwrap());
+    let t = um(s
+        .execute("eleponto", &json!({ "bloco": "TOM-SIM-BAIXA", "pontos": [[3.0, 0.0]], "valores": { "CIRCUITO": "1", "POTENCIA": "1524VA" } }))
+        .unwrap());
+    s.execute("elecircuito", &json!({ "quadro": q, "circuito": "1", "pontos": [t] })).unwrap();
+    s.execute("eleeletroduto", &json!({ "de": q, "para": t, "flecha": 0 })).unwrap();
+    // As opções do quadro: gravadas e devolvidas na configuração.
+    let r = s
+        .execute(
+            "eletrica.quadro",
+            &json!({ "quadro": q, "disjuntorGeral": 63, "secaoGeral": 16, "usarDps": true, "classeDps": "I+II", "disjuntorDps": 40,
+                     "metodo": "C", "modulosPorTrilho": 24, "barramentoFase": "ESCAMA", "barramentoNt": "LATERAIS" }),
+        )
+        .unwrap();
+    let c = &r["config"];
+    assert_eq!((c["disjuntorGeral"].as_f64(), c["secaoGeral"].as_f64(), c["classeDps"].as_str()), (Some(63.0), Some(16.0), Some("I+II")));
+    assert_eq!((c["metodo"].as_str(), c["modulosPorTrilho"].as_u64(), c["barramentoFase"].as_str()), (Some("C"), Some(24), Some("escamaDePeixe")));
+    let rot = s.execute("eletrica.rotear", &json!({ "quadro": q })).unwrap();
+    assert_eq!((rot["alimentador"]["disjuntor"].as_f64(), rot["alimentador"]["disjuntorTravado"].as_bool()), (Some(63.0), Some(true)));
+    assert_eq!(rot["linhas"][0]["metodo"], "C");
+    // Um valor ruim é recusado sem gravar nada, nem as outras opções do mesmo pedido.
+    assert!(s.execute("eletrica.quadro", &json!({ "quadro": q, "disjuntorGeral": 40, "secaoGeral": 7 })).is_err());
+    assert!(s.execute("eletrica.quadro", &json!({ "quadro": q, "modulosPorTrilho": 13 })).is_err());
+    assert!(s.execute("eletrica.quadro", &json!({ "quadro": q, "classeDps": [1] })).is_err());
+    let rot = s.execute("eletrica.rotear", &json!({ "quadro": q })).unwrap();
+    assert_eq!(rot["alimentador"]["disjuntor"].as_f64(), Some(63.0));
+    // null tira a trava; sem DPS, o alimentador diz.
+    s.execute("eletrica.quadro", &json!({ "quadro": q, "disjuntorGeral": null, "secaoGeral": null, "usarDps": false })).unwrap();
+    let rot = s.execute("eletrica.rotear", &json!({ "quadro": q })).unwrap();
+    assert_eq!((rot["alimentador"]["disjuntorTravado"].as_bool(), rot["alimentador"]["dps"].as_bool()), (Some(false), Some(false)));
+    // O método de um circuito vale sobre o do quadro.
+    s.execute("eletrica.circuito.definir", &json!({ "quadro": q, "circuito": "1", "metodo": "A1" })).unwrap();
+    assert_eq!(s.execute("eletrica.rotear", &json!({ "quadro": q })).unwrap()["linhas"][0]["metodo"], "A1");
+    assert!(s.execute("eletrica.circuito.definir", &json!({ "quadro": q, "circuito": "1", "metodo": "Z" })).is_err());
+    s.execute("eletrica.circuito.definir", &json!({ "quadro": q, "circuito": "1", "metodo": null })).unwrap();
+    // O critério do disjuntor no dimensionamento: pela capacidade do cabo, o maior até Iz.
+    s.execute("eletrica.quadro", &json!({ "quadro": q, "metodo": "B1" })).unwrap();
+    s.execute("eletrica.dimensionar", &json!({ "quadro": q, "criterioDisjuntor": "capacidadeCaboIz" })).unwrap();
+    let rot = s.execute("eletrica.rotear", &json!({ "quadro": q })).unwrap();
+    assert_eq!((rot["linhas"][0]["escolha"]["secao"].as_f64(), rot["linhas"][0]["escolha"]["disjuntor"].as_f64()), (Some(2.5), Some(20.0)));
+    // Pela corrente de projeto, o menor acima de Ib (1524 VA em 220 V: 6,9 A).
+    s.execute("eletrica.dimensionar", &json!({ "quadro": q, "criterioDisjuntor": "correnteProjetoIb" })).unwrap();
+    let rot = s.execute("eletrica.rotear", &json!({ "quadro": q })).unwrap();
+    assert_eq!(rot["linhas"][0]["escolha"]["disjuntor"].as_f64(), Some(10.0));
+    assert!(s.execute("eletrica.dimensionar", &json!({ "quadro": q, "criterioDisjuntor": "outro" })).is_err());
 }

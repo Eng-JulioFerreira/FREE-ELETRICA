@@ -2,14 +2,15 @@
 // Copyright (C) 2026 Julio Ferreira. Free Elétrica: ver LICENSE e AVISO_LEGAL.md na raiz do repositorio.
 //! Dimensionamento de circuitos terminais pela NBR 5410.
 //!
-//! O que está aqui: corrente de projeto, seção mínima (tabela 47), capacidade de condução
-//! (cobre, método de referência B1: tabela 36 para PVC 70 °C, tabela 37 para EPR e XLPE 90 °C),
+//! O que está aqui: corrente de projeto, seção mínima (tabela 47), capacidade de condução do cobre
+//! pelos métodos de referência A1, A2, B1, B2, C e D (tabelas 36 e 37) e E e F (tabelas 38 e 39),
 //! fatores de correção de temperatura (tabela 40, por isolação) e de agrupamento (tabela 42,
-//! pelo roteamento), queda de tensão pelo momento elétrico (6.2.7) e a escolha do disjuntor com
-//! Ib ≤ In ≤ Iz (5.3.4.1).
+//! pelo roteamento), queda de tensão pelo momento elétrico (6.2.7), a escolha do disjuntor com
+//! Ib ≤ In ≤ Iz (5.3.4.1) e as seções do neutro (tabela 48) e do condutor de proteção (tabela 58).
 //!
-//! Ainda não: outros métodos de instalação, seções acima de 120 mm², DR e coordenação com
-//! curto-circuito. Os valores das tabelas devem ser conferidos contra a norma vigente.
+//! Ainda não: seções acima de 120 mm², o método G, o FCT do solo e o FCA dos cabos enterrados
+//! (tabelas 40 e 44) no método D, e a coordenação com o curto-circuito. Os valores das tabelas são os
+//! da NBR 5410:2004 (iguais aos da IEC 60364-5-52) e devem ser conferidos contra a norma vigente.
 
 use serde::{Deserialize, Serialize};
 
@@ -18,14 +19,199 @@ use crate::circuito::{Circuito, Natureza};
 /// Seções nominais de condutor, em mm².
 pub const SECOES: [f64; 12] = [1.5, 2.5, 4.0, 6.0, 10.0, 16.0, 25.0, 35.0, 50.0, 70.0, 95.0, 120.0];
 
-/// Tabela 36, método B1, cobre, PVC, 30 °C: dois condutores carregados (A).
-const IZ_PVC_DOIS: [f64; 12] = [17.5, 24.0, 32.0, 41.0, 57.0, 76.0, 101.0, 125.0, 151.0, 192.0, 232.0, 269.0];
-/// Tabela 36, método B1, cobre, PVC, 30 °C: três condutores carregados (A).
-const IZ_PVC_TRES: [f64; 12] = [15.5, 21.0, 28.0, 36.0, 50.0, 68.0, 89.0, 110.0, 134.0, 171.0, 207.0, 239.0];
-/// Tabela 37, método B1, cobre, EPR ou XLPE, 30 °C: dois condutores carregados (A).
-const IZ_EPR_DOIS: [f64; 12] = [23.0, 31.0, 42.0, 54.0, 75.0, 100.0, 133.0, 164.0, 198.0, 253.0, 306.0, 354.0];
-/// Tabela 37, método B1, cobre, EPR ou XLPE, 30 °C: três condutores carregados (A).
-const IZ_EPR_TRES: [f64; 12] = [20.0, 28.0, 37.0, 48.0, 66.0, 88.0, 117.0, 144.0, 175.0, 222.0, 269.0, 312.0];
+/// O método de instalação de referência (NBR 5410, tabela 33): escolhe a coluna das tabelas 36 a 39.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum MetodoInstalacao {
+    /// Condutores isolados em eletroduto embutido em parede termicamente isolante.
+    A1,
+    /// Cabo multipolar em eletroduto embutido em parede termicamente isolante.
+    A2,
+    /// Condutores isolados em eletroduto aparente ou embutido em alvenaria.
+    #[default]
+    B1,
+    /// Cabo multipolar em eletroduto aparente ou embutido em alvenaria.
+    B2,
+    /// Cabo unipolar ou multipolar sobre parede.
+    C,
+    /// Cabo em eletroduto enterrado.
+    D,
+    /// Cabo multipolar ao ar livre (bandeja perfurada, leito).
+    E,
+    /// Cabos unipolares justapostos ao ar livre.
+    F,
+}
+
+impl MetodoInstalacao {
+    pub const TODOS: [MetodoInstalacao; 8] = [Self::A1, Self::A2, Self::B1, Self::B2, Self::C, Self::D, Self::E, Self::F];
+
+    pub fn codigo(self) -> &'static str {
+        match self {
+            Self::A1 => "A1",
+            Self::A2 => "A2",
+            Self::B1 => "B1",
+            Self::B2 => "B2",
+            Self::C => "C",
+            Self::D => "D",
+            Self::E => "E",
+            Self::F => "F",
+        }
+    }
+
+    pub fn nome(self) -> &'static str {
+        match self {
+            Self::A1 => "A1: condutores isolados em eletroduto em parede isolante",
+            Self::A2 => "A2: cabo multipolar em eletroduto em parede isolante",
+            Self::B1 => "B1: condutores isolados em eletroduto (alvenaria ou aparente)",
+            Self::B2 => "B2: cabo multipolar em eletroduto (alvenaria ou aparente)",
+            Self::C => "C: cabo sobre parede",
+            Self::D => "D: cabo em eletroduto enterrado",
+            Self::E => "E: cabo multipolar ao ar livre",
+            Self::F => "F: cabos unipolares justapostos ao ar livre",
+        }
+    }
+
+    pub fn de_codigo(t: &str) -> Option<Self> {
+        Self::TODOS.into_iter().find(|m| m.codigo().eq_ignore_ascii_case(t.trim()))
+    }
+
+    /// A coluna nas tabelas de capacidade.
+    fn coluna(self) -> usize {
+        match self {
+            Self::A1 => 0,
+            Self::A2 => 1,
+            Self::B1 => 2,
+            Self::B2 => 3,
+            Self::C => 4,
+            Self::D => 5,
+            Self::E => 6,
+            Self::F => 7,
+        }
+    }
+}
+
+/// O critério da escolha do disjuntor entre Ib e Iz (NBR 5410, 5.3.4.1: Ib ≤ In ≤ Iz).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CriterioDisjuntor {
+    /// O menor disjuntor com In ≥ Ib: protege o circuito pela carga.
+    #[default]
+    CorrenteProjetoIb,
+    /// O maior disjuntor com In ≤ Iz do cabo escolhido: aproveita o cabo.
+    CapacidadeCaboIz,
+}
+
+impl CriterioDisjuntor {
+    pub const TODOS: [CriterioDisjuntor; 2] = [Self::CorrenteProjetoIb, Self::CapacidadeCaboIz];
+
+    pub fn codigo(self) -> &'static str {
+        match self {
+            Self::CorrenteProjetoIb => "IB",
+            Self::CapacidadeCaboIz => "IZ",
+        }
+    }
+
+    pub fn nome(self) -> &'static str {
+        match self {
+            Self::CorrenteProjetoIb => "Menor disjuntor acima de Ib (corrente de projeto)",
+            Self::CapacidadeCaboIz => "Maior disjuntor até Iz (capacidade do cabo)",
+        }
+    }
+
+    pub fn de_codigo(t: &str) -> Option<Self> {
+        Self::TODOS.into_iter().find(|c| c.codigo().eq_ignore_ascii_case(t.trim()))
+    }
+
+    /// O disjuntor de [`DISJUNTORES`] entre `ib` e `iz` pelo critério.
+    pub fn escolher(self, ib: f64, iz: f64) -> Option<f64> {
+        let cabe = |d: &f64| *d >= ib && *d <= iz;
+        match self {
+            Self::CorrenteProjetoIb => DISJUNTORES.iter().copied().find(cabe),
+            Self::CapacidadeCaboIz => DISJUNTORES.iter().copied().rfind(cabe),
+        }
+    }
+}
+
+/// Capacidade de condução do cobre com 30 °C no ar e 20 °C no solo (método D), em A, por seção de [`SECOES`] e pelas colunas A1, A2, B1, B2,
+/// C, D, E e F. Tabela 36 (PVC) e 38 (PVC, E e F); tabela 37 (EPR/XLPE) e 39 (EPR/XLPE, E e F). No método F
+/// (unipolares justapostos; três carregados em trifólio) os valores aqui começam em 25 mm²: as seções menores
+/// ficam sem capacidade e o cálculo passa à seguinte.
+const N: f64 = f64::NAN;
+const IZ_PVC_2: [[f64; 8]; 12] = [
+    [14.5, 14.0, 17.5, 16.5, 19.5, 22.0, 22.0, N],
+    [19.5, 18.5, 24.0, 23.0, 27.0, 29.0, 30.0, N],
+    [26.0, 25.0, 32.0, 30.0, 36.0, 38.0, 40.0, N],
+    [34.0, 32.0, 41.0, 38.0, 46.0, 47.0, 51.0, N],
+    [46.0, 43.0, 57.0, 52.0, 63.0, 63.0, 70.0, N],
+    [61.0, 57.0, 76.0, 69.0, 85.0, 81.0, 94.0, N],
+    [80.0, 75.0, 101.0, 90.0, 112.0, 104.0, 119.0, 131.0],
+    [99.0, 92.0, 125.0, 111.0, 138.0, 125.0, 148.0, 162.0],
+    [119.0, 110.0, 151.0, 133.0, 168.0, 148.0, 180.0, 196.0],
+    [151.0, 139.0, 192.0, 168.0, 213.0, 183.0, 232.0, 251.0],
+    [182.0, 167.0, 232.0, 201.0, 258.0, 216.0, 282.0, 304.0],
+    [210.0, 192.0, 269.0, 232.0, 299.0, 246.0, 328.0, 352.0],
+];
+const IZ_PVC_3: [[f64; 8]; 12] = [
+    [13.5, 13.0, 15.5, 15.0, 17.5, 18.0, 18.5, N],
+    [18.0, 17.5, 21.0, 20.0, 24.0, 24.0, 25.0, N],
+    [24.0, 23.0, 28.0, 27.0, 32.0, 31.0, 34.0, N],
+    [31.0, 29.0, 36.0, 34.0, 41.0, 39.0, 43.0, N],
+    [42.0, 39.0, 50.0, 46.0, 57.0, 52.0, 60.0, N],
+    [56.0, 52.0, 68.0, 62.0, 76.0, 67.0, 80.0, N],
+    [73.0, 68.0, 89.0, 80.0, 96.0, 86.0, 101.0, 110.0],
+    [89.0, 83.0, 110.0, 99.0, 119.0, 103.0, 126.0, 137.0],
+    [108.0, 99.0, 134.0, 118.0, 144.0, 122.0, 153.0, 167.0],
+    [136.0, 125.0, 171.0, 149.0, 184.0, 151.0, 196.0, 216.0],
+    [164.0, 150.0, 207.0, 179.0, 223.0, 179.0, 238.0, 264.0],
+    [188.0, 172.0, 239.0, 206.0, 259.0, 203.0, 276.0, 308.0],
+];
+const IZ_EPR_2: [[f64; 8]; 12] = [
+    [19.0, 18.5, 23.0, 22.0, 24.0, 26.0, 26.0, N],
+    [26.0, 25.0, 31.0, 30.0, 33.0, 34.0, 36.0, N],
+    [35.0, 33.0, 42.0, 40.0, 45.0, 44.0, 49.0, N],
+    [45.0, 42.0, 54.0, 51.0, 58.0, 56.0, 63.0, N],
+    [61.0, 57.0, 75.0, 69.0, 80.0, 73.0, 86.0, N],
+    [81.0, 76.0, 100.0, 91.0, 107.0, 95.0, 115.0, N],
+    [106.0, 99.0, 133.0, 119.0, 138.0, 121.0, 149.0, 161.0],
+    [131.0, 121.0, 164.0, 146.0, 171.0, 146.0, 185.0, 200.0],
+    [158.0, 145.0, 198.0, 175.0, 209.0, 173.0, 225.0, 242.0],
+    [200.0, 183.0, 253.0, 221.0, 269.0, 213.0, 289.0, 310.0],
+    [241.0, 220.0, 306.0, 265.0, 328.0, 252.0, 352.0, 377.0],
+    [278.0, 253.0, 354.0, 305.0, 382.0, 287.0, 410.0, 437.0],
+];
+const IZ_EPR_3: [[f64; 8]; 12] = [
+    [17.0, 16.5, 20.0, 19.5, 22.0, 22.0, 23.0, N],
+    [23.0, 22.0, 28.0, 26.0, 30.0, 29.0, 32.0, N],
+    [31.0, 30.0, 37.0, 35.0, 40.0, 37.0, 42.0, N],
+    [40.0, 38.0, 48.0, 44.0, 52.0, 46.0, 54.0, N],
+    [54.0, 51.0, 66.0, 60.0, 71.0, 61.0, 75.0, N],
+    [73.0, 68.0, 88.0, 80.0, 96.0, 79.0, 100.0, N],
+    [95.0, 89.0, 117.0, 105.0, 119.0, 101.0, 127.0, 135.0],
+    [117.0, 109.0, 144.0, 128.0, 147.0, 122.0, 158.0, 169.0],
+    [141.0, 130.0, 175.0, 154.0, 179.0, 144.0, 192.0, 207.0],
+    [179.0, 164.0, 222.0, 194.0, 229.0, 178.0, 246.0, 268.0],
+    [216.0, 197.0, 269.0, 233.0, 278.0, 211.0, 298.0, 328.0],
+    [249.0, 227.0, 312.0, 268.0, 322.0, 240.0, 346.0, 383.0],
+];
+
+/// Tabela 58: a seção mínima do condutor de proteção (PE) de mesmo material que a fase: igual à fase até
+/// 16 mm², 16 mm² de 25 a 35 mm², e metade da fase acima disso (a seção comercial logo acima).
+pub fn secao_pe(secao_fase: f64) -> f64 {
+    if secao_fase <= 16.0 + 1e-9 {
+        secao_fase
+    } else if secao_fase <= 35.0 + 1e-9 {
+        16.0
+    } else {
+        SECOES.iter().copied().find(|s| *s + 1e-9 >= secao_fase / 2.0).unwrap_or(secao_fase)
+    }
+}
+
+/// Tabela 48: a seção reduzida do neutro num circuito trifásico equilibrado com terceira harmônica até
+/// 15 % (6.2.6.2.6): igual à fase até 25 mm²; 25 mm² com fase de 35 e 50; 35 com 70; 50 com 95; 70 com 120.
+/// Nos outros circuitos o neutro é igual à fase.
+pub fn secao_neutro(secao_fase: f64) -> f64 {
+    const TABELA_48: [(f64, f64); 5] = [(35.0, 25.0), (50.0, 25.0), (70.0, 35.0), (95.0, 50.0), (120.0, 70.0)];
+    TABELA_48.iter().find(|(f, _)| (f - secao_fase).abs() < 1e-6).map_or(secao_fase, |(_, n)| *n)
+}
 
 /// Tabela 40, temperatura ambiente (não no solo): (°C, fator PVC, fator EPR/XLPE).
 const FCT_AMBIENTE: [(f64, f64, f64); 11] = [
@@ -295,6 +481,10 @@ pub struct Config {
     pub isolacao: Isolacao,
     /// Condutores carregados pelo esquema escolhido. `None`: pelo número de fases.
     pub carregados: Option<u8>,
+    /// O método de instalação: a coluna das tabelas 36 a 39.
+    pub metodo: MetodoInstalacao,
+    /// Como escolher o disjuntor entre Ib e Iz.
+    pub criterio: CriterioDisjuntor,
 }
 
 impl Default for Config {
@@ -308,6 +498,8 @@ impl Default for Config {
             queda_admissivel: 4.0,
             isolacao: Isolacao::Pvc,
             carregados: None,
+            metodo: MetodoInstalacao::B1,
+            criterio: CriterioDisjuntor::CorrenteProjetoIb,
         }
     }
 }
@@ -336,15 +528,21 @@ pub fn condutores_total(fases: u8) -> u8 {
     if fases >= 3 { 5 } else { 3 }
 }
 
-/// Capacidade de condução (tabela 36 ou 37, B1) da seção de índice `i` em [`SECOES`].
+/// Capacidade de condução pelo método B1 (tabela 36 ou 37) da seção de índice `i` em [`SECOES`].
 pub fn capacidade(i: usize, carregados: u8, isolacao: Isolacao) -> Option<f64> {
+    capacidade_no_metodo(i, carregados, isolacao, MetodoInstalacao::B1)
+}
+
+/// Capacidade de condução (tabelas 36 a 39) da seção de índice `i` em [`SECOES`] no método de instalação.
+/// `None`: fora da tabela.
+pub fn capacidade_no_metodo(i: usize, carregados: u8, isolacao: Isolacao, metodo: MetodoInstalacao) -> Option<f64> {
     let tabela = match (isolacao, carregados >= 3) {
-        (Isolacao::Pvc, false) => &IZ_PVC_DOIS,
-        (Isolacao::Pvc, true) => &IZ_PVC_TRES,
-        (_, false) => &IZ_EPR_DOIS,
-        (_, true) => &IZ_EPR_TRES,
+        (Isolacao::Pvc, false) => &IZ_PVC_2,
+        (Isolacao::Pvc, true) => &IZ_PVC_3,
+        (_, false) => &IZ_EPR_2,
+        (_, true) => &IZ_EPR_3,
     };
-    tabela.get(i).copied()
+    tabela.get(i).and_then(|l| l.get(metodo.coluna())).copied().filter(|v| v.is_finite())
 }
 
 pub fn indice_secao(secao: f64) -> Option<usize> {
@@ -407,8 +605,8 @@ pub fn corrente_corrigida(ib: f64, cfg: &Config) -> f64 {
 pub fn secao_para_corrente(ib: f64, carregados: u8, cfg: &Config) -> Option<(f64, f64, f64)> {
     let fator = cfg.fct * cfg.fca;
     SECOES.iter().copied().enumerate().filter(|(_, s)| *s >= 2.5).find_map(|(i, secao)| {
-        let iz = capacidade(i, carregados, cfg.isolacao)? * fator;
-        let disjuntor = DISJUNTORES.iter().copied().find(|d| *d >= ib && *d <= iz)?;
+        let iz = capacidade_no_metodo(i, carregados, cfg.isolacao, cfg.metodo)? * fator;
+        let disjuntor = cfg.criterio.escolher(ib, iz)?;
         Some((secao, iz, disjuntor))
     })
 }
@@ -432,12 +630,13 @@ pub fn dimensionar_com(c: &Circuito, cfg: &Config, momento: Option<f64>) -> Dime
     let fator = cfg.fct * cfg.fca;
     let minima = secao_minima(c.natureza);
     for (i, secao) in SECOES.iter().copied().enumerate().filter(|(_, s)| *s >= minima) {
-        let Some(iz) = capacidade(i, carregados, cfg.isolacao).map(|v| v * fator) else { continue };
+        let Some(iz) = capacidade_no_metodo(i, carregados, cfg.isolacao, cfg.metodo).map(|v| v * fator) else { continue };
         if iz < ib {
             continue;
         }
-        // Ib ≤ In ≤ Iz; se nenhum disjuntor cabe nesta seção, a próxima seção resolve.
-        let Some(disjuntor) = DISJUNTORES.iter().copied().find(|d| *d >= ib && *d <= iz) else { continue };
+        // Ib ≤ In ≤ Iz; se nenhum disjuntor cabe nesta seção, a próxima seção resolve. Entre os que cabem, o
+        // critério escolhe o menor (pela carga) ou o maior (pelo cabo).
+        let Some(disjuntor) = cfg.criterio.escolher(ib, iz) else { continue };
         let queda = momento.map(|m| queda_percentual(m, secao, tensao, c.fases, cfg.isolacao));
         if queda.is_some_and(|q| q > cfg.queda_admissivel) {
             continue;
@@ -464,7 +663,7 @@ pub fn verificar(c: &Circuito, cfg: &Config, momento: Option<f64>, secao: f64, d
     let (tensao, _) = tensao_circuito(c, cfg);
     let ib = corrente_projeto(c.potencia, tensao, c.fases);
     let iz = indice_secao(secao)
-        .and_then(|i| capacidade(i, cfg.carregados.unwrap_or_else(|| condutores_carregados(c.fases)), cfg.isolacao))
+        .and_then(|i| capacidade_no_metodo(i, cfg.carregados.unwrap_or_else(|| condutores_carregados(c.fases)), cfg.isolacao, cfg.metodo))
         .map(|v| v * cfg.fct * cfg.fca);
     let queda = momento.map(|m| queda_percentual(m, secao, tensao, c.fases, cfg.isolacao));
     if secao < secao_minima(c.natureza) {

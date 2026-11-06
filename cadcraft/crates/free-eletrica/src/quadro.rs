@@ -63,6 +63,124 @@ pub const CHAVE_OBSERVACOES: &str = "OBS_QUADRO";
 pub const CHAVE_MODULOS: &str = "MODULOS_QUADRO";
 /// Quantos circuitos reserva, quando o projetista os define.
 pub const CHAVE_RESERVAS: &str = "RESERVAS_QUADRO";
+/// A proteção geral travada à mão: o disjuntor (A) e a seção do alimentador (mm²).
+pub const CHAVE_DISJ_GERAL: &str = "DISJ_GERAL";
+pub const CHAVE_SECAO_GERAL: &str = "SECAO_GERAL";
+/// O DPS do quadro: se tem (`1`/`0`), a classe e o disjuntor exclusivo antes dele (A).
+pub const CHAVE_USAR_DPS: &str = "USAR_DPS";
+pub const CHAVE_CLASSE_DPS: &str = "CLASSE_DPS";
+pub const CHAVE_DISJ_DPS: &str = "DISJ_DPS";
+/// O método de instalação do quadro; por circuito, `METODO.<circuito>`.
+pub const CHAVE_METODO_QUADRO: &str = "METODO_QUADRO";
+pub const CHAVE_METODO: &str = "METODO.";
+/// A montagem nos trilhos DIN: módulos por trilho, o barramento das fases e onde ficam neutro e terra.
+pub const CHAVE_MODULOS_TRILHO: &str = "MODULOS_TRILHO";
+pub const CHAVE_BARRAMENTO_FASE: &str = "BARRAMENTO_FASE";
+pub const CHAVE_BARRAMENTO_NT: &str = "BARRAMENTO_NT";
+/// Os tamanhos de trilho DIN oferecidos (módulos).
+pub const MODULOS_POR_TRILHO: [u32; 4] = [12, 16, 18, 24];
+
+/// A classe do DPS (NBR 5410, 6.3.5; ABNT NBR IEC 61643-11).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+pub enum ClasseDps {
+    I,
+    #[default]
+    II,
+    #[serde(rename = "I+II")]
+    IeII,
+}
+
+impl ClasseDps {
+    pub const TODAS: [ClasseDps; 3] = [Self::I, Self::II, Self::IeII];
+
+    pub fn codigo(self) -> &'static str {
+        match self {
+            Self::I => "I",
+            Self::II => "II",
+            Self::IeII => "I+II",
+        }
+    }
+
+    pub fn nome(self) -> &'static str {
+        match self {
+            Self::I => "Classe I",
+            Self::II => "Classe II",
+            Self::IeII => "Classe I+II",
+        }
+    }
+
+    pub fn de_codigo(t: &str) -> Option<Self> {
+        let t = t.trim().trim_start_matches("Classe").trim();
+        Self::TODAS.into_iter().find(|c| c.codigo().eq_ignore_ascii_case(t))
+    }
+}
+
+/// O barramento que liga as fases aos disjuntores de cada trilho.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TipoBarramentoFase {
+    /// Barramento pente: uma régua por fase sobre os disjuntores do trilho.
+    #[default]
+    Pente,
+    /// Barramento espinha de peixe: uma espinha com derivações para os polos.
+    EscamaDePeixe,
+}
+
+impl TipoBarramentoFase {
+    pub const TODOS: [TipoBarramentoFase; 2] = [Self::Pente, Self::EscamaDePeixe];
+
+    pub fn codigo(self) -> &'static str {
+        match self {
+            Self::Pente => "PENTE",
+            Self::EscamaDePeixe => "ESCAMA",
+        }
+    }
+
+    pub fn nome(self) -> &'static str {
+        match self {
+            Self::Pente => "Pente",
+            Self::EscamaDePeixe => "Espinha de peixe",
+        }
+    }
+
+    pub fn de_codigo(t: &str) -> Option<Self> {
+        Self::TODOS.into_iter().find(|c| c.codigo().eq_ignore_ascii_case(t.trim()))
+    }
+}
+
+/// Onde ficam os barramentos de neutro e de terra no chassi.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PosicaoBarramentoNt {
+    /// Neutro em cima e terra embaixo dos trilhos.
+    #[default]
+    TopoBase,
+    /// Neutro à esquerda e terra à direita dos trilhos.
+    Laterais,
+}
+
+impl PosicaoBarramentoNt {
+    pub const TODAS: [PosicaoBarramentoNt; 2] = [Self::TopoBase, Self::Laterais];
+
+    pub fn codigo(self) -> &'static str {
+        match self {
+            Self::TopoBase => "TOPO_BASE",
+            Self::Laterais => "LATERAIS",
+        }
+    }
+
+    pub fn nome(self) -> &'static str {
+        match self {
+            Self::TopoBase => "Em cima e embaixo",
+            Self::Laterais => "Nas laterais",
+        }
+    }
+
+    pub fn de_codigo(t: &str) -> Option<Self> {
+        Self::TODAS.into_iter().find(|c| c.codigo().eq_ignore_ascii_case(t.trim()))
+    }
+}
+
 /// O máximo aceito em módulos e reservas: entrada hostil não vira uma tabela sem fim.
 pub const MAXIMO_MODULOS: u32 = 500;
 pub const MAXIMO_RESERVAS: u32 = 100;
@@ -207,6 +325,36 @@ pub struct ConfigQuadro {
     pub modulos: Option<u32>,
     /// `None`: o mínimo da NBR 5410.
     pub reservas: Option<u32>,
+    /// O disjuntor geral (A) e a seção do alimentador (mm²) travados à mão. `None`: os calculados.
+    pub disjuntor_geral: Option<f64>,
+    pub secao_geral: Option<f64>,
+    /// O quadro tem DPS. `None`: tem.
+    pub usar_dps: Option<bool>,
+    pub classe_dps: Option<ClasseDps>,
+    /// O disjuntor exclusivo de proteção do DPS (A). `None`: sem disjuntor próprio.
+    pub disjuntor_dps: Option<f64>,
+    /// O método de instalação dos circuitos do quadro. `None`: o das configurações.
+    pub metodo: Option<nbr5410::MetodoInstalacao>,
+    /// Módulos por trilho DIN. `None`: 12 até 12 módulos, 18 acima.
+    pub modulos_por_trilho: Option<u32>,
+    pub barramento_fase: Option<TipoBarramentoFase>,
+    pub posicao_barramento_nt: Option<PosicaoBarramentoNt>,
+}
+
+impl ConfigQuadro {
+    /// O quadro tem DPS (o padrão).
+    pub fn tem_dps(&self) -> bool {
+        self.usar_dps.unwrap_or(true)
+    }
+
+    pub fn classe_do_dps(&self) -> ClasseDps {
+        self.classe_dps.unwrap_or_default()
+    }
+}
+
+/// Um número positivo e finito de um texto do XDATA.
+fn positivo(v: &str) -> Option<f64> {
+    crate::ponto::numero(v).filter(|x| x.is_finite() && *x > 0.0)
 }
 
 /// A configuração gravada num quadro.
@@ -221,6 +369,15 @@ pub fn config_do_quadro(q: &PontoEletrico) -> ConfigQuadro {
         observacoes: valor(CHAVE_OBSERVACOES).map(str::trim).filter(|v| !v.is_empty()).map(str::to_string),
         modulos: valor(CHAVE_MODULOS).and_then(|v| v.trim().parse().ok()).filter(|n| *n <= MAXIMO_MODULOS),
         reservas: valor(CHAVE_RESERVAS).and_then(|v| v.trim().parse().ok()).filter(|n| *n <= MAXIMO_RESERVAS),
+        disjuntor_geral: valor(CHAVE_DISJ_GERAL).and_then(positivo),
+        secao_geral: valor(CHAVE_SECAO_GERAL).and_then(positivo).filter(|s| nbr5410::indice_secao(*s).is_some()),
+        usar_dps: valor(CHAVE_USAR_DPS).map(|v| !matches!(v.trim(), "0" | "false" | "NAO" | "nao")),
+        classe_dps: valor(CHAVE_CLASSE_DPS).and_then(ClasseDps::de_codigo),
+        disjuntor_dps: valor(CHAVE_DISJ_DPS).and_then(positivo),
+        metodo: valor(CHAVE_METODO_QUADRO).and_then(nbr5410::MetodoInstalacao::de_codigo),
+        modulos_por_trilho: valor(CHAVE_MODULOS_TRILHO).and_then(|v| v.trim().parse().ok()).filter(|n| MODULOS_POR_TRILHO.contains(n)),
+        barramento_fase: valor(CHAVE_BARRAMENTO_FASE).and_then(TipoBarramentoFase::de_codigo),
+        posicao_barramento_nt: valor(CHAVE_BARRAMENTO_NT).and_then(PosicaoBarramentoNt::de_codigo),
     }
 }
 
@@ -245,6 +402,8 @@ pub struct Propriedades {
     pub tensao: Option<f64>,
     /// Fases travadas à mão: índices em [`NOMES_FASES`].
     pub fases: Option<Vec<usize>>,
+    /// O método de instalação do circuito.
+    pub metodo: Option<nbr5410::MetodoInstalacao>,
 }
 
 /// O que o último "Processar cálculo" gravou para um circuito. O quadro de cargas mostra isto: o
@@ -301,7 +460,9 @@ pub fn propriedades(quadro: &PontoEletrico) -> HashMap<String, Propriedades> {
     let mut m: HashMap<String, Propriedades> = HashMap::new();
     for (k, v) in &quadro.extras {
         let k = k.to_uppercase();
-        if let Some(c) = k.strip_prefix(CHAVE_ISOLACAO_CIRCUITO) {
+        if let Some(c) = k.strip_prefix(CHAVE_METODO) {
+            m.entry(c.to_string()).or_default().metodo = nbr5410::MetodoInstalacao::de_codigo(v);
+        } else if let Some(c) = k.strip_prefix(CHAVE_ISOLACAO_CIRCUITO) {
             m.entry(c.to_string()).or_default().isolacao = nbr5410::Isolacao::de_codigo(v);
         } else if let Some(c) = k.strip_prefix(CHAVE_DR) {
             m.entry(c.to_string()).or_default().grupo_dr = Some(v.trim().to_string()).filter(|g| !g.is_empty());
@@ -509,6 +670,14 @@ pub struct Linha {
     pub esquema: nbr5410::Esquema,
     /// As fases foram travadas à mão.
     pub fases_travadas: bool,
+    /// O método de instalação do circuito, e se foi escolhido para ele.
+    pub metodo: nbr5410::MetodoInstalacao,
+    pub metodo_proprio: bool,
+    /// A seção do neutro (tabela 48) e a do condutor de proteção (tabela 58). `None`: o circuito não tem.
+    pub secao_neutro: Option<f64>,
+    pub secao_pe: Option<f64>,
+    /// Cabo do circuito por seção (mm², m): as fases, o neutro e o PE, cada um na seção dele.
+    pub cabo_por_secao: Vec<(f64, f64)>,
 }
 
 impl Linha {
@@ -671,22 +840,66 @@ pub struct Alimentador {
     pub dr: Option<f64>,
     /// DPS sugerido (NBR 5410, 6.3.5): classe II, In ≥ 5 kA, Uc ≥ 1,1 × Uo (V).
     pub dps_uc: f64,
+    /// O quadro tem DPS, a classe dele e o disjuntor exclusivo antes dele (A).
+    pub dps: bool,
+    pub classe_dps: ClasseDps,
+    pub disjuntor_dps: Option<f64>,
+    /// A seção e o disjuntor geral foram travados à mão.
+    pub secao_travada: bool,
+    pub disjuntor_travado: bool,
+    /// O que a norma não aceita na escolha travada: avisa sem impedir.
+    pub avisos: Vec<String>,
 }
 
 /// Correntes nominais de DR (A).
 const CORRENTES_DR: [f64; 6] = [25.0, 40.0, 63.0, 80.0, 100.0, 125.0];
 
-/// Dimensiona o alimentador do quadro pela corrente demandada.
-pub fn alimentador(ib: f64, fases: u8, tensao_fn: f64, cfg: &nbr5410::Config) -> Alimentador {
-    let escolha = nbr5410::secao_para_corrente(ib, nbr5410::condutores_carregados(fases), cfg);
-    let disjuntor = escolha.map(|e| e.2);
+/// Dimensiona o alimentador do quadro pela corrente demandada. A seção e o disjuntor geral travados no
+/// quadro valem sobre os calculados, conferidos contra Ib ≤ In ≤ Iz (5.3.4.1).
+pub fn alimentador(ib: f64, fases: u8, tensao_fn: f64, cfg: &nbr5410::Config, config: &ConfigQuadro) -> Alimentador {
+    let carregados = nbr5410::condutores_carregados(fases);
+    let escolha = nbr5410::secao_para_corrente(ib, carregados, cfg);
+    let mut avisos = Vec::new();
+    let secao = config.secao_geral.or(escolha.map(|e| e.0));
+    let iz = match config.secao_geral {
+        Some(s) => nbr5410::indice_secao(s)
+            .and_then(|i| nbr5410::capacidade_no_metodo(i, carregados, cfg.isolacao, cfg.metodo))
+            .map(|v| v * cfg.fct * cfg.fca),
+        None => escolha.map(|e| e.1),
+    };
+    let disjuntor = match config.disjuntor_geral {
+        Some(d) => Some(d),
+        None if config.secao_geral.is_some() => iz.and_then(|iz| cfg.criterio.escolher(ib, iz)),
+        None => escolha.map(|e| e.2),
+    };
+    if config.secao_geral.is_some() || config.disjuntor_geral.is_some() {
+        match (disjuntor, iz) {
+            (Some(d), _) if d < ib - 1e-9 => avisos.push(format!("disjuntor geral de {} A abaixo da corrente demandada ({:.1} A)", br(d), ib)),
+            (Some(d), Some(iz)) if d > iz + 1e-9 => {
+                avisos.push(format!("disjuntor geral de {} A acima da capacidade do alimentador ({:.1} A)", br(d), iz))
+            }
+            (None, _) => avisos.push("a seção travada do alimentador não tem disjuntor entre Ib e Iz".into()),
+            _ => {}
+        }
+    }
+    if let (Some(dd), Some(dg)) = (config.disjuntor_dps.filter(|_| config.tem_dps()), disjuntor)
+        && dd > dg + 1e-9
+    {
+        avisos.push(format!("disjuntor do DPS de {} A maior que o geral de {} A", br(dd), br(dg)));
+    }
     Alimentador {
         ib,
-        secao: escolha.map(|e| e.0),
-        iz: escolha.map(|e| e.1),
+        secao,
+        iz,
         disjuntor,
         dr: disjuntor.and_then(|d| CORRENTES_DR.iter().copied().find(|c| *c >= d)),
         dps_uc: 1.1 * tensao_fn,
+        dps: config.tem_dps(),
+        classe_dps: config.classe_do_dps(),
+        disjuntor_dps: config.disjuntor_dps.filter(|_| config.tem_dps()),
+        secao_travada: config.secao_geral.is_some(),
+        disjuntor_travado: config.disjuntor_geral.is_some(),
+        avisos,
     }
 }
 
@@ -720,6 +933,14 @@ pub fn quadros(analise: &Analise) -> Vec<&PontoEletrico> {
     analise.pontos.iter().filter(|p| p.tipo == TipoPonto::Quadro).collect()
 }
 
+/// As seções do neutro e do condutor de proteção de um circuito com fase `secao`: o neutro reduzido pela
+/// tabela 48 só no trifásico com neutro (3F+N+T); o PE pela tabela 58.
+pub fn secoes_de_neutro_e_pe(esquema: nbr5410::Esquema, secao: Option<f64>) -> (Option<f64>, Option<f64>) {
+    let neutro = secao.filter(|_| esquema.neutro()).map(|s| if esquema == nbr5410::Esquema::Fffnt { nbr5410::secao_neutro(s) } else { s });
+    let pe = secao.filter(|_| esquema.protecao()).map(nbr5410::secao_pe);
+    (neutro, pe)
+}
+
 /// Indicação de fiação: "F+N+T #2,5", "2F+T #4", "3F+N+T #6". A seção sai quando é omitida.
 fn indicacao(esquema: nbr5410::Esquema, secao: Option<f64>, setup: &Setup) -> String {
     let condutores = esquema.codigo();
@@ -739,6 +960,7 @@ pub fn rotear(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle) -
     let cabo_padrao = cabo_do_quadro(q, setup);
     let mut cfg_base = setup.config_com(isolacao);
     let config = config_do_quadro(q);
+    cfg_base.metodo = config.metodo.unwrap_or(setup.metodo_instalacao);
     (cfg_base.tensao_fn, cfg_base.tensao_ff) = match config.tensao {
         Some(n) => n.tensoes(),
         None => tensoes_do_quadro(q, (cfg_base.tensao_fn, cfg_base.tensao_ff)),
@@ -812,6 +1034,7 @@ pub fn rotear(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle) -
             let agrupados = r.arestas.iter().filter_map(|e| por_aresta.get(e).copied()).max().unwrap_or(1).max(1);
             let p = props.get(&c.id.to_uppercase()).cloned().unwrap_or_default();
             let isolacao_circuito = p.isolacao.unwrap_or(isolacao);
+            let metodo = p.metodo.unwrap_or(cfg_base.metodo);
             // Tipo de carga e FP vêm de cada ponto (atributos TIPO_CARGA e FP).
             let cargas: Vec<&PontoEletrico> = analise.pontos.iter().filter(|p| c.pontos.contains(&p.handle) && p.tipo.e_carga()).collect();
             let mut tipos_carga: Vec<TipoCarga> = Vec::new();
@@ -828,8 +1051,10 @@ pub fn rotear(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle) -
             };
             let cfg = nbr5410::Config {
                 fca: setup.fca_manual.unwrap_or_else(|| nbr5410::fca_agrupamento(agrupados)),
-                fct: isolacao_circuito.fct(setup.temperatura_ambiente),
+                // No método D a referência é o solo a 20 °C: o FCT do ar não vale (o do solo ainda não é aplicado).
+                fct: if metodo == nbr5410::MetodoInstalacao::D { 1.0 } else { isolacao_circuito.fct(setup.temperatura_ambiente) },
                 isolacao: isolacao_circuito,
+                metodo,
                 queda_admissivel: if c.natureza == crate::circuito::Natureza::Iluminacao { setup.queda_iluminacao } else { setup.queda_admissivel },
                 carregados: Some(esquema_de(c).carregados()),
                 ..cfg_base.clone()
@@ -842,6 +1067,20 @@ pub fn rotear(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle) -
             };
             let esquema = esquema_de(c);
             let condutores = esquema.condutores();
+            let (secao_neutro, secao_pe) = secoes_de_neutro_e_pe(esquema, escolha.secao);
+            let metros = r.percurso * setup.fator_materiais;
+            let mut cabo_por_secao: Vec<(f64, f64)> = Vec::new();
+            let mut somar = |s: Option<f64>, n: u8| {
+                if let Some(s) = s.filter(|_| n > 0) {
+                    match cabo_por_secao.iter_mut().find(|(x, _)| (x - s).abs() < 1e-6) {
+                        Some(m) => m.1 += metros * f64::from(n),
+                        None => cabo_por_secao.push((s, metros * f64::from(n))),
+                    }
+                }
+            };
+            somar(escolha.secao, esquema.fases());
+            somar(secao_neutro, 1);
+            somar(secao_pe, 1);
             Linha {
                 circuito: c.clone(),
                 descricao: descr.iter().find(|(id, _)| id.eq_ignore_ascii_case(&c.id)).map(|(_, d)| d.clone()).unwrap_or_default(),
@@ -873,6 +1112,11 @@ pub fn rotear(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle) -
                 carga_fase: [0.0; 3],
                 esquema,
                 fases_travadas: p.fases.is_some(),
+                metodo,
+                metodo_proprio: p.metodo.is_some(),
+                secao_neutro,
+                secao_pe,
+                cabo_por_secao,
             }
         })
         .collect();
@@ -929,12 +1173,10 @@ pub fn rotear(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle) -
     let desequilibrio = if maior > 0.0 && fases_quadro > 1 { (maior - menor) / maior * 100.0 } else { 0.0 };
 
     let mut materiais: Vec<(f64, f64)> = Vec::new();
-    for l in &linhas {
-        if let Some(s) = l.escolha.secao {
-            match materiais.iter_mut().find(|(x, _)| (*x - s).abs() < 1e-6) {
-                Some(m) => m.1 += l.cabo,
-                None => materiais.push((s, l.cabo)),
-            }
+    for (s, metros) in linhas.iter().flat_map(|l| l.cabo_por_secao.iter().copied()) {
+        match materiais.iter_mut().find(|(x, _)| (*x - s).abs() < 1e-6) {
+            Some(m) => m.1 += metros,
+            None => materiais.push((s, metros)),
         }
     }
     materiais.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -952,6 +1194,11 @@ pub fn rotear(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle) -
     let (tensao_fn, tensao_ff) = (cfg_base.tensao_fn, cfg_base.tensao_ff);
     let vazios = circuitos_do_quadro(analise, quadro).into_iter().filter(|c| c.circuito.is_none()).collect();
     let corrente_demandada = corrente_quadro(demanda.demandada, fases_quadro, tensao_fn, tensao_ff);
+    let alimentador = alimentador(corrente_demandada, fases_quadro, tensao_fn, &cfg_base, &config);
+    avisos.extend(alimentador.avisos.iter().cloned());
+    if linhas.iter().any(|l| l.metodo == nbr5410::MetodoInstalacao::D) {
+        avisos.push("método D (enterrado): o FCT do solo e o FCA da tabela 44 não são aplicados; confira".into());
+    }
 
     Ok(ResumoQuadro {
         quadro,
@@ -961,7 +1208,7 @@ pub fn rotear(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle) -
         vazios,
         corrente_instalada: corrente_quadro(demanda.instalada, fases_quadro, tensao_fn, tensao_ff),
         corrente_demandada,
-        alimentador: alimentador(corrente_demandada, fases_quadro, tensao_fn, &cfg_base),
+        alimentador,
         config,
         cabo_padrao,
         demanda,

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (C) 2026 Julio Ferreira. Free Elétrica: ver LICENSE e AVISO_LEGAL.md na raiz do repositorio.
-//! A Legenda de Símbolos da prancha: um bloco `LEGENDA_SIMBOLOS` com o símbolo e o nome de cada tipo de
-//! ponto usado no desenho. O nome vem do atributo `LEGENDA` do ponto ou da família. Regenerar troca o
-//! conteúdo do bloco e mantém a inserção.
+//! A Legenda de Símbolos da prancha: um bloco com o símbolo e o nome de cada tipo de ponto usado no desenho,
+//! uma por disciplina: `LEGENDA_SIMBOLOS_ELETRICA` (os pontos elétricos e as caixas) e
+//! `LEGENDA_SIMBOLOS_TELECOM`. `LEGENDA_SIMBOLOS`, das versões anteriores, tem todos. O nome vem do atributo
+//! `LEGENDA` do ponto ou da família. Regenerar troca o conteúdo dos blocos e mantém as inserções.
 
 use std::sync::Arc;
 
@@ -10,10 +11,45 @@ use cadcraft_doc::geom::Vec3;
 use cadcraft_doc::{Block, Common, Drawing, Entity, EntityKind, HAlign, Handle, Insert, Space};
 
 use crate::Analise;
+use crate::disciplina::Disciplina;
 use crate::tabela::{CAMADA, linha, texto};
 
-/// O bloco da legenda.
+/// O bloco da legenda com todos os pontos (das versões anteriores).
 pub const BLOCO: &str = "LEGENDA_SIMBOLOS";
+
+/// O bloco da legenda de uma disciplina; `None`: a de todas.
+pub fn bloco(disciplina: Option<Disciplina>) -> &'static str {
+    match disciplina {
+        None => BLOCO,
+        Some(Disciplina::Eletrica) => "LEGENDA_SIMBOLOS_ELETRICA",
+        Some(Disciplina::Telecom) => "LEGENDA_SIMBOLOS_TELECOM",
+        Some(Disciplina::AlarmeIncendio) => "LEGENDA_SIMBOLOS_INCENDIO",
+    }
+}
+
+/// O título da legenda de uma disciplina.
+pub fn titulo(disciplina: Option<Disciplina>) -> &'static str {
+    match disciplina {
+        None => "LEGENDA DE SÍMBOLOS",
+        Some(Disciplina::Eletrica) => "LEGENDA DE SÍMBOLOS ELÉTRICOS",
+        Some(Disciplina::Telecom) => "LEGENDA DE SÍMBOLOS TELECOM",
+        Some(Disciplina::AlarmeIncendio) => "LEGENDA DE SÍMBOLOS DE INCÊNDIO",
+    }
+}
+
+/// A disciplina do bloco de uma legenda. `None` por fora: não é legenda; `Some(None)`: a de todas.
+fn disciplina_do_bloco(nome: &str) -> Option<Option<Disciplina>> {
+    std::iter::once(None).chain(Disciplina::TODAS.into_iter().map(Some)).find(|d| bloco(*d) == nome)
+}
+
+/// O ponto entra na legenda da disciplina: as caixas de passagem, sem disciplina, entram na elétrica.
+fn da_disciplina(p: &crate::ponto::PontoEletrico, disciplina: Option<Disciplina>) -> bool {
+    match disciplina {
+        None => true,
+        Some(Disciplina::Eletrica) => matches!(Disciplina::do_ponto(p), None | Some(Disciplina::Eletrica)),
+        Some(d) => Disciplina::do_ponto(p) == Some(d),
+    }
+}
 const ALTURA: f64 = crate::tabela::ALTURA;
 /// A altura de cada linha, a largura da coluna do símbolo e a altura da faixa do título (m), para a planta
 /// em 1:50 com 1 unidade = 1 m.
@@ -23,16 +59,34 @@ const TITULO: f64 = 0.30;
 /// A fração da célula que o símbolo pode ocupar: um símbolo maior que isso é reduzido.
 const OCUPACAO: f64 = 0.85;
 
-/// A legenda do desenho: a inserção dela.
+/// Uma legenda do desenho, de qualquer disciplina: a inserção dela.
 pub fn inserida(doc: &Drawing) -> Option<Handle> {
-    doc.model.iter().find(|e| matches!(&e.kind, EntityKind::Insert(i) if i.block == BLOCO)).map(|e| e.handle)
+    legendas(doc).first().map(|(h, _)| *h)
 }
 
-/// As linhas da legenda: (bloco, nome), sem repetir, na ordem do tipo de ponto e do nome.
-pub fn linhas(analise: &Analise) -> Vec<(String, String)> {
+/// A legenda de uma disciplina no desenho.
+pub fn inserida_de(doc: &Drawing, disciplina: Option<Disciplina>) -> Option<Handle> {
+    legendas(doc).into_iter().find(|(_, d)| *d == disciplina).map(|(h, _)| h)
+}
+
+/// As legendas do desenho: (inserção, disciplina).
+pub fn legendas(doc: &Drawing) -> Vec<(Handle, Option<Disciplina>)> {
+    doc.model
+        .iter()
+        .filter_map(|e| match &e.kind {
+            EntityKind::Insert(i) => disciplina_do_bloco(&i.block).map(|d| (e.handle, d)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// As linhas da legenda de uma disciplina (`None`: todas): (bloco, nome), sem repetir, na ordem do tipo de
+/// ponto e do nome.
+pub fn linhas(analise: &Analise, disciplina: Option<Disciplina>) -> Vec<(String, String)> {
     let mut v: Vec<(crate::ponto::TipoPonto, String, String)> = analise
         .pontos
         .iter()
+        .filter(|p| da_disciplina(p, disciplina))
         .map(|p| {
             // Os módulos empilhados entram com o bloco de origem: o símbolo e o nome são os dele.
             let bloco = crate::biblioteca::bloco_de_origem(&p.bloco).to_string();
@@ -100,14 +154,15 @@ fn simbolo_na_celula(doc: &Drawing, bloco: &str, centro: [f64; 2], celula: [f64;
     })
 }
 
-fn pecas(doc: &Drawing, analise: &Analise, m: f64) -> Vec<EntityKind> {
+fn pecas(doc: &Drawing, analise: &Analise, m: f64, disciplina: Option<Disciplina>) -> Vec<EntityKind> {
     let u = |v: f64| v / m;
-    let lista = linhas(analise);
+    let lista = linhas(analise, disciplina);
+    let titulo = titulo(disciplina);
     let maior = lista.iter().map(|(_, n)| n.chars().count()).max().unwrap_or(0).max(20);
     let largura = (COLUNA_SIMBOLO + maior as f64 * ALTURA * crate::tabela::LARGURA_CARACTERE + 2.0 * ALTURA)
-        .max("LEGENDA DE SÍMBOLOS".chars().count() as f64 * crate::tabela::ALTURA_TITULO * crate::tabela::LARGURA_CARACTERE + ALTURA);
+        .max(titulo.chars().count() as f64 * crate::tabela::ALTURA_TITULO * crate::tabela::LARGURA_CARACTERE + ALTURA);
     let fundo = -TITULO - LINHA * lista.len() as f64;
-    let mut p = vec![texto("LEGENDA DE SÍMBOLOS", [u(largura / 2.0), u(-TITULO / 2.0)], u(crate::tabela::ALTURA_TITULO), HAlign::Center)];
+    let mut p = vec![texto(titulo, [u(largura / 2.0), u(-TITULO / 2.0)], u(crate::tabela::ALTURA_TITULO), HAlign::Center)];
     for (a, b) in [([0.0, 0.0], [largura, 0.0]), ([largura, 0.0], [largura, fundo]), ([largura, fundo], [0.0, fundo]), ([0.0, fundo], [0.0, 0.0])] {
         p.push(linha([u(a[0]), u(a[1])], [u(b[0]), u(b[1])]));
     }
@@ -120,22 +175,24 @@ fn pecas(doc: &Drawing, analise: &Analise, m: f64) -> Vec<EntityKind> {
     }
     p
 }
-fn gravar_bloco(doc: &mut Drawing, analise: &Analise, m: f64) {
-    let mut b = Block::new(BLOCO);
-    for k in pecas(doc, analise, m) {
+fn gravar_bloco(doc: &mut Drawing, analise: &Analise, m: f64, disciplina: Option<Disciplina>) {
+    let nome = bloco(disciplina);
+    let mut b = Block::new(nome);
+    for k in pecas(doc, analise, m, disciplina) {
         b.entities.push(Entity::new(doc.new_handle(), k));
     }
-    doc.blocks.insert(BLOCO.to_string(), Arc::new(b));
+    doc.blocks.insert(nome.to_string(), Arc::new(b));
 }
 
-/// Gera a legenda em `pos`. Se o desenho já tem uma, ela é refeita e movida para lá.
-pub fn inserir(doc: &mut Drawing, analise: &Analise, pos: [f64; 2], metros: f64) -> Result<Handle, String> {
+/// Gera a legenda da disciplina (`None`: todas) em `pos`. Se o desenho já tem uma dessa disciplina, ela é
+/// refeita e movida para lá.
+pub fn inserir(doc: &mut Drawing, analise: &Analise, pos: [f64; 2], metros: f64, disciplina: Option<Disciplina>) -> Result<Handle, String> {
     if !pos.iter().all(|v| v.is_finite()) {
         return Err("posição inválida".into());
     }
     let m = if metros > 0.0 { metros } else { 1.0 };
-    gravar_bloco(doc, analise, m);
-    if let Some(h) = inserida(doc)
+    gravar_bloco(doc, analise, m, disciplina);
+    if let Some(h) = inserida_de(doc, disciplina)
         && let Some(mut e) = doc.model.get(h).map(|e| (**e).clone())
     {
         if let EntityKind::Insert(i) = &mut e.kind {
@@ -145,7 +202,7 @@ pub fn inserir(doc: &mut Drawing, analise: &Analise, pos: [f64; 2], metros: f64)
         return Ok(h);
     }
     let ins = Insert {
-        block: BLOCO.into(),
+        block: bloco(disciplina).into(),
         insert: Vec3::new(pos[0], pos[1], 0.0),
         scale: Vec3::new(1.0, 1.0, 1.0),
         rotation: 0.0,
@@ -159,11 +216,12 @@ pub fn inserir(doc: &mut Drawing, analise: &Analise, pos: [f64; 2], metros: f64)
     doc.add(&Space::Model, Common { layer: CAMADA.into(), ..Common::default() }, EntityKind::Insert(ins)).map_err(|e| e.to_string())
 }
 
-/// Refaz a legenda do desenho, sem mexer na inserção. Devolve quantas refez.
+/// Refaz as legendas do desenho, sem mexer nas inserções. Devolve quantas refez.
 pub fn regenerar(doc: &mut Drawing, analise: &Analise, metros: f64) -> usize {
-    if inserida(doc).is_none() {
-        return 0;
+    let mut disciplinas: Vec<Option<Disciplina>> = legendas(doc).into_iter().map(|(_, d)| d).collect();
+    disciplinas.dedup();
+    for d in &disciplinas {
+        gravar_bloco(doc, analise, if metros > 0.0 { metros } else { 1.0 }, *d);
     }
-    gravar_bloco(doc, analise, if metros > 0.0 { metros } else { 1.0 });
-    1
+    disciplinas.len()
 }

@@ -533,6 +533,10 @@ pub struct Setup {
     pub compartilhar_pe: bool,
     /// FCA fixo para todos os circuitos. `None`: o real de cada trecho (NBR 5410, tabela 42).
     pub fca_manual: Option<f64>,
+    /// Como escolher o disjuntor entre Ib e Iz.
+    pub criterio_disjuntor: crate::nbr5410::CriterioDisjuntor,
+    /// O método de instalação dos quadros que não escolheram o seu (NBR 5410, tabela 33).
+    pub metodo_instalacao: crate::nbr5410::MetodoInstalacao,
     /// Diâmetros externos dos condutores, por seção.
     pub diametros_condutor: Vec<DiametroCondutor>,
     /// Nome do tipo de eletroduto do projeto.
@@ -583,6 +587,8 @@ impl Setup {
             cabo_padrao: TipoCabo::default(),
             compartilhar_pe: false,
             fca_manual: None,
+            criterio_disjuntor: crate::nbr5410::CriterioDisjuntor::default(),
+            metodo_instalacao: crate::nbr5410::MetodoInstalacao::default(),
             diametros_condutor: diametros_padrao(),
             tipo_eletroduto: "PVC rígido roscável, linha média".into(),
             eletrodutos: eletrodutos_padrao(),
@@ -641,6 +647,8 @@ impl Setup {
             queda_admissivel: self.queda_admissivel,
             isolacao,
             carregados: None,
+            metodo: self.metodo_instalacao,
+            criterio: self.criterio_disjuntor,
         }
     }
 

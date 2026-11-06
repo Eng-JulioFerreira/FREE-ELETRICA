@@ -260,6 +260,9 @@ pub struct Condutores {
     pub isolacao: Isolacao,
     /// Tipo de cabo do circuito (entra no diâmetro externo).
     pub tipo_cabo: crate::nbr5410::TipoCabo,
+    /// A seção do neutro (tabela 48) e a do condutor de proteção (tabela 58), quando diferem da fase.
+    pub secao_neutro: Option<f64>,
+    pub secao_pe: Option<f64>,
 }
 
 impl Condutores {
@@ -274,6 +277,32 @@ impl Condutores {
             v.push((TipoCondutor::Protecao, None));
         }
         v
+    }
+
+    /// A seção de cada condutor: o neutro e o PE podem ser menores que a fase.
+    fn secao_de(&self, tipo: TipoCondutor) -> Option<f64> {
+        match tipo {
+            TipoCondutor::Neutro => self.secao_neutro.or(self.secao),
+            TipoCondutor::Protecao => self.secao_pe.or(self.secao),
+            _ => self.secao,
+        }
+    }
+
+    /// O texto da seção na tag: `#2,5`, ou com o neutro e o PE reduzidos, `#50 N25 T25`.
+    pub fn texto_secao(&self) -> Option<String> {
+        let s = self.secao?;
+        let mut t = format!("#{}", br(s));
+        if self.neutro
+            && let Some(n) = self.secao_neutro.filter(|n| (n - s).abs() > 1e-6)
+        {
+            t.push_str(&format!(" N{}", br(n)));
+        }
+        if self.protecao
+            && let Some(p) = self.secao_pe.filter(|p| (p - s).abs() > 1e-6)
+        {
+            t.push_str(&format!(" T{}", br(p)));
+        }
+        Some(t)
     }
 
     fn vazio(&self) -> bool {
@@ -353,7 +382,17 @@ fn diametros(t: &Trecho, setup: &Setup, avisos: &mut Vec<String>) -> Option<Vec<
             avisos.push(format!("sem diâmetro externo para {} mm² ({}) nas configurações", br(secao), k.tipo_cabo.abreviado()));
             return None;
         };
-        v.extend(std::iter::repeat_n(d, k.marcas().len()));
+        for (tipo, _) in k.marcas() {
+            let s = k.secao_de(tipo).unwrap_or(secao);
+            match setup.diametro_do_cabo(s, k.tipo_cabo) {
+                Some(x) => v.push(x),
+                None if (s - secao).abs() < 1e-6 => v.push(d),
+                None => {
+                    avisos.push(format!("sem diâmetro externo para {} mm² ({}) nas configurações", br(s), k.tipo_cabo.abreviado()));
+                    return None;
+                }
+            }
+        }
     }
     Some(v)
 }
@@ -366,12 +405,12 @@ fn compartilhar_protecao(t: &mut Trecho) {
         .iter()
         .enumerate()
         .filter(|(_, k)| k.protecao)
-        .max_by(|a, b| a.1.secao.unwrap_or(0.0).total_cmp(&b.1.secao.unwrap_or(0.0)))
+        .max_by(|a, b| a.1.secao_de(TipoCondutor::Protecao).unwrap_or(0.0).total_cmp(&b.1.secao_de(TipoCondutor::Protecao).unwrap_or(0.0)))
         .map(|(i, _)| i);
     for (i, k) in t.circuitos.iter_mut().enumerate() {
         if k.protecao && Some(i) != maior {
             k.protecao = false;
-            if let Some(s) = k.secao {
+            if let Some(s) = k.secao_de(TipoCondutor::Protecao) {
                 t.pe_removidos.push((s, k.tipo_cabo));
             }
         }
@@ -488,6 +527,8 @@ pub fn calcular(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle)
             secao: linha.escolha.secao,
             isolacao: linha.isolacao,
             tipo_cabo: linha.tipo_cabo,
+            secao_neutro: linha.secao_neutro,
+            secao_pe: linha.secao_pe,
             ..Condutores::default()
         };
         let mut marcar = |arestas: &[usize], f: &dyn Fn(&mut Condutores)| {
@@ -759,8 +800,8 @@ fn faixa_do_grupo(k: &Condutores, grupo: &[(TipoCondutor, Option<&str>)], setup:
             (_, None) => {}
         }
     }
-    if let Some(x) = k.secao.filter(|x| !setup.omitida(*x)) {
-        cobrir(vao / 2.0, &format!("#{}", br(x)));
+    if let Some(t) = k.secao.filter(|x| !setup.omitida(*x)).and_then(|_| k.texto_secao()) {
+        cobrir(vao / 2.0, &t);
     }
     (lo, hi)
 }
@@ -824,8 +865,8 @@ fn bloco_da_tag(
             s += passo;
         }
         // Embaixo do grupo: a seção, quando não omitida.
-        if let Some(x) = k.secao.filter(|x| !setup.omitida(*x)) {
-            pecas.push(texto(format!("#{}", br(x)), [(inicio + s - passo) / 2.0, -acima], ALTURA_TEXTO / m));
+        if let Some(t) = k.secao.filter(|x| !setup.omitida(*x)).and_then(|_| k.texto_secao()) {
+            pecas.push(texto(t, [(inicio + s - passo) / 2.0, -acima], ALTURA_TEXTO / m));
         }
     }
     if circuitos.is_empty() {

@@ -102,6 +102,26 @@ impl Pecas {
         }
     }
 
+    /// O disjuntor numa descida vertical: de (`x`, `y`) a (`x`, `y - comprimento`), o arco à direita e os riscos
+    /// dos polos na horizontal (a 90° da linha).
+    fn disjuntor_vertical(&mut self, x: f64, y: f64, comprimento: f64, polos: u8) {
+        let r = comprimento / 2.0;
+        let c = Vec3::new(self.u(x), self.u(y - r), 0.0);
+        let k = EntityKind::Arc(Arco { center: c, radius: self.u(r), start: -std::f64::consts::FRAC_PI_2, end: std::f64::consts::FRAC_PI_2 });
+        self.lista.push((k, None));
+        for t in [y, y - comprimento] {
+            let k = EntityKind::Circle(Circle { center: Vec3::new(self.u(x), self.u(t), 0.0), radius: self.u(0.018) });
+            self.lista.push((k, None));
+        }
+        let n = polos.clamp(1, 3);
+        let passo = 0.03;
+        let inicio = y - r + passo * f64::from(n - 1) / 2.0;
+        for i in 0..n {
+            let yi = inicio - passo * f64::from(i);
+            self.linha([x + r - 0.03, yi], [x + r + 0.03, yi]);
+        }
+    }
+
     /// A moldura tracejada do quadro e, da borda de baixo, a ligação ao símbolo de aterramento.
     fn moldura_aterrada(&mut self, x0: f64, y0: f64, x1: f64, y1: f64, terra_x: f64) {
         let v = |x: f64, y: f64| PolyVertex { p: Vec2::new(x, y), bulge: 0.0, start_width: 0.0, end_width: 0.0 };
@@ -346,14 +366,25 @@ fn pecas(r: &ResumoQuadro, alimentado_por: &str, m: f64) -> Vec<(EntityKind, Opt
     p.texto(&format!("In: {} A", a.disjuntor.map_or("-".to_string(), br)), [geral_x + 0.13, entrada + 0.24], MENOR, HAlign::Center);
     p.linha([geral_x + 0.26, entrada], [BARRA, entrada]);
     p.no(BARRA, entrada);
-    // O DPS (NBR 5410, 6.3.5): depois do geral, para o terra.
-    let dps_x = (geral_x + 0.26 + BARRA) / 2.0;
-    p.no(dps_x, entrada);
-    p.linha([dps_x, entrada], [dps_x, entrada - 0.12]);
-    p.dps(dps_x, entrada - 0.20);
-    p.linha([dps_x, entrada - 0.28], [dps_x, entrada - 0.33]);
-    p.terra(dps_x, entrada - 0.33);
-    p.texto("DPS", [dps_x - 0.09, entrada - 0.20], MENOR, HAlign::Right);
+    // O DPS (NBR 5410, 6.3.5), quando o quadro tem: depois do geral, para o terra; com o disjuntor exclusivo
+    // dele, em série antes.
+    if a.dps {
+        let dps_x = (geral_x + 0.26 + BARRA) / 2.0;
+        p.no(dps_x, entrada);
+        let mut y = entrada;
+        if let Some(dd) = a.disjuntor_dps {
+            // O disjuntor em pé, na descida: os dois terminais na vertical e o arco ao lado.
+            p.linha([dps_x, y], [dps_x, y - 0.06]);
+            p.disjuntor_vertical(dps_x, y - 0.06, 0.18, r.fases_quadro);
+            p.texto(&format!("{} A", br(dd)), [dps_x + 0.14, y - 0.15], MENOR, HAlign::Left);
+            y -= 0.24;
+        }
+        p.linha([dps_x, y], [dps_x, y - 0.12]);
+        p.dps(dps_x, y - 0.20);
+        p.linha([dps_x, y - 0.28], [dps_x, y - 0.33]);
+        p.terra(dps_x, y - 0.33);
+        p.texto(&format!("DPS {}", a.classe_dps.codigo()), [dps_x - 0.09, y - 0.20], MENOR, HAlign::Right);
+    }
 
     // Os grupos de DR: o módulo e a sub-barra de onde saem os circuitos dele.
     for (i, y0, y1) in &faixas {
