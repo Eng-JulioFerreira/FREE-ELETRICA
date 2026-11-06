@@ -19,8 +19,10 @@ use crate::tabela::{CAMADA, linha, texto};
 
 /// Prefixo do bloco do diagrama.
 pub const PREFIXO: &str = "UNIFILAR_";
-/// Altura do texto (m).
-const ALTURA: f64 = 0.10;
+/// Altura do texto, do texto menor e do título (m), para a planta em 1:50 com 1 unidade = 1 m.
+const ALTURA: f64 = crate::tabela::ALTURA;
+const MENOR: f64 = 0.08;
+const TITULO: f64 = crate::tabela::ALTURA_TITULO;
 /// Distância entre os ramais e a folga a mais depois de cada grupo de DR (m).
 const PASSO: f64 = 0.55;
 const FOLGA_GRUPO: f64 = 0.20;
@@ -81,7 +83,7 @@ impl Pecas {
     }
 
     /// O disjuntor termomagnético: os dois terminais na linha, o arco da abertura entre eles e, no topo do
-    /// arco, um risco por polo cortando-o. De `x` a `x + largura`.
+    /// arco, um risco vertical por polo cortando-o (a 90° da linha do circuito). De `x` a `x + largura`.
     fn disjuntor(&mut self, x: f64, y: f64, largura: f64, polos: u8) {
         let r = largura / 2.0;
         let c = Vec3::new(self.u(x + r), self.u(y), 0.0);
@@ -96,7 +98,7 @@ impl Pecas {
         let inicio = x + r - passo * f64::from(n - 1) / 2.0;
         for i in 0..n {
             let xi = inicio + passo * f64::from(i);
-            self.linha([xi - 0.015, y + r - 0.03], [xi + 0.015, y + r + 0.03]);
+            self.linha([xi, y + r - 0.03], [xi, y + r + 0.03]);
         }
     }
 
@@ -114,11 +116,77 @@ impl Pecas {
         self.lista.push((k, Some(TRACEJADA)));
         let pe = y0 - 0.25;
         self.linha([terra_x, y0], [terra_x, pe]);
+        self.terra(terra_x, pe);
+        self.texto("PE", [terra_x + 0.20, pe], MENOR, HAlign::Left);
+    }
+
+    /// O símbolo de aterramento: três traços que diminuem, a partir de `y` para baixo.
+    fn terra(&mut self, x: f64, y: f64) {
         for (i, meia) in [0.15, 0.10, 0.05].iter().enumerate() {
-            let yi = pe - 0.05 * i as f64;
-            self.linha([terra_x - meia, yi], [terra_x + meia, yi]);
+            let yi = y - 0.05 * i as f64;
+            self.linha([x - meia, yi], [x + meia, yi]);
         }
-        self.texto("PE", [terra_x + 0.20, pe], ALTURA * 0.8, HAlign::Left);
+    }
+
+    /// O DPS: o retângulo com a seta da descarga, ligado à linha em `x` e ao terra embaixo.
+    fn dps(&mut self, x: f64, y: f64) {
+        let (w, h) = (0.12, 0.16);
+        self.retangulo(x - w / 2.0, y - h / 2.0, x + w / 2.0, y + h / 2.0);
+        self.linha([x - w / 2.0 + 0.02, y - h / 2.0 + 0.02], [x + w / 2.0 - 0.02, y + h / 2.0 - 0.02]);
+        let ponta = [x + w / 2.0 - 0.02, y + h / 2.0 - 0.02];
+        self.linha(ponta, [ponta[0] - 0.035, ponta[1]]);
+        self.linha(ponta, [ponta[0], ponta[1] - 0.035]);
+    }
+
+    /// O quadro de simbologia do diagrama, com o canto superior esquerdo em (`x0`, `topo`).
+    fn simbologia(&mut self, x0: f64, topo: f64) {
+        const LINHA_S: f64 = 0.30;
+        const COLUNA: f64 = 0.80;
+        let maior = SIMBOLOGIA.iter().map(|t| t.chars().count()).max().unwrap_or(0) as f64;
+        let titulo = "SIMBOLOGIA DO DIAGRAMA UNIFILAR";
+        let largura = (COLUNA + maior * ALTURA * crate::tabela::LARGURA_CARACTERE + 2.0 * ALTURA)
+            .max(titulo.chars().count() as f64 * TITULO * crate::tabela::LARGURA_CARACTERE + ALTURA);
+        let alto_titulo = 0.30;
+        let fundo = topo - alto_titulo - LINHA_S * SIMBOLOGIA.len() as f64;
+        self.texto(titulo, [x0 + largura / 2.0, topo - alto_titulo / 2.0], TITULO, HAlign::Center);
+        self.retangulo(x0, fundo, x0 + largura, topo);
+        let cx = x0 + COLUNA / 2.0;
+        for (i, nome) in SIMBOLOGIA.iter().enumerate() {
+            let y = topo - alto_titulo - LINHA_S * i as f64;
+            self.linha([x0, y], [x0 + largura, y]);
+            self.linha([x0 + COLUNA, y], [x0 + COLUNA, y - LINHA_S]);
+            let yc = y - LINHA_S / 2.0;
+            // Os disjuntores e o DR ficam no meio de um pedaço de linha, como no diagrama.
+            let fio = |p: &mut Self| p.linha([x0 + 0.10, yc], [x0 + COLUNA - 0.10, yc]);
+            match i {
+                0..=2 => p_fio_e_disjuntor(self, x0, COLUNA, yc, (i + 1) as u8),
+                3 => {
+                    fio(self);
+                    self.retangulo(cx - 0.15, yc - 0.08, cx + 0.15, yc + 0.08);
+                    self.texto("DR", [cx, yc], MENOR, HAlign::Center);
+                }
+                4 => {
+                    self.linha([cx, yc + 0.12], [cx, yc + 0.08]);
+                    self.dps(cx, yc);
+                    self.linha([cx, yc - 0.08], [cx, yc - 0.10]);
+                    self.linha([cx - 0.06, yc - 0.10], [cx + 0.06, yc - 0.10]);
+                }
+                5..=7 => {
+                    fio(self);
+                    self.marcas(cx, yc, u8::from(i == 5), i == 6, i == 7);
+                }
+                8 => {
+                    self.linha([cx, yc - 0.11], [cx, yc + 0.11]);
+                    self.linha([x0 + 0.15, yc], [cx, yc]);
+                    self.no(cx, yc);
+                }
+                _ => {
+                    self.linha([cx, yc + 0.11], [cx, yc + 0.02]);
+                    self.terra(cx, yc + 0.02);
+                }
+            }
+            self.texto(nome, [x0 + COLUNA + ALTURA, yc], ALTURA, HAlign::Left);
+        }
     }
 
     /// Um nó circular na barra.
@@ -157,6 +225,30 @@ impl Pecas {
     }
 }
 
+/// O disjuntor de `polos` no meio de um pedaço de linha da coluna do símbolo.
+fn p_fio_e_disjuntor(p: &mut Pecas, x0: f64, coluna: f64, y: f64, polos: u8) {
+    let (largura, meio) = (0.20, x0 + coluna / 2.0);
+    // O arco sobe até 0,13 m da linha: ela desce um pouco para o símbolo caber na célula.
+    let y = y - 0.04;
+    p.linha([x0 + 0.10, y], [meio - largura / 2.0, y]);
+    p.disjuntor(meio - largura / 2.0, y, largura, polos);
+    p.linha([meio + largura / 2.0, y], [x0 + coluna - 0.10, y]);
+}
+
+/// O que o quadro de simbologia do unifilar explica, na ordem das linhas.
+pub const SIMBOLOGIA: [&str; 10] = [
+    "Disjuntor termomagnético monopolar (1P)",
+    "Disjuntor termomagnético bipolar (2P)",
+    "Disjuntor termomagnético tripolar (3P)",
+    "Interruptor diferencial residual (IDR / DR 30 mA)",
+    "Dispositivo de proteção contra surtos (DPS)",
+    "Condutor fase",
+    "Condutor neutro",
+    "Condutor de proteção (terra / PE)",
+    "Barramento do quadro",
+    "Aterramento (PE)",
+];
+
 /// O texto da caixa de um circuito.
 fn rotulo(l: &Linha) -> String {
     if l.descricao.is_empty() { l.circuito.id.clone() } else { format!("{} - {}", l.circuito.id, l.descricao) }
@@ -181,15 +273,15 @@ fn desenhar_ramal(p: &mut Pecas, ramal: &Ramal, inicio: f64, largura_caixa: f64)
         Some(l) => {
             let polos = l.esquema.fases();
             let corrente = l.escolha.disjuntor.map_or("-".to_string(), br);
-            p.texto(&format!("{polos}P/{corrente}A"), [meio_disjuntor, y + 0.20], ALTURA * 0.8, HAlign::Center);
-            p.texto(&format!("Curva {}", l.curva.codigo()), [meio_disjuntor, y - 0.14], ALTURA * 0.7, HAlign::Center);
+            p.texto(&format!("{polos}P/{corrente}A"), [meio_disjuntor, y + 0.20], MENOR, HAlign::Center);
+            p.texto(&format!("Curva {}", l.curva.codigo()), [meio_disjuntor, y - 0.14], MENOR, HAlign::Center);
             p.marcas(MARCAS_X, y, polos, l.esquema.neutro(), l.esquema.protecao());
-            p.texto(&l.circuito.id, [MARCAS_X, y + 0.16], ALTURA * 0.8, HAlign::Center);
-            p.texto(&l.escolha.secao.map_or("#-".to_string(), |s| format!("#{}", br(s))), [MARCAS_X, y - 0.16], ALTURA * 0.8, HAlign::Center);
-            p.texto(&format!("POT: {} VA", br(l.circuito.potencia.round())), [DADOS_X, y + 0.11], ALTURA * 0.8, HAlign::Left);
-            p.texto(&format!("FASE: {}", l.fases_texto()), [DADOS_X, y - 0.11], ALTURA * 0.8, HAlign::Left);
+            p.texto(&l.circuito.id, [MARCAS_X, y + 0.16], MENOR, HAlign::Center);
+            p.texto(&l.escolha.secao.map_or("#-".to_string(), |s| format!("#{}", br(s))), [MARCAS_X, y - 0.16], MENOR, HAlign::Center);
+            p.texto(&format!("POT: {} VA", br(l.circuito.potencia.round())), [DADOS_X, y + 0.11], MENOR, HAlign::Left);
+            p.texto(&format!("FASE: {}", l.fases_texto()), [DADOS_X, y - 0.11], MENOR, HAlign::Left);
         }
-        None => p.texto("1P", [meio_disjuntor, y + 0.20], ALTURA * 0.8, HAlign::Center),
+        None => p.texto("1P", [meio_disjuntor, y + 0.20], MENOR, HAlign::Center),
     }
     p.retangulo(CAIXA_X, y - 0.14, CAIXA_X + largura_caixa, y + 0.14);
     p.texto(&ramal.caixa, [CAIXA_X + ALTURA / 2.0, y], ALTURA, HAlign::Left);
@@ -201,10 +293,10 @@ const TRACEJADA: &str = "DASHED";
 
 fn pecas(r: &ResumoQuadro, alimentado_por: &str, m: f64) -> Vec<(EntityKind, Option<&'static str>)> {
     let mut p = Pecas { lista: Vec::new(), m };
-    p.texto(&format!("PAINEL: {}", r.tag), [0.0, -0.08], ALTURA * 1.5, HAlign::Left);
+    p.texto(&format!("PAINEL: {}", r.tag), [0.0, -0.08], TITULO, HAlign::Left);
     p.texto(&format!("POT. INSTALADA: {} VA", br(r.demanda.instalada.round())), [0.0, -0.30], ALTURA, HAlign::Left);
     p.texto(&format!("POT. DEMANDADA: {} VA", br(r.demanda.demandada.round())), [0.0, -0.46], ALTURA, HAlign::Left);
-    p.texto(&format!("{} | Alimentado por: {alimentado_por}", r.alimentacao()), [0.0, -0.62], ALTURA * 0.8, HAlign::Left);
+    p.texto(&format!("{} | Alimentado por: {alimentado_por}", r.alimentacao()), [0.0, -0.62], MENOR, HAlign::Left);
 
     // Onde cada ramal fica: os grupos de DR, os circuitos sem DR e as reservas.
     let grupos = r.grupos_dr();
@@ -249,9 +341,9 @@ fn pecas(r: &ResumoQuadro, alimentado_por: &str, m: f64) -> Vec<(EntityKind, Opt
     p.linha([0.0, entrada], [geral_x, entrada]);
     p.marcas(0.45, entrada, r.fases_quadro.clamp(1, 3), neutro, true);
     let a = &r.alimentador;
-    p.texto(&a.secao.map_or("#-".to_string(), |s| format!("#{}", br(s))), [0.45, entrada - 0.18], ALTURA * 0.8, HAlign::Center);
+    p.texto(&a.secao.map_or("#-".to_string(), |s| format!("#{}", br(s))), [0.45, entrada - 0.18], MENOR, HAlign::Center);
     p.disjuntor(geral_x, entrada, 0.26, r.fases_quadro);
-    p.texto(&format!("In: {} A", a.disjuntor.map_or("-".to_string(), br)), [geral_x + 0.13, entrada + 0.24], ALTURA * 0.8, HAlign::Center);
+    p.texto(&format!("In: {} A", a.disjuntor.map_or("-".to_string(), br)), [geral_x + 0.13, entrada + 0.24], MENOR, HAlign::Center);
     p.linha([geral_x + 0.26, entrada], [BARRA, entrada]);
     p.no(BARRA, entrada);
 
@@ -265,8 +357,8 @@ fn pecas(r: &ResumoQuadro, alimentado_por: &str, m: f64) -> Vec<(EntityKind, Opt
         p.texto("DR", [DR_X + DR_LARGURA / 2.0, meio], ALTURA, HAlign::Center);
         p.linha([DR_X + DR_LARGURA, meio], [SUB_BARRA, meio]);
         let corrente = g.dr.map_or("-".to_string(), br);
-        p.texto(&format!("IN: {corrente}A / 30mA"), [DR_X + DR_LARGURA / 2.0, meio + 0.20], ALTURA * 0.7, HAlign::Center);
-        p.texto(&g.nome, [DR_X + DR_LARGURA / 2.0, meio - 0.20], ALTURA * 0.7, HAlign::Center);
+        p.texto(&format!("IN: {corrente}A / 30mA"), [DR_X + DR_LARGURA / 2.0, meio + 0.20], MENOR, HAlign::Center);
+        p.texto(&g.nome, [DR_X + DR_LARGURA / 2.0, meio - 0.20], MENOR, HAlign::Center);
         p.linha([SUB_BARRA, *y0], [SUB_BARRA, *y1]);
         p.no(SUB_BARRA, meio);
     }
@@ -279,6 +371,8 @@ fn pecas(r: &ResumoQuadro, alimentado_por: &str, m: f64) -> Vec<(EntityKind, Opt
     // O invólucro do quadro, aterrado: o alimentador entra pela esquerda; o título fica fora.
     let baixo = ramais_grupo.iter().chain(&ramais_barra).map(|x| x.y).fold(fundo, f64::min) - 0.35;
     p.moldura_aterrada(0.25, baixo, CAIXA_X + largura_caixa + 0.15, -0.80, BARRA);
+    // O quadro de simbologia, embaixo do diagrama, alinhado à esquerda, na mesma camada e escala.
+    p.simbologia(0.25, baixo - 0.70);
     p.lista
 }
 

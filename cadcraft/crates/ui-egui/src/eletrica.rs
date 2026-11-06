@@ -3877,11 +3877,14 @@ fn aba_demanda(ui: &mut egui::Ui, t: &Tokens, r: &mut Rascunho) {
     let mut restaurar = false;
     ui.horizontal(|ui| {
         if ui
-            .button("+ Criar / Editar Tabela de Concessionária")
-            .on_hover_text("Uma tabela própria abre para edição; com uma de fábrica escolhida, começa uma nova")
+            .button("+ Cadastrar / Criar Nova Tabela de Demanda")
+            .on_hover_text("Começa uma tabela nova, para a norma da sua concessionária (dá para copiar as faixas de outra)")
             .clicked()
         {
-            abrir_editor = Some(if tabela.propria { tabela.clone() } else { ele::demanda::TabelaDemanda::em_branco("Nova concessionária") });
+            abrir_editor = Some(ele::demanda::TabelaDemanda::em_branco("Nova concessionária"));
+        }
+        if tabela.propria && ui.button("Editar tabela").on_hover_text("Abre a tabela cadastrada para edição").clicked() {
+            abrir_editor = Some(tabela.clone());
         }
         if ui.button("Excluir tabela").on_hover_text("Tira da lista esta tabela. O projeto passa para a primeira que sobrar").clicked() {
             excluir = true;
@@ -3956,7 +3959,7 @@ fn aba_demanda(ui: &mut egui::Ui, t: &Tokens, r: &mut Rascunho) {
     ui.add(egui::Label::new(pequeno(format!("Fonte: {}", tabela.fonte), t.text_dim)).wrap());
     ui.add(
         egui::Label::new(pequeno(
-            "A classe de demanda vem da família do bloco ou do Inspetor de atributos. Um ponto com fator próprio sai da contagem da tabela. Confira a revisão da norma em vigor na sua área de concessão. CPFL, Neoenergia, Copel, Celesc e Enel SP/RJ/CE não têm preset porque as tabelas não puderam ser conferidas nas normas públicas: cadastre a sua em + Criar / Editar.",
+            "A classe de demanda vem da família do bloco ou do Inspetor de atributos. Um ponto com fator próprio sai da contagem da tabela. Confira a revisão da norma em vigor na sua área de concessão. De fábrica vem só a tabela oficial da Equatorial (NT.00001.EQTL): a da sua concessionária você cadastra em + Cadastrar / Criar Nova Tabela de Demanda, com a norma e a revisão.",
             t.text_dim,
         ))
         .wrap(),

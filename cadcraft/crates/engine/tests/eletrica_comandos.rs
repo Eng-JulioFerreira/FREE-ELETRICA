@@ -1086,7 +1086,9 @@ fn tabelas_de_demanda_por_comando() {
         s.execute("eletrica.demanda.tabelas", &json!({})).unwrap().as_array().unwrap().iter().map(|t| t["id"].as_str().unwrap().to_string()).collect()
     };
     let de_fabrica = ids(&mut s);
-    assert!(["equatorial-nt001-r07", "cemig-nd51", "enel-go-ntc04-r4"].iter().all(|i| de_fabrica.iter().any(|d| d == i)), "{de_fabrica:?}");
+    // De fábrica, só a Equatorial; as outras concessionárias o projetista cadastra.
+    assert!(de_fabrica.iter().any(|d| d == "equatorial-nt001-r07"), "{de_fabrica:?}");
+    assert!(!de_fabrica.iter().any(|d| d == "cemig-nd51" || d == "enel-go-ntc04-r4"), "{de_fabrica:?}");
     assert!(s.execute("eletrica.demanda.salvar", &json!({})).is_err());
     assert!(s.execute("eletrica.demanda.salvar", &json!({ "tabela": { "nome": "Sem edificação" } })).is_err());
     let t = json!({
@@ -1100,7 +1102,7 @@ fn tabelas_de_demanda_por_comando() {
     assert!(
         s.execute(
             "eletrica.demanda.salvar",
-            &json!({ "tabela": { "id": "cemig-nd51", "nome": "Outra", "edificacoes": [{ "nome": "Casa", "faixas": [{ "fator": 1 }] }] } })
+            &json!({ "tabela": { "id": "equatorial-nt001-r07", "nome": "Outra", "edificacoes": [{ "nome": "Casa", "faixas": [{ "fator": 1 }] }] } })
         )
         .is_err(),
         "as de fábrica não mudam"
@@ -1159,7 +1161,7 @@ fn perfil_de_eletroduto_por_comando() {
         .unwrap()
         .to_string();
     let e = s.doc().unwrap().model.get(Handle::parse_hex(&h).unwrap()).unwrap().clone();
-    assert_eq!((e.common.linetype.as_str(), e.common.layer.as_str()), ("DASHDOT", free_eletrica::eletroduto::CAMADA_PISO));
+    assert_eq!((e.common.linetype.as_str(), e.common.layer.as_str()), ("ELE-TRACO-PONTO", free_eletrica::eletroduto::CAMADA_PISO));
     // A mini-barra: o perfil traz o tipo e o caminhamento; escolher um tipo à mão sai do perfil.
     let m = s.execute("eletrica.eletroduto.modelo", &json!({ "perfil": nome })).unwrap();
     assert_eq!((m["perfil"].as_str(), m["instalacao"].as_str(), m["tipo"].as_str()), (Some(nome), Some("piso"), Some("peadCorrugado")));
@@ -1364,12 +1366,15 @@ fn excluir_por_comandos() {
     assert!(!s.execute("eletrica.blocos", &json!({})).unwrap().as_array().unwrap().iter().any(|b| b["nome"] == "TOM-SIM-ALTA"));
     s.execute("eletrica.bootstrap", &json!({ "restaurar": true })).unwrap();
     assert!(s.execute("eletrica.blocos", &json!({})).unwrap().as_array().unwrap().iter().any(|b| b["nome"] == "TOM-SIM-ALTA"));
-    // Tabela de fábrica.
+    // Tabela de fábrica. Com uma só de fábrica, uma do projetista fica na lista (sem nenhuma, as de fábrica voltam).
+    let t = json!({ "nome": "Minha concessionária", "edificacoes": [{ "nome": "Casa", "faixas": [{ "fator": 1 }] }] });
+    let propria = s.execute("eletrica.demanda.salvar", &json!({ "tabela": t })).unwrap()["id"].as_str().unwrap().to_string();
     let antes = s.execute("eletrica.demanda.tabelas", &json!({})).unwrap().as_array().unwrap().len();
-    assert_eq!(s.execute("eletrica.demanda.excluir", &json!({ "id": "cemig-nd51" })).unwrap()["excluida"], true);
+    assert_eq!(s.execute("eletrica.demanda.excluir", &json!({ "id": "equatorial-nt001-r07" })).unwrap()["excluida"], true);
     assert_eq!(s.execute("eletrica.demanda.tabelas", &json!({})).unwrap().as_array().unwrap().len(), antes - 1);
     s.execute("eletrica.setup", &json!({ "tabelasExcluidas": [] })).unwrap();
     assert_eq!(s.execute("eletrica.demanda.tabelas", &json!({})).unwrap().as_array().unwrap().len(), antes);
+    s.execute("eletrica.demanda.excluir", &json!({ "id": propria })).unwrap();
 }
 
 #[test]

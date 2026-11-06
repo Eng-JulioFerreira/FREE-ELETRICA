@@ -66,12 +66,31 @@ pub fn garantir_camada(doc: &mut Drawing, i: Instalacao) {
         l.lineweight = Lineweight::Mm100(30);
         l.description = descricao.into();
     }
+    // Os tipos de linha das versões anteriores (os padrões do CAD, com traço longo) viram os nossos.
+    if let Some(l) = doc.layer_mut(nome)
+        && ["DASHED", "DASHDOT", "DOT"].iter().any(|v| l.linetype.eq_ignore_ascii_case(v))
+    {
+        l.linetype = linha.into();
+    }
 }
 
-/// A escala que dá ao tipo de linha um traço de [`TRACO`] no desenho.
+/// Os tipos de linha dos eletrodutos, em metros: (nome, descrição, traços; negativo é espaço, zero é ponto).
+/// Curtos e densos para a planta em 1:50: traço de 8 cm e espaço de 4 cm; no traço e ponto, traço de 8 cm,
+/// espaços de 3 cm e um traço curto de 1,5 cm.
+pub const TIPOS_DE_LINHA: [(&str, &str, &[f64]); 3] = [
+    ("ELE-TRACEJADA", "Eletroduto na parede __ __ __", &[0.08, -0.04]),
+    ("ELE-TRACO-PONTO", "Eletroduto no piso __ - __ -", &[0.08, -0.03, 0.015, -0.03]),
+    ("ELE-PONTILHADA", "Eletroduto na parede . . . .", &[0.0, -0.04]),
+];
+
+/// A escala do tipo de linha no desenho: nos tipos dos eletrodutos, que já estão em metros, a da unidade;
+/// nos outros, a que dá um traço de [`TRACO`].
 pub(crate) fn escala_de_linha(doc: &Drawing, nome: &str) -> f64 {
     let (metros, _) = crate::setup::atual().unidade.metros(doc.header.i64("INSUNITS", 0));
     let metros = if metros > 0.0 { metros } else { 1.0 };
+    if TIPOS_DE_LINHA.iter().any(|(n, _, _)| n.eq_ignore_ascii_case(nome)) {
+        return 1.0 / metros;
+    }
     let traco = doc.linetype(nome).and_then(|l| l.pattern.iter().map(|p| p.length.abs()).find(|c| *c > 0.0));
     traco.map_or(1.0, |c| TRACO / metros / c)
 }
@@ -163,9 +182,10 @@ pub fn inserir_percurso(
     xdata::gravar(&mut xdata_novo, rota::CHAVE_TIPO, Some(tipo.codigo()));
     let mut common = Common { layer: camada(instalacao).into(), xdata: xdata_novo, ..Common::default() };
     pintar(doc, &mut common, tipo.cor_padrao(), TipoLinha::do_caminhamento(instalacao));
-    // O traçado vai de centro a centro e para na borda de cada bloco.
+    // O traçado vai de centro a centro e para na borda dos pontos de luz.
     let mut kind = percurso.entidade(a, b);
-    if let Some(k) = crate::borda::aparado(&kind, crate::borda::contorno(doc, de).as_ref(), crate::borda::contorno(doc, para).as_ref()) {
+    let corte = |h| crate::borda::contorno_de_corte(doc, h);
+    if let Some(k) = crate::borda::aparado(&kind, corte(de).as_ref(), corte(para).as_ref()) {
         kind = k;
     }
     doc.add(&Space::Model, common, kind).map_err(|e| e.to_string())
@@ -208,10 +228,24 @@ pub fn aparar(doc: &mut Drawing, setup: &Setup, metros: f64, alvos: Option<&[Han
         }
         let (Some(de), Some(para)) = (rede.nos.get(aresta.de), rede.nos.get(aresta.para)) else { continue };
         let Some(mut e) = doc.model.get(aresta.eletroduto).map(|e| (**e).clone()) else { continue };
-        let (cd, cp) = (crate::borda::contorno(doc, de.handle), crate::borda::contorno(doc, para.handle));
+        let (cd, cp) = (crate::borda::contorno_de_corte(doc, de.handle), crate::borda::contorno_de_corte(doc, para.handle));
+        // Nos outros blocos, a ponta que uma versão anterior cortou na borda volta ao ponto de inserção.
+        let voltar: Vec<_> = [(de, &cd), (para, &cp)]
+            .into_iter()
+            .filter(|(_, c)| c.is_none())
+            .filter_map(|(no, _)| crate::borda::contorno(doc, no.handle).map(|c| (no.pos, c)))
+            .collect();
+        let mut mudou = false;
+        if let Some(k) = crate::borda::estendido(&e.kind, &voltar) {
+            e.kind = k;
+            mudou = true;
+        }
         // A ponta do começo do traçado é a de `de` (o grafo lê as pontas nessa ordem).
         if let Some(k) = crate::borda::aparado(&e.kind, cd.as_ref(), cp.as_ref()) {
             e.kind = k;
+            mudou = true;
+        }
+        if mudou {
             doc.model.replace(e);
             n += 1;
         }
@@ -221,6 +255,15 @@ pub fn aparar(doc: &mut Drawing, setup: &Setup, metros: f64, alvos: Option<&[Han
 
 /// Garante o tipo de linha no desenho, com a definição da biblioteca padrão.
 pub(crate) fn garantir_tipo_de_linha(doc: &mut Drawing, nome: &str) {
+    // Os dos eletrodutos são nossos: a definição vale sobre a que estiver no desenho.
+    if let Some((n, descricao, tracos)) = TIPOS_DE_LINHA.iter().find(|(n, _, _)| n.eq_ignore_ascii_case(nome)) {
+        let novo = cadcraft_doc::Linetype::simple(n, descricao, tracos);
+        match doc.linetypes.iter_mut().find(|l| l.name.eq_ignore_ascii_case(n)) {
+            Some(l) => *l = novo,
+            None => doc.linetypes.push(novo),
+        }
+        return;
+    }
     if doc.linetype(nome).is_some() {
         return;
     }
@@ -726,6 +769,11 @@ pub fn definir_instalacao(doc: &mut Drawing, h: Handle, instalacao: Instalacao) 
 /// Aplica o padrão aos eletrodutos que já estão no desenho: a cor do material (a do perfil, se houver) e
 /// o tipo de linha do caminhamento. Devolve quantos mudaram.
 pub fn padronizar(doc: &mut Drawing, setup: &Setup) -> usize {
+    for i in [Instalacao::Teto, Instalacao::Parede, Instalacao::Piso] {
+        if doc.layer(camada(i)).is_some() {
+            garantir_camada(doc, i);
+        }
+    }
     let hs: Vec<Handle> = doc.model.iter().filter(|e| setup.e_camada_eletroduto(&e.common.layer)).map(|e| e.handle).collect();
     let mut n = 0;
     for h in hs {

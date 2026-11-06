@@ -419,9 +419,9 @@ impl TipoLinha {
     pub fn no_desenho(self) -> &'static str {
         match self {
             Self::Continua => "Continuous",
-            Self::Tracejada => "DASHED",
-            Self::TracoPonto => "DASHDOT",
-            Self::Pontilhada => "DOT",
+            Self::Tracejada => "ELE-TRACEJADA",
+            Self::TracoPonto => "ELE-TRACO-PONTO",
+            Self::Pontilhada => "ELE-PONTILHADA",
         }
     }
 }

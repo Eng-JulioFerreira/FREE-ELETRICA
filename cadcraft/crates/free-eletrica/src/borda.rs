@@ -111,6 +111,44 @@ pub fn contorno(doc: &Drawing, h: Handle) -> Option<Contorno> {
     })
 }
 
+/// O bloco `h` é um ponto de luz (luminária de teto ou arandela): só nele o eletroduto para na borda. Nos
+/// outros (tomadas, interruptores, caixas, quadros) ele vai até o ponto de inserção, encostado na caixa.
+pub fn corta_na_borda(doc: &Drawing, h: Handle) -> bool {
+    crate::ponto::ler_ponto(doc, h)
+        .is_some_and(|p| p.tipo == crate::ponto::TipoPonto::Iluminacao || p.categoria == Some(crate::familia::FamilyCategory::Luminaria))
+}
+
+/// O contorno em que o eletroduto para: o do bloco, se ele for um ponto de luz.
+pub fn contorno_de_corte(doc: &Drawing, h: Handle) -> Option<Contorno> {
+    if corta_na_borda(doc, h) { contorno(doc, h) } else { None }
+}
+
+/// Leva de volta ao ponto de inserção a ponta que um corte antigo deixou na borda de um bloco que não é
+/// ponto de luz. `alvos`: (ponto de inserção, contorno) dos blocos assim. `None`: nada a mudar. No arco a
+/// ponta não sai do círculo dele: fica como está.
+pub fn estendido(k: &EntityKind, alvos: &[(P, Contorno)]) -> Option<EntityKind> {
+    let original = segmentos(k)?;
+    let mut segs = original.clone();
+    let perto = |q: P| alvos.iter().find(|(o, c)| (q[0] - o[0]).hypot(q[1] - o[1]) > 1e-9 && c.dentro(q, 1e-6)).map(|(o, _)| *o);
+    let reto = |s: &Seg| s.2.abs() < 1e-12;
+    if let Some(s) = segs.first_mut()
+        && reto(s)
+        && let Some(o) = perto(s.0)
+    {
+        s.0 = o;
+    }
+    if let Some(s) = segs.last_mut()
+        && reto(s)
+        && let Some(o) = perto(s.1)
+    {
+        s.1 = o;
+    }
+    if segs == original || matches!(k, EntityKind::Arc(_)) {
+        return None;
+    }
+    com_segmentos(k, &segs)
+}
+
 /// O ponto do pedaço `s` no parâmetro `t` (0 a 1). No arco, anda o ângulo.
 fn ponto(s: &Seg, t: f64) -> P {
     let (a, b, bulge) = *s;

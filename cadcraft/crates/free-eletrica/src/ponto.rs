@@ -329,7 +329,10 @@ impl PontoEletrico {
                 }
             }
         }
-        let familia = familia::ler(doc, &ins.block);
+        // Um módulo empilhado (`<bloco>$EMP`) é o mesmo ponto do bloco de origem: vale a família de lá, que pode
+        // ter mudado depois que a cópia foi feita.
+        let origem = crate::biblioteca::bloco_de_origem(&ins.block);
+        let familia = familia::ler(doc, origem).or_else(|| familia::ler(doc, &ins.block));
         // Bloco classificado como comum nunca é ponto.
         if familia.as_ref().is_some_and(|f| f.categoria == FamilyCategory::Nenhum) {
             return None;

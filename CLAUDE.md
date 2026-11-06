@@ -46,7 +46,7 @@ divulgado para engenheiros e usuários finais: código em teste ou incompleto n�
   resultado do último cálculo nos quadros. As configurações do Setup ficam nas preferências do programa.
 - **Grafo 3D estrito de eletrodutos:** nós são só blocos elétricos, e cada eletroduto liga exatamente dois deles.
   Cruzamento sem bloco não conecta. Cada trecho é uma entidade só (`LINE`, `ARC` ou `LWPOLYLINE`, nunca `SPLINE`), e inserir
-  um trecho não mexe em nenhum outro. O traçado para na borda dos blocos (`borda.rs`). Um bloco a até 5 cm do traçado já é uma caixa: `eletroduto::encaixar` corta o trecho
+  um trecho não mexe em nenhum outro. O traçado para na borda só dos pontos de luz (`borda.rs`); nos outros blocos vai até o ponto de inserção. Um bloco a até 5 cm do traçado já é uma caixa: `eletroduto::encaixar` corta o trecho
   nele, sem deformar. Um módulo empilhado (`host_point_handle`) não é nó: o caminho até ele é o da caixa base. Comprimento =
   traçado + desníveis até os blocos.
 - **Etapas separadas:** lançar não dimensiona. O cálculo, as tags e as tabelas só mudam com `ELEDIMENSIONAR` e `ELEREGEN`.

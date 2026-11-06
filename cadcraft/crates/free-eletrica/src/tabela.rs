@@ -20,9 +20,10 @@ use crate::setup::Setup;
 pub const PREFIXO: &str = "QUADRO_TABELA_";
 /// Camada da tabela.
 pub const CAMADA: &str = "ELE-QUADROS";
-/// Altura do texto e da linha (m).
-const ALTURA: f64 = 0.10;
-const LINHA: f64 = 0.20;
+/// Altura do texto, do título e da linha (m), para a planta em 1:50 com 1 unidade = 1 m.
+pub(crate) const ALTURA: f64 = 0.09;
+pub(crate) const ALTURA_TITULO: f64 = 0.15;
+const LINHA: f64 = 0.26;
 /// Largura estimada de cada caractere, em alturas de texto: a fonte Stroke do CADCraft avança
 /// (4 + 1,6) / 6 da altura por letra, com folga.
 pub(crate) const LARGURA_CARACTERE: f64 = 0.95;
@@ -213,7 +214,7 @@ fn pecas_da_tabela(r: &ResumoQuadro, m: f64) -> Vec<EntityKind> {
         .iter()
         .sum::<f64>()
         .max(2.0 * min_demanda.max(min_totais))
-        .max(largura(&titulo, ALTURA * 1.5) + ALTURA)
+        .max(largura(&titulo, ALTURA_TITULO) + ALTURA)
         .max(3.0 * maior_texto)
         .max(larguras.iter().take(primeira_fase).sum::<f64>().max(largura(rotulo_total, ALTURA) + ALTURA));
     let sobra = total - larguras.iter().sum::<f64>();
@@ -231,7 +232,7 @@ fn pecas_da_tabela(r: &ResumoQuadro, m: f64) -> Vec<EntityKind> {
     // Cabeçalho.
     let mut y = 0.0;
     let alto_titulo = LINHA * 1.5;
-    p.push(texto(&titulo, [u(total / 2.0), u(y - alto_titulo / 2.0)], u(ALTURA * 1.5), HAlign::Center));
+    p.push(texto(&titulo, [u(total / 2.0), u(y - alto_titulo / 2.0)], u(ALTURA_TITULO), HAlign::Center));
     y -= alto_titulo;
     hor(&mut p, 0.0, total, y);
     // Uma caixa só, sem linhas por dentro: três colunas de dois textos.

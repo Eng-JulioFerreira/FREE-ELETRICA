@@ -156,7 +156,7 @@ pub enum ModoFaixas {
     /// Cada faixa aplica o seu fator só à parte da potência dentro dela (Equatorial).
     #[default]
     Acumulada,
-    /// O fator da faixa em que o total cai vale para toda a potência (residências na CEMIG e na Enel Goiás).
+    /// O fator da faixa em que o total cai vale para toda a potência (como nas tabelas de residências de algumas concessionárias).
     TotalNaFaixa,
 }
 
@@ -238,10 +238,6 @@ fn edificacao(nome: &str, faixas: &[Faixa]) -> Edificacao {
     Edificacao { nome: nome.into(), modo: ModoFaixas::Acumulada, faixas: faixas.to_vec() }
 }
 
-fn edificacao_total(nome: &str, faixas: &[Faixa]) -> Edificacao {
-    Edificacao { nome: nome.into(), modo: ModoFaixas::TotalNaFaixa, faixas: faixas.to_vec() }
-}
-
 fn quantidades(linhas: &[(u32, f64)]) -> Vec<PorQuantidade> {
     linhas.iter().map(|(ate, fator)| PorQuantidade { ate: *ate, fator: *fator }).collect()
 }
@@ -316,151 +312,8 @@ fn equatorial_nt001_r07() -> TabelaDemanda {
     }
 }
 
-/// CEMIG, ND-5.1: tabelas 10 (residências, fator sobre toda a carga), 11 (outras edificações) e 13
-/// (aparelhos, por grupo).
-fn cemig_nd51() -> TabelaDemanda {
-    // Tabela 13, em %: uma coluna só para eletrodomésticos, aquecimento, refrigeração e ar condicionado.
-    let tabela13 = [
-        (1, 1.00),
-        (2, 0.92),
-        (3, 0.84),
-        (4, 0.76),
-        (5, 0.70),
-        (6, 0.65),
-        (7, 0.60),
-        (8, 0.57),
-        (9, 0.54),
-        (10, 0.52),
-        (11, 0.49),
-        (12, 0.48),
-        (13, 0.46),
-        (14, 0.45),
-        (15, 0.44),
-        (16, 0.43),
-        (17, 0.42),
-        (18, 0.41),
-        (20, 0.40),
-        (23, 0.39),
-        (25, 0.38),
-        (30, 0.37),
-        (40, 0.36),
-        (50, 0.35),
-        (60, 0.34),
-        (u32::MAX, 0.33),
-    ];
-    TabelaDemanda {
-        id: "cemig-nd51".into(),
-        nome: "CEMIG (ND-5.1)".into(),
-        fonte: "CEMIG, ND-5.1 (PDF publicado em 10/2025 em cemig.com.br): tabelas 10 (residências), 11 (outras edificações) e 13 (aparelhos, por grupo). Fornos e fogões têm a tabela 12 na norma, ainda não separada aqui: o aquecimento usa a tabela 13. Sem tabela para motores e bombas: 100 %.".into(),
-        edificacoes: vec![
-            edificacao_total(
-                "Residências",
-                &[
-                    faixa(1.0, 0.86),
-                    faixa(2.0, 0.81),
-                    faixa(3.0, 0.76),
-                    faixa(4.0, 0.72),
-                    faixa(5.0, 0.68),
-                    faixa(6.0, 0.64),
-                    faixa(7.0, 0.60),
-                    faixa(8.0, 0.57),
-                    faixa(9.0, 0.54),
-                    faixa(10.0, 0.52),
-                    resto(0.45),
-                ],
-            ),
-            edificacao("Oficinas e indústrias", &[faixa(20.0, 1.00), resto(0.80)]),
-            edificacao("Hotéis", &[faixa(20.0, 0.50), resto(0.40)]),
-            edificacao("Auditórios e cinemas", &[resto(1.00)]),
-            edificacao("Bancos", &[resto(1.00)]),
-            edificacao("Barbearias e salões", &[resto(1.00)]),
-            edificacao("Clubes", &[resto(1.00)]),
-            edificacao("Escolas", &[faixa(12.0, 1.00), resto(0.50)]),
-            edificacao("Escritórios, lojas e salas comerciais", &[faixa(20.0, 1.00), resto(0.70)]),
-            edificacao("Garagens comerciais", &[resto(1.00)]),
-            edificacao("Clínicas e hospitais", &[faixa(50.0, 0.40), resto(0.20)]),
-            edificacao("Igrejas e templos", &[resto(1.00)]),
-            edificacao("Restaurantes e bares", &[resto(1.00)]),
-            edificacao("Áreas comuns e condomínios", &[faixa(10.0, 1.00), resto(0.25)]),
-            edificacao("Salão de festas", &[resto(1.00)]),
-        ],
-        aparelhos: tabela13.iter().map(|(ate, f)| PorQuantidadeDupla { ate: *ate, ate_limite: *f, acima_limite: *f }).collect(),
-        limite_aparelho_kw: 3.5,
-        aquecimento: quantidades(&tabela13),
-        ar_condicionado: quantidades(&tabela13),
-        bombas: Vec::new(),
-        motores: Vec::new(),
-        propria: false,
-    }
-}
-
-/// Enel Goiás, NTC-04 revisão 4 (norma da antiga CELG D): tabelas 2, 3 e 4.
-fn enel_go_ntc04() -> TabelaDemanda {
-    TabelaDemanda {
-        id: "enel-go-ntc04-r4".into(),
-        nome: "Enel Goiás (NTC-04 rev. 4, antiga CELG D)".into(),
-        fonte: "Enel Goiás, NTC-04 revisão 4: tabelas 2 (edificações), 3 (aquecimento: coluna de torneira, lava-louça e aquecedor de passagem, mais conservadora que a de chuveiro) e 4 (ar condicionado: coluna comercial, mais conservadora que a residencial). Só vale para Goiás: Enel SP, RJ e CE têm normas próprias, não incluídas. TUE geral, motores e bombas: 100 %.".into(),
-        edificacoes: vec![
-            edificacao_total(
-                "Residências",
-                &[
-                    faixa(1.0, 0.86),
-                    faixa(2.0, 0.75),
-                    faixa(3.0, 0.66),
-                    faixa(4.0, 0.59),
-                    faixa(5.0, 0.52),
-                    faixa(6.0, 0.45),
-                    faixa(7.0, 0.40),
-                    faixa(8.0, 0.35),
-                    faixa(9.0, 0.31),
-                    faixa(10.0, 0.27),
-                    resto(0.24),
-                ],
-            ),
-            edificacao("Auditórios e salões", &[resto(1.00)]),
-            edificacao("Bancos", &[resto(1.00)]),
-            edificacao("Barbearias", &[resto(1.00)]),
-            edificacao("Clubes", &[resto(1.00)]),
-            edificacao("Escolas", &[faixa(12.0, 1.00), resto(0.50)]),
-            edificacao("Escritórios", &[faixa(20.0, 1.00), resto(0.70)]),
-            edificacao("Garagens", &[resto(0.86)]),
-            edificacao("Hospitais", &[faixa(20.0, 0.70), resto(0.40)]),
-            edificacao("Hotéis", &[faixa(20.0, 0.50), resto(0.40)]),
-            edificacao("Igrejas", &[resto(1.00)]),
-            edificacao("Lojas", &[resto(1.00)]),
-            edificacao("Restaurantes", &[resto(1.00)]),
-        ],
-        aparelhos: Vec::new(),
-        limite_aparelho_kw: 3.5,
-        aquecimento: quantidades(&[
-            (1, 1.00),
-            (2, 0.72),
-            (3, 0.62),
-            (4, 0.57),
-            (5, 0.54),
-            (6, 0.52),
-            (7, 0.50),
-            (8, 0.49),
-            (9, 0.48),
-            (11, 0.46),
-            (15, 0.44),
-            (20, 0.42),
-            (25, 0.40),
-            (35, 0.38),
-            (40, 0.36),
-            (45, 0.35),
-            (55, 0.34),
-            (65, 0.33),
-            (u32::MAX, 0.32),
-        ]),
-        ar_condicionado: quantidades(&[(10, 1.00), (20, 0.90), (30, 0.82), (40, 0.80), (50, 0.77), (75, 0.75), (100, 0.75), (u32::MAX, 0.75)]),
-        bombas: Vec::new(),
-        motores: Vec::new(),
-        propria: false,
-    }
-}
-
-static TABELAS: LazyLock<Vec<TabelaDemanda>> = LazyLock::new(|| vec![equatorial_nt001_r07(), cemig_nd51(), enel_go_ntc04()]);
+/// De fábrica, só a Equatorial: as outras concessionárias o projetista cadastra, com a norma e a revisão que\n/// valem na área dele.
+static TABELAS: LazyLock<Vec<TabelaDemanda>> = LazyLock::new(|| vec![equatorial_nt001_r07()]);
 static SEM_EDIFICACAO: LazyLock<Edificacao> =
     LazyLock::new(|| Edificacao { nome: String::new(), modo: ModoFaixas::Acumulada, faixas: vec![resto(1.0)] });
 static SEM_TABELA: LazyLock<TabelaDemanda> = LazyLock::new(TabelaDemanda::default);

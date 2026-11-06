@@ -235,8 +235,8 @@ Limites:
   com fator próprio sai da contagem da tabela. As formas com hachura saíram do editor de famílias.
 - **Quadro:** sistema, tensão nominal, cabo padrão e alimentação na inserção do quadro. A tensão nominal escolhida vale sobre a
   dos pontos. A folga de cabos foi para a lista de materiais.
-- **Tabelas de demanda:** presets da Equatorial, da CEMIG (ND-5.1) e da Enel Goiás (NTC-04 rev. 4), com as faixas sobre o total
-  que as duas últimas usam, e um editor de tabelas próprias.
+- **Tabelas de demanda:** de fábrica, só a tabela oficial da Equatorial (NT.00001.EQTL rev. 07). As outras concessionárias o
+  projetista cadastra em **+ Cadastrar / Criar Nova Tabela de Demanda**, com faixas acumuladas ou com o fator da faixa sobre o total.
 - **Cabos e eletrodutos:** catálogos com editar e excluir, inclusive os de fábrica. Perfis de eletroduto com tipo de linha, cor,
   caminhamento e diâmetros. O traçado em 45° substituiu o ortogonal.
 - **Dimensionar projeto:** esquema, incluindo `2F+N+T` e `3F+T`, cabo e curva por circuito, grupos de DR à vontade em duas colunas,
@@ -244,11 +244,8 @@ Limites:
 
 Limites:
 
-- **Presets:** CPFL, Neoenergia, Copel, Celesc e Enel SP/RJ/CE não têm preset. As normas públicas encontradas não trouxeram tabelas
-  de fatores que pudessem ser conferidas, e nenhum número foi estimado. O editor de tabelas cobre esses casos.
-- **Colunas escolhidas nos presets:** a Enel Goiás separa o aquecimento por aparelho; o preset usa a coluna de torneira e aquecedor
-  de passagem, e no ar condicionado a comercial, as mais conservadoras. A CEMIG tem uma tabela própria para fornos e fogões (12),
-  ainda não separada: o aquecimento usa a 13. Sem tabela de motores nos presets, motores entram com 100 %.
+- **Presets:** só a Equatorial vem de fábrica; os presets da CEMIG e da Enel Goiás saíram. Um projeto que usava um deles passa
+  para a Equatorial até o projetista cadastrar a tabela da concessionária dele. Sem tabela de motores, motores entram com 100 %.
 - **Alimentado por:** é gravado, validado contra ciclos e mostrado no unifilar. A demanda de um quadro ainda não soma a dos quadros
   que ele alimenta.
 - **Telecom:** a aba insere pontos, racks e eletrodutos e edita o catálogo de cabos. Ainda não há roteamento de cabos de telecom nem
@@ -333,3 +330,17 @@ Ajustes de interface e de prancha:
   retângulo dos outros), na inserção, ao dividir, ao encaixar e no `ELEREGEN`. O vínculo segue no XDATA, o grafo aceita a ponta
   a até o raio de captura além do contorno do bloco gravado, e o comprimento soma o pedaço até o centro de cada bloco. Um
   bloco antigo trocado por módulos passa os eletrodutos gravados nele ao primeiro módulo.
+
+## Escala 1:50, unifilar com simbologia e corte só nas luminárias
+
+- **Tabelas em 1 un = 1 m:** a tabela do quadro, a legenda e o unifilar usam texto de 9 cm (8 cm nos menores), títulos de 15 cm e
+  linhas de 26 cm (28 cm na legenda).
+- **Legenda:** cada símbolo fica com o centro do desenho dele no meio da célula da esquerda, reduzido se não couber. Os módulos
+  empilhados (`<bloco>$EMP`) entram com o bloco e a família de origem, na legenda e na lista de materiais.
+- **Tipos de linha dos eletrodutos:** `ELE-TRACEJADA` (8 cm de traço, 4 cm de espaço), `ELE-TRACO-PONTO` (8 cm, 3 cm, 1,5 cm, 3 cm)
+  e `ELE-PONTILHADA` (pontos a cada 4 cm), em metros. O `ELEREGEN` troca os `DASHED`, `DASHDOT` e `DOT` das versões anteriores,
+  nos eletrodutos e nas camadas.
+- **Unifilar:** os riscos de polo do disjuntor são verticais, e o diagrama traz embaixo o quadro **Simbologia do diagrama
+  unifilar**: disjuntores 1P, 2P e 3P, IDR, DPS, condutores fase, neutro e proteção, barramento e aterramento.
+- **Corte na borda:** só nos pontos de luz (luminárias de teto e arandelas). Nos outros blocos o eletroduto vai até o ponto de
+  inserção, e o `ELEREGEN` devolve a ele as pontas que a versão anterior cortou.

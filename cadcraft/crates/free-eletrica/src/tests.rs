@@ -790,36 +790,27 @@ fn demanda_por_tipo_de_carga() {
 #[test]
 fn presets_de_demanda_conferidos_nas_normas() {
     use demanda::*;
-    assert_eq!(tabelas().len(), 3, "só as tabelas conferidas nas normas públicas");
+    // De fábrica, só a Equatorial (NT.00001.EQTL); as outras o projetista cadastra.
+    assert_eq!(tabelas().len(), 1, "só a tabela oficial da Equatorial");
     for t in tabelas() {
         t.validar().unwrap_or_else(|e| panic!("{}: {e}", t.nome));
         assert!(!t.fonte.is_empty() && !t.propria, "{}", t.id);
     }
-    // CEMIG, tabela 10: o fator da faixa vale para toda a carga.
-    let c = tabela("cemig-nd51");
-    assert_eq!(c.id, "cemig-nd51");
-    let r = c.edificacao("Residências");
-    assert_eq!(r.modo, ModoFaixas::TotalNaFaixa);
+    assert_eq!(tabelas()[0].id, "equatorial-nt001-r07");
+    assert!(tabelas()[0].fonte.contains("NT.00001.EQTL"));
+    // Um id que não existe mais (de uma versão com outras concessionárias) cai na Equatorial.
+    assert_eq!(tabela("cemig-nd51").id, "equatorial-nt001-r07");
+    // Uma tabela cadastrada com o fator da faixa sobre toda a carga (como as de residências de algumas
+    // concessionárias): 4,5 kW cai na faixa até 5 kW, com 0,68 sobre tudo.
+    let r = Edificacao {
+        nome: "Residências".into(),
+        modo: ModoFaixas::TotalNaFaixa,
+        faixas: vec![Faixa { ate_kw: Some(1.0), fator: 0.86 }, Faixa { ate_kw: Some(5.0), fator: 0.68 }, Faixa { ate_kw: None, fator: 0.45 }],
+    };
     assert!(perto(r.demanda(800.0), 800.0 * 0.86, 1e-6));
     assert!(perto(r.demanda(4_500.0), 4_500.0 * 0.68, 1e-6));
-    assert!(perto(r.demanda(9_500.0), 9_500.0 * 0.52, 1e-6));
     assert!(perto(r.demanda(12_000.0), 12_000.0 * 0.45, 1e-6));
-    // Tabela 11, acumulada: escritórios 100 % até 20 e 70 % no excesso.
-    assert!(perto(c.edificacao("Escritórios, lojas e salas comerciais").demanda(30_000.0), 27_000.0, 1e-6));
-    // Tabela 13.
-    let n = |q: usize| fator_quantidade(&c.aquecimento, q);
-    assert_eq!((n(1), n(2), n(10), n(19), n(20), n(26), n(100)), (1.00, 0.92, 0.52, 0.40, 0.40, 0.37, 0.33));
-    assert_eq!(fator_quantidade(&c.ar_condicionado, 5), 0.70);
-    // Enel Goiás, tabela 2.
-    let e = tabela("enel-go-ntc04-r4");
-    let r = e.edificacao("Residências");
-    assert!(perto(r.demanda(5_500.0), 5_500.0 * 0.45, 1e-6));
-    assert!(perto(r.demanda(15_000.0), 15_000.0 * 0.24, 1e-6));
-    assert!(perto(e.edificacao("Hospitais").demanda(30_000.0), 14_000.0 + 4_000.0, 1e-6));
-    assert_eq!((fator_quantidade(&e.aquecimento, 2), fator_quantidade(&e.aquecimento, 70)), (0.72, 0.32));
-    assert_eq!((fator_quantidade(&e.ar_condicionado, 10), fator_quantidade(&e.ar_condicionado, 11)), (1.00, 0.90));
 }
-
 #[test]
 fn classe_e_fator_de_demanda_por_ponto_e_familia() {
     use demanda::*;
@@ -895,12 +886,12 @@ fn tabela_de_demanda_propria() {
     ruim.ar_condicionado = vec![PorQuantidade { ate: 5, fator: 1.0 }, PorQuantidade { ate: 2, fator: 0.5 }];
     assert!(s.salvar_tabela(ruim).is_err());
     // As de fábrica não mudam.
-    let mut copia = tabela("cemig-nd51").clone();
+    let mut copia = tabela("equatorial-nt001-r07").clone();
     assert!(s.salvar_tabela(copia.clone()).is_err());
     copia.id.clear();
-    copia.nome = "CEMIG revisada".into();
+    copia.nome = "Equatorial revisada".into();
     let id = s.salvar_tabela(copia).unwrap();
-    assert_eq!(id, "propria-cemig-revisada");
+    assert_eq!(id, "propria-equatorial-revisada");
     // A própria é escolhida e vale no cálculo; é editável com o mesmo id.
     let mut t = TabelaDemanda::em_branco("Minha CPFL");
     t.edificacoes[0].faixas = vec![Faixa { ate_kw: Some(10.0), fator: 0.8 }, Faixa { ate_kw: None, fator: 0.5 }];
@@ -1664,6 +1655,15 @@ fn tabela_do_quadro_no_desenho_se_refaz_no_mesmo_lugar() {
     assert!(t.contains(&"PAINEL: QD-01".to_string()) && t.contains(&"CIRCUITO".to_string()) && t.contains(&"FASE T (VA)".to_string()), "{t:?}");
     assert!(t.iter().any(|x| x.starts_with("ALIMENTADOR / GERAL:")) && t.iter().any(|x| x.starts_with("DEMANDA:")), "{t:?}");
     assert_eq!(analisar(&d).pontos.len(), 8, "a tabela não é ponto elétrico");
+    // Em 1:50 (1 un = 1 m): textos de 9 cm, título de 15 cm e linhas da grade de 26 cm.
+    let bloco = &d.blocks[&format!("{}{}", tabela::PREFIXO, qd.hex())];
+    let alturas: Vec<f64> = bloco.entities.iter().filter_map(|e| if let EntityKind::Text(t) = &e.kind { Some(t.height) } else { None }).collect();
+    assert!(alturas.iter().all(|a| perto(*a, 0.09, 1e-9) || perto(*a, 0.15, 1e-9)), "{alturas:?}");
+    let mut ys: Vec<f64> =
+        bloco.entities.iter().filter_map(|e| if let EntityKind::Line(l) = &e.kind { (l.a.y == l.b.y).then_some(l.a.y) } else { None }).collect();
+    ys.sort_by(f64::total_cmp);
+    ys.dedup_by(|a, b| perto(*a, *b, 1e-9));
+    assert!(ys.windows(2).any(|w| perto(w[1] - w[0], 0.26, 1e-9)), "{ys:?}");
     // O projetista move a tabela e muda uma descrição: ela se refaz sem sair do lugar.
     let mut e = (**d.model.get(h).unwrap()).clone();
     if let EntityKind::Insert(i) = &mut e.kind {
@@ -2121,9 +2121,9 @@ fn perfis_de_eletroduto_aplicam_linha_cor_caminhamento_e_diametros() {
     let h = eletroduto::inserir_com_perfil(&mut d, q, a, &Percurso { tracado: Tracado::Reto, ..Percurso::default() }, &perfil).unwrap();
     let e = d.model.get(h).unwrap();
     // No piso a linha é traço e ponto, mesmo que o perfil peça outra.
-    assert_eq!((e.common.linetype.as_str(), e.common.layer.as_str()), ("DASHDOT", eletroduto::CAMADA_PISO));
+    assert_eq!((e.common.linetype.as_str(), e.common.layer.as_str()), ("ELE-TRACO-PONTO", eletroduto::CAMADA_PISO));
     assert_eq!(e.common.color, cadcraft_doc::color::Color::Index(5));
-    assert!(d.linetype("DASHDOT").is_some(), "o tipo de linha entra no desenho");
+    assert!(d.linetype("ELE-TRACO-PONTO").is_some(), "o tipo de linha entra no desenho");
     let (m, _) = s.unidade.metros(d.header.i64("INSUNITS", 0));
     let rede = rota::Rede::montar(&d, &s, &analisar(&d).pontos, m);
     assert_eq!(
@@ -2147,7 +2147,7 @@ fn perfis_de_eletroduto_aplicam_linha_cor_caminhamento_e_diametros() {
     eletroduto::dividir(&mut d, &s, h, [2.0, 0.0], m).unwrap();
     let partes: Vec<_> = d.model.iter().filter(|e| e.common.layer == eletroduto::CAMADA_PISO).collect();
     assert_eq!(partes.len(), 2);
-    assert!(partes.iter().all(|e| e.common.linetype == "DASHDOT" && e.common.color == cadcraft_doc::color::Color::Index(5)));
+    assert!(partes.iter().all(|e| e.common.linetype == "ELE-TRACO-PONTO" && e.common.color == cadcraft_doc::color::Color::Index(5)));
     // Preferências hostis: nome vazio ou repetido sai, diâmetro inválido sai; nunca fica sem perfil.
     let mut h1 = Setup::default();
     h1.perfis_eletroduto.push(PerfilEletroduto { nome: "  ".into(), ..PerfilEletroduto::default() });
@@ -2691,15 +2691,19 @@ fn material_define_a_cor_e_o_caminhamento_define_a_linha() {
     let p = eletroduto::inserir_com_tipo(&mut d, a, b, I::Piso, 0.0, E::CorrugadoLeve).unwrap();
     let (et, ep) = (d.model.get(t).unwrap(), d.model.get(p).unwrap());
     assert_eq!(et.common.color, ep.common.color);
-    assert_eq!((et.common.linetype.as_str(), ep.common.linetype.as_str()), ("Continuous", "DASHDOT"));
+    assert_eq!((et.common.linetype.as_str(), ep.common.linetype.as_str()), ("Continuous", "ELE-TRACO-PONTO"));
     eletroduto::definir_instalacao(&mut d, t, I::Parede).unwrap();
-    assert_eq!(d.model.get(t).unwrap().common.linetype, "DASHED");
+    assert_eq!(d.model.get(t).unwrap().common.linetype, "ELE-TRACEJADA");
     eletroduto::definir_tipo(&mut d, t, E::PeadCorrugado).unwrap();
     assert_eq!(d.model.get(t).unwrap().common.color, Color::Index(E::PeadCorrugado.cor_padrao()));
-    // Num desenho em metros, o traço fica com 20 cm, e não com o padrão em milímetros.
+    // Num desenho em metros (1:50), traço curto e denso: 8 cm de traço e 4 cm de espaço; no piso, 8 cm de
+    // traço, 3 cm de espaço e um traço curto de 1,5 cm.
+    let medidas = |nome: &str, escala: f64| d.linetype(nome).unwrap().pattern.iter().map(|p| p.length * escala).collect::<Vec<f64>>();
     let e = d.model.get(t).unwrap();
-    let traco = d.linetype("DASHED").unwrap().pattern[0].length.abs() * e.common.ltscale;
-    assert!(perto(traco, 0.20, 1e-9), "{traco}");
+    let tracejada = medidas("ELE-TRACEJADA", e.common.ltscale);
+    assert!(tracejada.len() == 2 && perto(tracejada[0], 0.08, 1e-9) && perto(tracejada[1], -0.04, 1e-9), "{tracejada:?}");
+    let piso = medidas("ELE-TRACO-PONTO", d.model.get(p).unwrap().common.ltscale);
+    assert!(piso.iter().zip([0.08, -0.03, 0.015, -0.03]).all(|(a, b)| perto(*a, b, 1e-9)) && piso.len() == 4, "{piso:?}");
     // As camadas não diferem pela cor.
     let cor = |n: &str| d.layer(n).unwrap().color;
     assert_eq!(cor(eletroduto::CAMADA_TETO), cor(eletroduto::CAMADA_PISO));
@@ -2709,8 +2713,16 @@ fn material_define_a_cor_e_o_caminhamento_define_a_linha() {
     e.common.linetype = "Continuous".into();
     d.model.replace(e);
     assert_eq!(eletroduto::padronizar(&mut d, &s), 1);
-    assert_eq!(d.model.get(p).unwrap().common.linetype, "DASHDOT");
+    assert_eq!(d.model.get(p).unwrap().common.linetype, "ELE-TRACO-PONTO");
     assert_eq!(eletroduto::padronizar(&mut d, &s), 0);
+    // O tracejado longo das versões anteriores (DASHED do CAD) entra no padrão novo, no eletroduto e na camada.
+    let mut e = (**d.model.get(t).unwrap()).clone();
+    e.common.linetype = "DASHED".into();
+    d.model.replace(e);
+    d.layer_mut(eletroduto::CAMADA_PAREDE).unwrap().linetype = "DASHED".into();
+    assert_eq!(eletroduto::padronizar(&mut d, &s), 1);
+    assert_eq!(d.model.get(t).unwrap().common.linetype, "ELE-TRACEJADA");
+    assert_eq!(d.layer(eletroduto::CAMADA_PAREDE).unwrap().linetype, "ELE-TRACEJADA");
 }
 
 #[test]
@@ -2867,11 +2879,12 @@ fn eletroduto_para_na_borda_dos_blocos() {
     let q = biblioteca::inserir_ponto(&mut d, "QDG", [0.0, 0.0], 0.0, &[], &setup).unwrap();
     let luz = biblioteca::inserir_ponto(&mut d, "ILU-OCT", [4.0, 0.0], 0.0, &[], &setup).unwrap();
     let cx = biblioteca::inserir_ponto(&mut d, "CX-OCT", [4.0, 3.0], 0.0, &[], &setup).unwrap();
-    // Reto: começa na face do quadro (10 cm do centro) e termina no círculo da luminária (raio 10 cm).
+    // Reto: sai do ponto de inserção do quadro e para no círculo da luminária (raio 10 cm). Só os pontos de
+    // luz cortam o eletroduto na borda.
     let reto = eletroduto::inserir(&mut d, q, luz, rota::Instalacao::Teto, 0.0).unwrap();
     let EntityKind::Line(l) = &d.model.get(reto).unwrap().kind else { panic!("linha") };
-    assert!(perto(l.a.x, 0.1, 1e-6) && perto(l.b.x, 3.9, 1e-6) && l.a.y == 0.0, "{l:?}");
-    // Em arco: continua arco, do círculo da luminária ao contorno da caixa octogonal.
+    assert!(perto(l.a.x, 0.0, 1e-9) && perto(l.b.x, 3.9, 1e-6) && l.a.y == 0.0, "{l:?}");
+    // Em arco: continua arco, do círculo da luminária ao ponto de inserção da caixa octogonal.
     let arco = eletroduto::inserir(&mut d, luz, cx, rota::Instalacao::Teto, 0.15).unwrap();
     let EntityKind::Arc(a) = &d.model.get(arco).unwrap().kind else { panic!("arco") };
     let em = |ang: f64| [a.center.x + a.radius * ang.cos(), a.center.y + a.radius * ang.sin()];
@@ -2879,21 +2892,22 @@ fn eletroduto_para_na_borda_dos_blocos() {
     let (p, q) = (em(a.start), em(a.end));
     let (na_luz, na_caixa) = if p[1] < q[1] { (p, q) } else { (q, p) };
     assert!(perto((na_luz[0] - 4.0).hypot(na_luz[1]), biblioteca::RAIO_LUZ, 1e-6), "{na_luz:?}");
-    let c = borda::contorno(&d, cx).unwrap();
-    assert!(c.dentro(na_caixa, 1e-6) && !c.dentro(na_caixa, -1e-6), "{na_caixa:?}");
+    assert!(perto(na_caixa[0], 4.0, 1e-6) && perto(na_caixa[1], 3.0, 1e-6), "{na_caixa:?}");
+    assert!(borda::contorno(&d, cx).is_some() && borda::contorno_de_corte(&d, cx).is_none());
     // O grafo liga os dois, e o comprimento é de centro a centro.
     let rede = rede_de(&d);
     assert!(rede.soltos.is_empty() && rede.arestas.len() == 2, "{:?}", rede.soltos);
     let aresta = rede.arestas.iter().find(|x| x.eletroduto == reto).unwrap();
     assert!(perto(aresta.comprimento_2d, 4.0, 1e-6), "{}", aresta.comprimento_2d);
-    // Cortar de novo não muda nada; um eletroduto antigo, de centro a centro, é cortado ao regenerar.
+    // Cortar de novo não muda nada. Um eletroduto antigo, cortado na face do quadro e inteiro até o centro da
+    // luminária, volta ao quadro e para na luminária ao regenerar.
     assert_eq!(eletroduto::aparar(&mut d, &setup, 1.0, None), 0);
     let mut e = (**d.model.get(reto).unwrap()).clone();
-    e.kind = EntityKind::Line(Line { a: Vec3::new(0.0, 0.0, 0.0), b: Vec3::new(4.0, 0.0, 0.0) });
+    e.kind = EntityKind::Line(Line { a: Vec3::new(0.1, 0.0, 0.0), b: Vec3::new(4.0, 0.0, 0.0) });
     d.model.replace(e);
     fiacao::regenerar(&mut d, &setup, None).unwrap();
     let EntityKind::Line(l) = &d.model.get(reto).unwrap().kind else { panic!("linha") };
-    assert!(perto(l.a.x, 0.1, 1e-6) && perto(l.b.x, 3.9, 1e-6), "{l:?}");
+    assert!(perto(l.a.x, 0.0, 1e-9) && perto(l.b.x, 3.9, 1e-6), "{l:?}");
 }
 
 #[test]
@@ -2942,6 +2956,16 @@ fn familia_propria_com_caixa_e_haste_marcadas_empilha() {
     let y = |h: Handle| if let EntityKind::Insert(i) = &d.model.get(h).unwrap().kind { (i.insert.x, i.insert.y) } else { panic!() };
     assert!(perto(y(dois).0, 1.0, 1e-9) && perto(y(dois).1, 1.205, 1e-9), "{:?}", y(dois));
     assert!(perto(y(tres).1, 1.205 + (0.205 - 0.0595), 1e-9), "{:?}", y(tres));
+    // A família muda depois do empilhamento: os módulos empilhados seguem a de origem, numa linha só da
+    // legenda e da lista de materiais, sem o sufixo $EMP.
+    f.legenda = "TUG (teste)".into();
+    f.desc_material = "Tomada 2P+T 10 A".into();
+    familia::gravar(&mut d, "MINHA-TOMADA", Some(&f)).unwrap();
+    let an = analisar(&d);
+    assert_eq!(legenda::linhas(&an), vec![("MINHA-TOMADA".to_string(), "TUG (teste)".to_string())]);
+    let m = materiais::levantar(&d, &an, &setup);
+    assert_eq!(m.conjuntos.len(), 1);
+    assert_eq!((m.conjuntos[0].nome.as_str(), m.conjuntos[0].quantidade), ("Tomada 2P+T 10 A", 3));
 }
 
 #[test]
@@ -3101,6 +3125,19 @@ fn legenda_e_descricao_nos_pontos_na_lista_e_na_prancha() {
     assert!(t.contains(&"LEGENDA DE SÍMBOLOS".to_string()) && t.contains(&"Tomada da bancada".to_string()), "{t:?}");
     let simbolos = d.blocks[legenda::BLOCO].entities.iter().filter(|e| matches!(e.kind, EntityKind::Insert(_))).count();
     assert_eq!(simbolos, 3);
+    // Em 1:50 (1 un = 1 m): textos de 9 cm, título de 15 cm, e cada símbolo com o centro do desenho dele no
+    // meio da célula da esquerda (0,25 m da borda, no meio da linha de 0,28 m).
+    let alturas: Vec<f64> =
+        d.blocks[legenda::BLOCO].entities.iter().filter_map(|e| if let EntityKind::Text(t) = &e.kind { Some(t.height) } else { None }).collect();
+    assert!(alturas.iter().all(|a| (0.08..=0.16).contains(a)) && alturas.iter().any(|a| perto(*a, 0.15, 1e-9)), "{alturas:?}");
+    let inseridos = d.blocks[legenda::BLOCO].entities.iter().filter_map(|e| if let EntityKind::Insert(s) = &e.kind { Some(s.clone()) } else { None });
+    for (i, s) in inseridos.enumerate() {
+        let (min, max) = legenda::caixa_do_desenho(&d.blocks[&s.block]).unwrap();
+        let centro = [s.insert.x + s.scale.x * (min[0] + max[0]) / 2.0, s.insert.y + s.scale.y * (min[1] + max[1]) / 2.0];
+        let y = -0.30 - 0.28 * i as f64 - 0.14;
+        assert!(perto(centro[0], 0.25, 1e-9) && perto(centro[1], y, 1e-9), "{}: {centro:?}", s.block);
+        assert!(s.scale.x * (max[0] - min[0]) <= 0.50 && s.scale.y * (max[1] - min[1]) <= 0.28, "{} cabe na célula", s.block);
+    }
     assert_eq!(analisar(&d).pontos.len(), 3, "a legenda não é ponto elétrico");
     editar::definir(&mut d, b, ponto::TAGS_LEGENDA, Some("Outra")).unwrap();
     let reg = fiacao::regenerar(&mut d, &setup, None).unwrap();
@@ -3147,8 +3184,10 @@ fn excluir_blocos_eletrodutos_e_tabelas_de_fabrica() {
     assert!(d.model.get(h).is_some());
     assert_eq!(eletroduto::excluir(&mut d, &setup, &[h]).unwrap(), 1);
     assert!(d.model.get(h).is_none() && fiacao::tags(&d).is_empty());
-    // Tabelas: a de fábrica também sai; sem nenhuma, as de fábrica voltam.
+    // Tabelas: a de fábrica também sai; sem nenhuma, as de fábrica voltam. Com uma só de fábrica, a do
+    // projetista fica de reserva.
     let mut s = Setup::default();
+    s.salvar_tabela(demanda::TabelaDemanda::em_branco("Minha concessionária")).unwrap();
     let total = s.tabelas_demanda().len();
     let em_uso = s.tabela_demanda().id.clone();
     assert!(s.remover_tabela(&em_uso));
@@ -3160,7 +3199,7 @@ fn excluir_blocos_eletrodutos_e_tabelas_de_fabrica() {
     for id in &ids {
         assert!(s.remover_tabela(id));
     }
-    assert_eq!(s.tabelas_demanda().len(), total, "nunca sem nenhuma");
+    assert_eq!(s.tabelas_demanda().len(), demanda::tabelas().len(), "nunca sem nenhuma: as de fábrica voltam");
 }
 
 #[test]
@@ -3363,7 +3402,7 @@ fn tabela_do_quadro_fica_toda_dentro_da_moldura() {
     let no_meio = d.blocks[&nome]
         .entities
         .iter()
-        .filter(|e| matches!(&e.kind, EntityKind::Line(l) if (l.a.y - l.b.y).abs() < 1e-9 && l.a.y < titulo - 0.16 && l.a.y > grade + 0.11))
+        .filter(|e| matches!(&e.kind, EntityKind::Line(l) if (l.a.y - l.b.y).abs() < 1e-9 && l.a.y < titulo - 0.20 && l.a.y > grade + 0.14))
         .count();
     assert_eq!(no_meio, 0);
     let colunas: Vec<f64> =
@@ -3454,7 +3493,13 @@ fn diagrama_unifilar_com_entrada_barra_dr_e_reservas() {
     let terra: Vec<f64> = d.blocks[&nome]
         .entities
         .iter()
-        .filter_map(|e| if let EntityKind::Line(l) = &e.kind { (l.a.y == l.b.y && l.a.y < baixo).then_some((l.b.x - l.a.x).abs()) } else { None })
+        .filter_map(|e| {
+            if let EntityKind::Line(l) = &e.kind {
+                (l.a.y == l.b.y && l.a.y < baixo && l.a.y > baixo - 0.5).then_some((l.b.x - l.a.x).abs())
+            } else {
+                None
+            }
+        })
         .collect();
     assert_eq!(terra.len(), 3, "{terra:?}");
     assert!(terra[0] > terra[1] && terra[1] > terra[2]);
@@ -3463,7 +3508,22 @@ fn diagrama_unifilar_com_entrada_barra_dr_e_reservas() {
     assert!(circulos >= 2 * (3 + 2 + 1), "{circulos}");
     // O disjuntor é curvo; a barra tem nós; a caixa fica alinhada à direita.
     let contar = |f: &dyn Fn(&EntityKind) -> bool| d.blocks[&nome].entities.iter().filter(|e| f(&e.kind)).count();
-    assert_eq!(contar(&|k| matches!(k, EntityKind::Arc(_))), 3 + 2 + 1, "circuitos, reservas e o geral");
+    assert_eq!(contar(&|k| matches!(k, EntityKind::Arc(_))), 3 + 2 + 1 + 3, "circuitos, reservas, o geral e os três da simbologia");
+    // Os riscos dos polos e os traços de fase ficam a 90° da linha do circuito: nenhuma linha inclinada no
+    // diagrama (a seta do DPS, na simbologia, é a única).
+    let inclinadas = d.blocks[&nome]
+        .entities
+        .iter()
+        .filter(|e| matches!(&e.kind, EntityKind::Line(l) if (l.a.x - l.b.x).abs() > 1e-9 && (l.a.y - l.b.y).abs() > 1e-9))
+        .count();
+    assert_eq!(inclinadas, 1);
+    // O quadro de simbologia, embaixo do diagrama: cada símbolo usado com a explicação.
+    let simbologia = achar("SIMBOLOGIA DO DIAGRAMA UNIFILAR");
+    assert!(simbologia.2 < baixo, "embaixo da moldura");
+    for v in unifilar::SIMBOLOGIA {
+        assert!(achar(v).2 < simbologia.2);
+    }
+    assert!(textos.iter().all(|(_, _, _, h, _)| (0.08..=0.16).contains(h)), "textos em 1:50");
     assert!(contar(&|k| matches!(k, EntityKind::Circle(_))) >= 6);
     let caixas: Vec<f64> = textos.iter().filter(|(t, ..)| t.contains(" - ")).map(|(_, x, ..)| *x).collect();
     assert!(caixas.windows(2).all(|p| perto(p[0], p[1], 1e-9)), "{caixas:?}");
@@ -3659,10 +3719,13 @@ fn disjuntor_do_unifilar_tem_um_risco_por_polo() {
     let an = analisar(&d);
     unifilar::gerar(&mut d, &an, &setup, q, Some([0.0, 0.0])).unwrap();
     let nome = format!("{}{}", unifilar::PREFIXO, q.hex());
+    // Os disjuntores do diagrama, acima do quadro de simbologia.
+    let simbologia = textos_do_bloco(&d, &nome).into_iter().find(|t| t.0 == "SIMBOLOGIA DO DIAGRAMA UNIFILAR").unwrap().2;
     let arcos: Vec<(f64, f64, f64)> = d.blocks[&nome]
         .entities
         .iter()
         .filter_map(|e| if let EntityKind::Arc(a) = &e.kind { Some((a.center.x, a.center.y, a.radius)) } else { None })
+        .filter(|a| a.1 > simbologia)
         .collect();
     assert_eq!(arcos.len(), 2);
     let riscos = |c: (f64, f64, f64)| {

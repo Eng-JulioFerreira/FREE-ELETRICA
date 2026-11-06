@@ -285,7 +285,7 @@ fn paleta_ferramentas_e_fluxo_completo() {
     h.get_by_label("Concessionária");
     h.get_by_label("Tipo de edificação");
     // A tabela própria nasce no rascunho e só vale com o OK das configurações.
-    h.get_by_label("+ Criar / Editar Tabela de Concessionária").click();
+    h.get_by_label("+ Cadastrar / Criar Nova Tabela de Demanda").click();
     h.run_steps(3);
     for campo in ["Nome da tabela", "Norma e revisão", "Copiar de", "+ Faixa", "+ Edificação", "Salvar tabela"] {
         assert!(h.query_all_by_label(campo).count() >= 1, "{campo}");
