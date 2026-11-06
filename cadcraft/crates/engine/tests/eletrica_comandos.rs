@@ -1484,10 +1484,30 @@ fn quadro_com_montagem_observacoes_e_unifilar_clicando() {
     s.input(Input::Point(Vec2::new(30.0, 30.0))).unwrap();
     assert!(s.running.is_none());
     assert_eq!(contar(&s), 1);
+    // A vista frontal: pelo JSON, com os dispositivos nos trilhos; clicando, no ponto escolhido.
+    let v = s.execute("eletrica.quadro.frontal", &json!({ "quadro": qd.hex() })).unwrap();
+    let dispositivos = v["dispositivos"].as_array().unwrap();
+    assert_eq!(dispositivos[0]["tipo"], "geral");
+    assert!(dispositivos.iter().any(|d| d["tipo"] == "dps") && dispositivos.iter().any(|d| d["tipo"] == "reserva"), "{v}");
+    assert!(v["trilhos"].as_u64().unwrap() >= 1 && v["modulos"].as_u64().unwrap() > 0);
+    let vistas = |s: &Session| free_eletrica::frontal::vistas(s.doc().unwrap());
+    assert_eq!(vistas(&s).len(), 1);
+    assert!(s.execute("eletrica.quadro.frontal", &json!({ "quadro": qd.hex(), "ponto": "aqui" })).is_err());
+    s.start("elequadro_frontal").unwrap();
+    if varios {
+        s.input(Input::Pick(vec![qd])).unwrap();
+    }
+    s.input(Input::Point(Vec2::new(50.0, -30.0))).unwrap();
+    assert!(s.running.is_none());
+    let (h, _) = vistas(&s)[0];
+    let EntityKind::Insert(i) = &s.doc().unwrap().model.get(h).unwrap().kind else { panic!("inserção") };
+    assert_eq!((i.insert.x, i.insert.y), (50.0, -30.0), "uma vista por quadro: move a que existe");
     let mut vazio = Session::default();
     vazio.open_drawing(Drawing::new_metric(), "Vazio", None);
     vazio.start("eleunifilar").unwrap();
     assert!(vazio.running.is_none(), "sem quadro, avisa e termina");
+    vazio.start("elequadro_frontal").unwrap();
+    assert!(vazio.running.is_none());
 }
 
 #[test]

@@ -737,6 +737,12 @@ const PALETA_ELETRICA: [Secao; 6] = [
             ferr(Icone::Grade, "Tabela do quadro", "elequadro_tabela", "Desenha o quadro de cargas num ponto da planta (ELEQUADRO_TABELA)"),
             ferr(Icone::Quadro, "Diagrama unifilar", "eleunifilar", "Desenha o diagrama unifilar do quadro num ponto da planta (ELEUNIFILAR)"),
             ferr(
+                Icone::Grade,
+                "Vista frontal do quadro",
+                "elequadro_frontal",
+                "Desenha o layout de montagem do quadro: geral, DPS, DR e disjuntores nos trilhos DIN, com os barramentos (ELEQUADRO_FRONTAL)",
+            ),
+            ferr(
                 Icone::Etiqueta,
                 "Legenda de símbolos",
                 "elelegenda",
@@ -2075,6 +2081,13 @@ fn janela_dimensionar(ui: &mut egui::Ui, app: &CadApp, t: &Tokens, st: &mut Esta
         {
             acoes.push(Acao::Rodar("eletrica.unifilar", json!({ "quadro": q.hex() })));
         }
+        if ui
+            .button("Vista frontal do quadro")
+            .on_hover_text("Desenha ou atualiza o layout de montagem deste quadro nos trilhos DIN (ELEQUADRO_FRONTAL)")
+            .clicked()
+        {
+            acoes.push(Acao::Rodar("eletrica.quadro.frontal", json!({ "quadro": q.hex() })));
+        }
         if !o.calculado {
             ui.label(pequeno("Lançar pontos, circuitos e eletrodutos não muda o dimensionamento: revise aqui e aplique ao quadro.", t.text_dim));
         }
@@ -2623,6 +2636,13 @@ fn quadro_de_cargas(
         }
         if ui.button("Tabela no desenho").on_hover_text("Clique no ponto da planta onde vai a tabela (ELEQUADRO_TABELA)").clicked() {
             acoes.push(Acao::Iniciar("elequadro_tabela"));
+        }
+        if ui
+            .button("Vista frontal")
+            .on_hover_text("Desenha ou atualiza o layout de montagem deste quadro nos trilhos DIN, ao lado dele (ELEQUADRO_FRONTAL)")
+            .clicked()
+        {
+            acoes.push(Acao::Rodar("eletrica.quadro.frontal", json!({ "quadro": q.hex() })));
         }
         if ui.button("Copiar resumo").on_hover_text("Copia o resumo técnico em texto").clicked() {
             ui.ctx().copy_text(ele::quadro::texto(r, s));

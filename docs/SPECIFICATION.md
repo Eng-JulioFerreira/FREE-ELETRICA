@@ -24,7 +24,7 @@ Os pontos de registro no código do CADCraft estão em [arquitetura.md](arquitet
 | `rota` | O grafo estrito 3D, `TipoEletroduto`, Dijkstra e a estimativa por Manhattan 3D |
 | `eletroduto` | Traçados, caixa de passagem ao dividir um trecho, modelo do ELEELETRODUTO |
 | `nbr5410`, `quadro`, `demanda` | Dimensionamento, `TipoCabo`, `Esquema`, `Curva`, configuração de cada quadro, grupos de DR, alimentador, presets e tabelas de demanda |
-| `fiacao`, `tabela`, `unifilar`, `materiais`, `inspecao` | Tags, tabela e diagrama unifilar no desenho, lista de materiais e inspeção visual |
+| `fiacao`, `tabela`, `unifilar`, `frontal`, `materiais`, `inspecao` | Tags, tabela, diagrama unifilar e vista frontal do quadro no desenho, lista de materiais e inspeção visual |
 | `setup` | As configurações, nas preferências do programa: catálogos de cabos, perfis de eletroduto e tabelas de demanda próprias |
 
 ## O grafo de eletrodutos
@@ -66,7 +66,7 @@ continuam sendo lidos.
 | Tag de fiação | `schema_ver`, `parent_conduit_handle`, `anchor_x`, `anchor_y`, `user_offset_x`, `user_offset_y` |
 
 O tipo de linha e a cor do perfil ficam na própria entidade do eletroduto. O diagrama unifilar é o bloco
-`UNIFILAR_<handle do quadro>`, e a tabela, `QUADRO_TABELA_<handle do quadro>`.
+`UNIFILAR_<handle do quadro>`; a vista frontal, `QUADRO_FRONTAL_<handle do quadro>`; e a tabela, `QUADRO_TABELA_<handle do quadro>`.
 
 As configurações do Setup, incluindo PE compartilhado, FCA fixo, catálogos, perfis e tabelas de demanda próprias, ficam nas
 preferências do programa, não no DXF.
@@ -84,7 +84,7 @@ próprio `CommandSpec`.
 | Circuitos | `elecircuito`, `eleremoverponto`, `elecomando`, `eletrica.circuito.criar`, `.definir`, `.descrever`, `.juntar`, `.excluir`, `.alvo` |
 | Eletrodutos | `eleeletroduto`, `eletrica.eletroduto.modelo`, `.dividir`, `.definir`, `eletrica.eletrodutos` |
 | Cálculo | `eletrica.dimensionar`, `eletrica.rotear`, `eletrica.sobrescrever`, `eletrica.quadro`, `eletrica.quadro.equilibrar`, `eletrica.cargas`, `eletrica.demanda.tabelas`, `.salvar`, `.excluir`, `eletrica.setup` |
-| Documentação | `elefiacao` (com `ancora`: direto no eletroduto; com `tag` também: linha de chamada), `eletrica.fiacao.modo`, `eleregen`, `elequadro_tabela`, `eletrica.unifilar`, `eleunifilar`, `elelegenda`, `eletrica.materiais`, `eletrica.inspecionar`, `eletrica.analisar` |
+| Documentação | `elefiacao` (com `ancora`: direto no eletroduto; com `tag` também: linha de chamada), `eletrica.fiacao.modo`, `eleregen`, `elequadro_tabela`, `eletrica.unifilar`, `eleunifilar`, `eletrica.quadro.frontal`, `elequadro_frontal`, `elelegenda`, `eletrica.materiais`, `eletrica.inspecionar`, `eletrica.analisar` |
 
 Comandos que só existem na interface, porque abrem janelas: `ELETRICA`, `ELECONFIG`, `ELEPONTOS`, `ELEBLOCOS`, `ELEATRIBUTOS`,
 `ELECARGAS`, `ELEROTEAR`, `ELEDIMENSIONAR`, `ELEMATERIAIS`, `ELECONFERIR`, `ELEINSPECAO`. `ELETRICA` abre a aba Installations

@@ -346,6 +346,14 @@ fn pecas(r: &ResumoQuadro, alimentado_por: &str, m: f64) -> Vec<(EntityKind, Opt
     p.texto(&format!("In: {} A", a.disjuntor.map_or("-".to_string(), br)), [geral_x + 0.13, entrada + 0.24], MENOR, HAlign::Center);
     p.linha([geral_x + 0.26, entrada], [BARRA, entrada]);
     p.no(BARRA, entrada);
+    // O DPS (NBR 5410, 6.3.5): depois do geral, para o terra.
+    let dps_x = (geral_x + 0.26 + BARRA) / 2.0;
+    p.no(dps_x, entrada);
+    p.linha([dps_x, entrada], [dps_x, entrada - 0.12]);
+    p.dps(dps_x, entrada - 0.20);
+    p.linha([dps_x, entrada - 0.28], [dps_x, entrada - 0.33]);
+    p.terra(dps_x, entrada - 0.33);
+    p.texto("DPS", [dps_x - 0.09, entrada - 0.20], MENOR, HAlign::Right);
 
     // Os grupos de DR: o módulo e a sub-barra de onde saem os circuitos dele.
     for (i, y0, y1) in &faixas {

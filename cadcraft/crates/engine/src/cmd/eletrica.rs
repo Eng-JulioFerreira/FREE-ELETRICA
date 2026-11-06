@@ -92,6 +92,11 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("eleunifilar", "Single-Line Diagram", run_unifilar)
             .params("{quadro?: hex | TAG, ponto?: [x, y]} → the same as eletrica.unifilar; typed, it asks for the board and the point: {unifilar}")
             .interactive(|_| Ok(Box::new(UnifilarM::default()))),
+        CommandSpec::new("eletrica.quadro.frontal", "Board Front View", run_frontal)
+            .params("{quadro?: hex | TAG, ponto?: [x, y]} → generates or updates the board's front view (DIN rail mounting layout); an existing one only moves when `ponto` is given: {frontal, trilhos, modulos, dispositivos: [{tipo, modulos, topo, base, trilho, posicao}]}"),
+        CommandSpec::new("elequadro_frontal", "Board Front View", run_frontal)
+            .params("{quadro?: hex | TAG, ponto?: [x, y]} → the same as eletrica.quadro.frontal; typed, it asks for the board and the point")
+            .interactive(|_| Ok(Box::new(UnifilarM { frontal: true, ..UnifilarM::default() }))),
         CommandSpec::new("eletrica.quadro.equilibrar", "Balance Phases", run_equilibrar)
             .params("{quadro?: hex | TAG} → unlocks the phases of every circuit, so the balancing applies to all: {destravados, desequilibrio}"),
         CommandSpec::new("eletrica.atributos", "Block Attributes", run_atributos)
@@ -615,15 +620,32 @@ fn run_unifilar(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({ "unifilar": h.hex() }))
 }
 
-/// ELEUNIFILAR digitado: o quadro (Enter: o primeiro) e o ponto de inserção.
+fn run_frontal(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "eletrica.quadro.frontal";
+    let a = analise(s)?;
+    let q = achar_quadro(&a, p.get("quadro"))?;
+    let pos = match p.get("ponto").filter(|v| !v.is_null()) {
+        None => None,
+        Some(v) => Some(ponto_de(v).ok_or_else(|| bad(CMD, "`ponto` must be [x, y]"))?),
+    };
+    let setup = ele::setup::atual();
+    let h = ele::frontal::gerar(s.doc_mut()?, &a, &setup, q, pos).map_err(erro)?;
+    let r = ele::quadro::rotear(s.doc()?, &a, &setup, q).map_err(erro)?;
+    let mo = ele::frontal::montagem(&r);
+    Ok(json!({ "frontal": h.hex(), "trilhos": mo.trilhos, "modulos": mo.modulos(), "dispositivos": json_de(&mo.dispositivos)? }))
+}
+
+/// ELEUNIFILAR e ELEQUADRO_FRONTAL digitados: o quadro (Enter: o primeiro) e o ponto de inserção.
 #[derive(Default)]
 struct UnifilarM {
     quadro: Option<Handle>,
+    /// A vista frontal do quadro, e não o unifilar.
+    frontal: bool,
 }
 
 impl Interactive for UnifilarM {
     fn name(&self) -> &'static str {
-        "ELEUNIFILAR"
+        if self.frontal { "ELEQUADRO_FRONTAL" } else { "ELEUNIFILAR" }
     }
     fn begin(&mut self, s: &mut Session) -> Result<Step> {
         s.set_selection(Vec::new());
@@ -641,6 +663,7 @@ impl Interactive for UnifilarM {
     fn prompt(&self, _s: &Session) -> Prompt {
         match self.quadro {
             None => Prompt::new("Selecione o quadro", Accept::SELECT).default("Primeiro"),
+            Some(_) if self.frontal => Prompt::new("Ponto de inserção da vista frontal", Accept::POINT),
             Some(_) => Prompt::new("Ponto de inserção do diagrama", Accept::POINT),
         }
     }
@@ -664,7 +687,8 @@ impl Interactive for UnifilarM {
             }
             (Some(q), Input::Point(p)) => {
                 let a = analise(s)?;
-                match ele::unifilar::gerar(s.doc_mut()?, &a, &ele::setup::atual(), q, Some([p.x, p.y])) {
+                let gerar = if self.frontal { ele::frontal::gerar } else { ele::unifilar::gerar };
+                match gerar(s.doc_mut()?, &a, &ele::setup::atual(), q, Some([p.x, p.y])) {
                     Ok(_) => Ok(Step::Done),
                     Err(e) => {
                         s.echo(e);

@@ -16,6 +16,7 @@ pub mod editar;
 pub mod eletroduto;
 pub mod familia;
 pub mod fiacao;
+pub mod frontal;
 pub mod inspecao;
 pub mod legenda;
 pub mod materiais;

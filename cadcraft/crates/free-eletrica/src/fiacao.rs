@@ -994,6 +994,8 @@ pub struct Regeneracao {
     pub unifilares: usize,
     /// Legendas de símbolos refeitas.
     pub legendas: usize,
+    /// Vistas frontais de quadro refeitas.
+    pub frontais: usize,
     pub avisos: Vec<String>,
 }
 
@@ -1113,6 +1115,7 @@ pub fn regenerar(doc: &mut Drawing, setup: &Setup, criar: Option<&[Handle]>) -> 
     }
     reg.tabelas = crate::tabela::regenerar(doc, &analise, setup)?;
     reg.unifilares = crate::unifilar::regenerar(doc, &analise, setup)?;
+    reg.frontais = crate::frontal::regenerar(doc, &analise, setup)?;
     reg.legendas = crate::legenda::regenerar(doc, &analise, m);
     Ok(reg)
 }
@@ -1122,6 +1125,7 @@ pub fn regenerar_se_houver(doc: &mut Drawing, setup: &Setup) -> Result<Option<Re
     if tags(doc).is_empty()
         && crate::tabela::tabelas(doc).is_empty()
         && crate::unifilar::unifilares(doc).is_empty()
+        && crate::frontal::vistas(doc).is_empty()
         && crate::legenda::inserida(doc).is_none()
     {
         return Ok(None);

@@ -3509,14 +3509,14 @@ fn diagrama_unifilar_com_entrada_barra_dr_e_reservas() {
     // O disjuntor é curvo; a barra tem nós; a caixa fica alinhada à direita.
     let contar = |f: &dyn Fn(&EntityKind) -> bool| d.blocks[&nome].entities.iter().filter(|e| f(&e.kind)).count();
     assert_eq!(contar(&|k| matches!(k, EntityKind::Arc(_))), 3 + 2 + 1 + 3, "circuitos, reservas, o geral e os três da simbologia");
-    // Os riscos dos polos e os traços de fase ficam a 90° da linha do circuito: nenhuma linha inclinada no
-    // diagrama (a seta do DPS, na simbologia, é a única).
+    // Os riscos dos polos e os traços de fase ficam a 90° da linha do circuito: nenhuma linha inclinada além
+    // das setas do DPS (o da entrada, depois do geral, e o da simbologia).
     let inclinadas = d.blocks[&nome]
         .entities
         .iter()
         .filter(|e| matches!(&e.kind, EntityKind::Line(l) if (l.a.x - l.b.x).abs() > 1e-9 && (l.a.y - l.b.y).abs() > 1e-9))
         .count();
-    assert_eq!(inclinadas, 1);
+    assert_eq!(inclinadas, 2);
     // O quadro de simbologia, embaixo do diagrama: cada símbolo usado com a explicação.
     let simbologia = achar("SIMBOLOGIA DO DIAGRAMA UNIFILAR");
     assert!(simbologia.2 < baixo, "embaixo da moldura");
@@ -3743,4 +3743,76 @@ fn disjuntor_do_unifilar_tem_um_risco_por_polo() {
     let mut esperado = vec![1, usize::from(fases_quadro.clamp(1, 3))];
     esperado.sort_unstable();
     assert_eq!(contagem, esperado);
+}
+
+#[test]
+fn vista_frontal_do_quadro_nos_trilhos_din() {
+    use frontal::TipoDispositivo as T;
+    let setup = Setup::default();
+    let mut d = metros();
+    let q = qd(&mut d, 0.0, 0.0);
+    let mut hs = Vec::new();
+    for i in 1..=6 {
+        let t = tug(&mut d, 3.0, f64::from(i), &i.to_string());
+        eletroduto::inserir(&mut d, q, t, rota::Instalacao::Teto, 0.0).unwrap();
+        hs.push(t);
+    }
+    editar::definir_grupo_dr(&mut d, q, "1", Some("IDR1")).unwrap();
+    editar::definir_grupo_dr(&mut d, q, "2", Some("IDR1")).unwrap();
+    let an = analisar(&d);
+    let r = quadro::rotear(&d, &an, &setup, q).unwrap();
+    let mo = frontal::montagem(&r);
+    // A ordem de montagem: o geral com os polos do quadro, um DPS por fase, o DR seguido dos circuitos dele,
+    // os outros circuitos e as reservas.
+    let tipos: Vec<T> = mo.dispositivos.iter().map(|x| x.tipo).collect();
+    let fases = usize::from(r.fases_quadro.clamp(1, 3));
+    assert_eq!(tipos[0], T::Geral);
+    assert_eq!(mo.dispositivos[0].modulos, u32::from(r.fases_quadro.clamp(1, 3)));
+    assert!(tipos[1..=fases].iter().all(|x| *x == T::Dps));
+    assert_eq!(tipos[fases + 1], T::Dr);
+    let dr = &mo.dispositivos[fases + 1];
+    assert_eq!(dr.modulos, 2, "DR bipolar com circuitos monopolares");
+    assert!(dr.topo.starts_with("DR ") && dr.topo.ends_with('A') && dr.base == "30mA", "{dr:?}");
+    assert_eq!((mo.dispositivos[fases + 2].topo.as_str(), mo.dispositivos[fases + 3].topo.as_str()), ("1", "2"));
+    let reservas = mo.dispositivos.iter().filter(|x| x.tipo == T::Reserva).count();
+    assert_eq!(reservas, r.ids_de_reserva().len());
+    assert!(tipos.ends_with(&vec![T::Reserva; reservas]));
+    let c3 = mo.dispositivos.iter().find(|x| x.topo == "3").unwrap();
+    assert!(c3.base.ends_with('A') && c3.modulos == 1, "{c3:?}");
+    // Os módulos da montagem batem com os do quadro, mais os DPS.
+    assert_eq!(mo.modulos(), r.modulos() + u32::try_from(fases).unwrap());
+    // Mais de 12 módulos: trilhos de 18, sem partir um dispositivo.
+    assert!(mo.modulos() > 12);
+    assert_eq!(mo.modulos_por_trilho, 18);
+    assert_eq!(mo.trilhos, usize::try_from(mo.modulos().div_ceil(18)).unwrap().max(1));
+    for x in &mo.dispositivos {
+        assert!(x.posicao + x.modulos <= 18, "{x:?}");
+    }
+    assert_eq!((mo.bornes_neutro, mo.bornes_terra), (7, 7), "seis circuitos com N e PE, mais o alimentador");
+
+    // No desenho: o bloco ao lado do quadro, com o título, a caixa e o chassi, os barramentos coloridos e a
+    // largura de cada dispositivo pelos módulos.
+    let h = frontal::gerar(&mut d, &an, &setup, q, None).unwrap();
+    assert_eq!(frontal::vistas(&d), [(h, q)]);
+    let nome = format!("{}{}", frontal::PREFIXO, q.hex());
+    let textos = textos_do_bloco(&d, &nome);
+    let tem = |v: &str| textos.iter().any(|(t, ..)| t == v);
+    for v in [frontal::titulo("QD-01").as_str(), "GERAL", "DPS", "BARRAMENTO DE NEUTRO (N)", "BARRAMENTO DE TERRA (PE)", "RESERVA", "T", "30mA"] {
+        assert!(tem(v), "falta {v}: {textos:?}");
+    }
+    assert!(textos.iter().any(|(t, ..)| t.starts_with("DR ")));
+    let cor = |c: u8| d.blocks[&nome].entities.iter().filter(|e| e.common.color == cadcraft_doc::color::Color::Index(c)).count();
+    assert!(cor(5) > 0 && cor(3) > 0, "neutro azul e terra verde");
+    assert!(d.blocks[&nome].entities.iter().any(|e| e.common.linetype == "DASHED"), "as reservas tracejadas");
+    // Regenerar refaz a vista no mesmo lugar; o quadro apagado a leva junto.
+    let reg = fiacao::regenerar(&mut d, &setup, None).unwrap();
+    assert_eq!(reg.frontais, 1);
+    let an = analisar(&d);
+    assert_eq!(frontal::gerar(&mut d, &an, &setup, q, Some([1.0, 2.0])).unwrap(), h);
+    assert!(frontal::gerar(&mut d, &an, &setup, q, Some([f64::NAN, 2.0])).is_err());
+    d.model.remove(q);
+    let an = analisar(&d);
+    frontal::regenerar(&mut d, &an, &setup).unwrap();
+    assert!(frontal::vistas(&d).is_empty());
+    let _ = hs;
 }

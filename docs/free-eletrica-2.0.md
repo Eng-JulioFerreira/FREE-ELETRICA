@@ -344,3 +344,15 @@ Ajustes de interface e de prancha:
   unifilar**: disjuntores 1P, 2P e 3P, IDR, DPS, condutores fase, neutro e proteção, barramento e aterramento.
 - **Corte na borda:** só nos pontos de luz (luminárias de teto e arandelas). Nos outros blocos o eletroduto vai até o ponto de
   inserção, e o `ELEREGEN` devolve a ele as pontas que a versão anterior cortou.
+
+## Vista frontal do quadro
+
+- **`ELEQUADRO_FRONTAL`** (`eletrica.quadro.frontal`), em **Documentação e Tabelas**, no **Dimensionar projeto** e no quadro de
+  cargas: desenha o layout de montagem num bloco `QUADRO_FRONTAL_<handle>`, refeito pelo `ELEREGEN`.
+- **Montagem:** caixa e chassi em borda dupla, título `VISTA FRONTAL / LAYOUT DE MONTAGEM - <quadro>`, barramento de neutro
+  (azul) em cima e de terra (verde) embaixo, com um borne por circuito mais o do alimentador.
+- **Trilhos DIN:** o geral com os polos do quadro, um DPS classe II por fase, cada DR (2 módulos, ou 4 com circuito multipolar)
+  seguido dos circuitos dele, os circuitos sem DR e as reservas tracejadas. Até 12 módulos, um trilho de 12; acima disso, trilhos
+  de 18, sem partir um dispositivo.
+- **Escala:** é um detalhe ampliado: um módulo DIN vale 25 cm no desenho, para os textos de 8 cm caberem nos dispositivos.
+- **Unifilar:** o DPS aparece na entrada, depois do geral, ligado ao terra.
