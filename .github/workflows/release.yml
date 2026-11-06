@@ -18,11 +18,11 @@ jobs:
   windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Compilar e empacotar
         shell: pwsh
         run: ./scripts/package_release.ps1 -Versao "${{ inputs.versao }}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: windows
           path: dist/FreeEletrica-v${{ inputs.versao }}-win64.zip
@@ -31,7 +31,7 @@ jobs:
     # Ubuntu antigo: o AppImage roda nas distribuições com a glibc dele ou mais nova.
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Bibliotecas do sistema
         run: |
           sudo apt-get update
@@ -39,17 +39,18 @@ jobs:
             libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libgl1-mesa-dev
       - name: Compilar e empacotar
         run: bash scripts/package_appimage.sh --versao "${{ inputs.versao }}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: linux
           path: dist/FreeEletrica-v${{ inputs.versao }}-x86_64.AppImage
 
   publicar:
     needs: [windows, linux]
-    runs-on: ubuntu-latest
+    # Versão fixa: o rótulo ubuntu-latest passa para o Ubuntu 26 a partir de outubro de 2026.
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           path: pacotes
           merge-multiple: true
