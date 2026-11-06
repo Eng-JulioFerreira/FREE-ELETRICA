@@ -47,7 +47,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("eleregen", "Regenerate Electrical Drawing", run_regen).params("{} → updates tags and tables in place, keeping their positions: {tags, apagadas, tabelas, avisos}"),
         CommandSpec::new("elequadro_tabela", "Load Schedule Table", run_tabela)
             .params("{quadro?: hex | TAG, ponto: [x, y]} → draws the load schedule as a block at the point (moves it if the board already has one): {tabela}")
-            .interactive(|_| Ok(Box::new(TabelaM::default()))),
+            .interactive(|_| Ok(Box::new(TabelaM))),
         CommandSpec::new("eleeletroduto", "Insert Conduit", run_eletroduto)
             .params("{de: hex | [x, y], para: hex | [x, y], instalacao?: \"CEILING\" | \"FLOOR\" | \"WALL\", tipo?: PVC_CORR_LIGHT | PVC_CORR_HEAVY | PVC_RIGID | HDPE_CORR | STEEL_ELECTRO | STEEL_HOT_DIP, perfil?: profile name (applies its type, route, linetype, color and diameters), tracado?: STRAIGHT | ANGLE45 | ARC, desvios?: [[x, y]], diagonalPrimeiro?: bool, flecha?: number (arc bulge as a fraction of the chord: + left, - right, 0 straight; default 0.15)} (a point on a conduit splits it with a pull box) → {eletroduto}")
             .interactive(|_| Ok(Box::new(EletrodutoM::default()))),
@@ -63,7 +63,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("eletrica.ponto.documentacao", "Point Documentation", run_ponto_documentacao)
             .params("{pontos: [hex], legenda?: text | null, descMaterial?: text | null} (null or empty: back to the family's) → {pontos}"),
         CommandSpec::new("elelegenda", "Symbol Legend", run_legenda)
-            .params("{ponto: [x, y]} → draws the electrical symbol legend (electrical points and boxes) as a block at the point (moves it if there is one): {legenda, linhas}")
+            .params("{ponto: [x, y]} → draws the electrical symbol legend (electrical points and boxes) as a block at the point and, beside it, the single-line diagram symbology as a second block (moves them if they exist): {legenda, linhas, simbologiaUnifilar}")
             .interactive(|_| Ok(Box::new(LegendaM { disciplina: ele::disciplina::Disciplina::Eletrica }))),
         CommandSpec::new("telelegenda", "Telecom Symbol Legend", run_telelegenda)
             .params("{ponto: [x, y]} → draws the telecom symbol legend (telecom points and racks) as a block at the point (moves it if there is one): {legenda, linhas}")
@@ -88,12 +88,21 @@ pub fn specs() -> Vec<CommandSpec> {
             .enabled(no_editor_de_blocos)
             .interactive(|_| Ok(Box::new(ConectorM))),
         CommandSpec::new("eletrica.materiais", "Materials List", run_materiais)
-            .params("{} → {cabos: [{secao, tipo, metros}], eletrodutos: [{tipo, diametro, metros}], caixas, pontos, disjuntores, pontosSemCaixa, eletrodutosSoltos, avisos}")
+            .params("{} → {cabos: [{secao, tipo, nome, funcao: faseR | faseS | faseT | neutro | retorno | protecao, cor, metros, rolos, descricao}], eletrodutos: [{tipo, diametro, metros}], caixas, pontos, conjuntos, disjuntores, quadros, gruposDr, pontosSemCaixa, eletrodutosSoltos, cabosTelecom, telecom, avisos}")
             .noundo(),
         CommandSpec::new("eletrica.dimensionar", "Size Board", run_dimensionar)
-            .params("{quadro?: hex | TAG (default: every board), compartilharPe?: bool, temperaturaAmbiente?: °C, fcaManual?: number | null, criterioDisjuntor?: correnteProjetoIb | capacidadeCaboIz, metodoInstalacao?: A1 | A2 | B1 | B2 | C | D | E | F, unifilar?: bool (also generates or updates the single-line diagram)} → applies the options, sizes the circuits, stores the result on the boards and updates tags, tables and diagrams: {quadros: [{tag, circuitos, avisos}], circuitos, avisos, unifilares}"),
+            .params("{quadro?: hex | TAG (default: every board), compartilharPe?: bool, temperaturaAmbiente?: °C, fcaManual?: number | null, criterioDisjuntor?: correnteProjetoIb | capacidadeCaboIz, metodoInstalacao?: A1 | A2 | B1 | B2 | C | D | E | F, unifilar?: bool (also generates or updates the single-line diagram), frontal?: bool (also generates or updates the front view, and so the single-line diagram)} → applies the options, sizes the circuits, stores the result on the boards and updates tags, tables and diagrams: {quadros: [{tag, circuitos, avisos}], circuitos, avisos, unifilares, frontais}"),
+        CommandSpec::new("eletrica.diagnostico", "Board Diagnostics", run_diagnostico)
+            .params("{quadro?: hex | TAG} → what to fix before sizing the board, the most serious first: points without circuit, points of its circuits without a conduit path or with too much voltage drop, the board off the network, loose conduits and its sections above the fill limit: {quadro, itens: [{handle, pos, nivel, motivo, eletroduto}], avisos}")
+            .noundo(),
+        CommandSpec::new("eletrica.documentacao.alvo", "Documentation Target", run_alvo_documentacao)
+            .params("{quadro?: hex | TAG | null, rack?: hex | TAG | null} → the board and the rack that ELEQUADRO_TABELA, ELEUNIFILAR, ELEQUADRO_FRONTAL and TELETABELA draw next, also while they run (the mini-bar): {quadro, rack}")
+            .noundo(),
+        CommandSpec::new("elemateriais_tabela", "Materials Table", run_materiais_tabela)
+            .params("{ponto: [x, y]} → draws the materials list as a table block at the point (moves it if there is one): cables by insulation, section and colour (function), conduits, boxes, points, breakers, board parts and telecom: {tabela, linhas}")
+            .interactive(|_| Ok(Box::new(MateriaisM))),
         CommandSpec::new("eletrica.unifilar", "Single-Line Diagram", run_unifilar)
-            .params("{quadro?: hex | TAG, ponto?: [x, y]} → generates or updates the board's single-line diagram; an existing one only moves when `ponto` is given: {unifilar}"),
+            .params("{quadro?: hex | TAG, ponto?: [x, y]} → generates or updates the board's single-line diagram (only the diagram: its symbology is in the electrical symbol legend); an existing one only moves when `ponto` is given: {unifilar}"),
         CommandSpec::new("eleunifilar", "Single-Line Diagram", run_unifilar)
             .params("{quadro?: hex | TAG, ponto?: [x, y]} → the same as eletrica.unifilar; typed, it asks for the board and the point: {unifilar}")
             .interactive(|_| Ok(Box::new(UnifilarM::default()))),
@@ -101,7 +110,7 @@ pub fn specs() -> Vec<CommandSpec> {
             .params("{quadro?: hex | TAG, ponto?: [x, y]} → generates or updates the board's front view (DIN rail mounting layout); an existing one only moves when `ponto` is given: {frontal, trilhos, modulos, dispositivos: [{tipo, modulos, topo, base, trilho, posicao}]}"),
         CommandSpec::new("elequadro_frontal", "Board Front View", run_frontal)
             .params("{quadro?: hex | TAG, ponto?: [x, y]} → the same as eletrica.quadro.frontal; typed, it asks for the board and the point")
-            .interactive(|_| Ok(Box::new(UnifilarM { frontal: true, ..UnifilarM::default() }))),
+            .interactive(|_| Ok(Box::new(UnifilarM { frontal: true }))),
         CommandSpec::new("televincular", "Link Telecom Points", run_televincular)
             .params("{rack?: hex | TAG (default: the only rack, or the nearest one through the conduits), pontos?: [hex] (default: every telecom point), renumerar?: bool (renumber every point, not only the ones without ID)} → writes RACK_PAI, ID_PONTO (D-01, CFTV-01, AP-01, FO-01, TV-01), TIPO_CABO and QTD_CABOS: {pontos: [{ponto, id, rack, cabo, quantidade}], avisos}")
             .interactive(|_| Ok(Box::new(VincularM::default()))),
@@ -117,7 +126,7 @@ pub fn specs() -> Vec<CommandSpec> {
             .params("{pontos: [hex], cabo?: telecom catalog name, quantidade?: 1 to 48, id?: text (the point number, its rack port; empty takes it off), descricao?: text (empty: back to the legend), rack?: hex | TAG | null (null unlinks the point, even with a single rack)} → edits telecom points (TIPO_CABO, QTD_CABOS, ID_PONTO, DESC_PORTA, RACK_PAI) and updates tags and tables: {pontos}"),
         CommandSpec::new("teletabela", "Rack Table", run_teletabela)
             .params("{rack?: hex | TAG (default: the first), ponto: [x, y]} → draws the rack (telecom enclosure) table: port, point ID, description, cable, 3D length and status; an existing one moves: {tabela}")
-            .interactive(|_| Ok(Box::new(TabelaRackM::default()))),
+            .interactive(|_| Ok(Box::new(TabelaRackM))),
         CommandSpec::new("eletrica.quadro.equilibrar", "Balance Phases", run_equilibrar)
             .params("{quadro?: hex | TAG} → unlocks the phases of every circuit, so the balancing applies to all: {destravados, desequilibrio}"),
         CommandSpec::new("eletrica.atributos", "Block Attributes", run_atributos)
@@ -155,7 +164,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("eletrica.sobrescrever", "Override Circuit", run_sobrescrever)
             .params("{quadro?: hex | TAG, circuito, secao?: mm², disjuntor?: A} (no value: back to the automatic choice) → {quadro, circuito}"),
         CommandSpec::new("eletrica.quadro", "Board Settings", run_quadro)
-            .params("{quadro?: hex | TAG, sistema?: \"F+N+T\" | \"2F+N+T\" | \"2F+T\" | \"3F+N+T\" | null, tensaoNominal?: \"127/220\" | \"220/380\" | null, cabo?: FLEX_PVC_70 | UNI_PVC_70 | HEPR_XLPE_90 | LSZH_70 | LSZH_HEPR_90 | null, alimentadoPor?: \"CONCESSIONARIA\" | hex | TAG | null, montagem?: EMBUTIR | SOBREPOR | null, observacoes?: text | null, modulos?: number | null (null: the estimate), reservas?: number | null (null: the NBR 5410 minimum), isolacao?: \"PVC\" | \"EPR\" | \"XLPE\" | null (from drawings before the board's cable), disjuntorGeral?: A | null, secaoGeral?: mm² | null (main breaker and feeder section locked by hand), usarDps?: bool | null, classeDps?: \"I\" | \"II\" | \"I+II\" | null, disjuntorDps?: A | null (breaker dedicated to the SPD), metodo?: A1 | A2 | B1 | B2 | C | D | E | F | null (installation method, NBR 5410 table 33), modulosPorTrilho?: 12 | 16 | 18 | 24 | null, barramentoFase?: PENTE | ESCAMA | null, barramentoNt?: TOPO_BASE | LATERAIS | null} (null: back to what the block says) → {quadro, isolacao, config}"),
+            .params("{quadro?: hex | TAG, sistema?: \"F+N+T\" | \"2F+N+T\" | \"2F+T\" | \"3F+N+T\" | null, tensaoNominal?: \"127/220\" | \"220/380\" | null, cabo?: FLEX_PVC_70 | UNI_PVC_70 | HEPR_XLPE_90 | LSZH_70 | LSZH_HEPR_90 | null, alimentadoPor?: \"CONCESSIONARIA\" | hex | TAG | null, montagem?: EMBUTIR | SOBREPOR | null, observacoes?: text | null, modulos?: number | null (null: the estimate), reservas?: number | null (null: the NBR 5410 minimum), isolacao?: \"PVC\" | \"EPR\" | \"XLPE\" | null (from drawings before the board's cable), disjuntorGeral?: A | null, secaoGeral?: mm² | null (main breaker and feeder section locked by hand), usarDps?: bool | null, classeDps?: \"I\" | \"II\" | \"I+II\" | null, disjuntorDps?: A | null (breaker dedicated to the SPD), metodo?: A1 | A2 | B1 | B2 | C | D | E | F | null (installation method, NBR 5410 table 33), modulosPorTrilho?: 12 | 16 | 18 | 24 | null, barramentoFase?: PENTE | ESCAMA | null, barramentoNt?: TOPO_BASE | LATERAIS | null (kept from earlier versions: the neutral and earth bars are always on the sides), polosGeral?: 1-3 | null, curvaGeral?: B | C | D | null, caboGeral?: FLEX_PVC_70 | UNI_PVC_70 | HEPR_XLPE_90 | LSZH_70 | LSZH_HEPR_90 | null (feeder cable), tensaoDps?: 175 | 275 | 320 | 385 | 440 | null (SPD Uc, V), imaxDps?: 20 | 45 | null (SPD Imax, kA), polosDps?: 1-3 | null (poles of the SPD breaker)} (null: back to what the block says) → {quadro, isolacao, config}"),
         CommandSpec::new("eletrica.cargas", "Load Schedule", run_cargas)
             .params("{quadro?: hex | TAG} → [{id, descricao, circuito}] (circuits with points and the ones created empty)")
             .noundo(),
@@ -181,6 +190,8 @@ pub fn specs() -> Vec<CommandSpec> {
             .params("{id} → deletes a custom table: {excluida}")
             .enabled(always)
             .noundo(),
+        CommandSpec::new("eletrica.dr.definir", "RCD Group Settings", run_definir_dr)
+            .params("{quadro?: hex | TAG, grupo, corrente?: 25 | 40 | 63 | 80 | 100 | 125 | null (null: the suggested rating), sensibilidade?: 10 | 30 | 100 | 300 | null (mA; null: 30 mA)} → {quadro, grupo, corrente, sensibilidade}"),
         CommandSpec::new("eletrica.dr.excluir", "Delete RCD Group", run_excluir_dr)
             .params("{quadro?: hex | TAG, grupo} → its circuits stay, without RCD: {circuitos}"),
         CommandSpec::new("eletrica.circuito.alvo", "Circuit Target", run_alvo)
@@ -364,6 +375,12 @@ fn run_quadro(s: &mut Session, p: &Value) -> Result<Value> {
         ("modulosPorTrilho", eq::CHAVE_MODULOS_TRILHO),
         ("barramentoFase", eq::CHAVE_BARRAMENTO_FASE),
         ("barramentoNt", eq::CHAVE_BARRAMENTO_NT),
+        ("polosGeral", eq::CHAVE_POLOS_GERAL),
+        ("curvaGeral", eq::CHAVE_CURVA_GERAL),
+        ("caboGeral", eq::CHAVE_CABO_GERAL),
+        ("tensaoDps", eq::CHAVE_TENSAO_DPS),
+        ("imaxDps", eq::CHAVE_IMAX_DPS),
+        ("polosDps", eq::CHAVE_POLOS_DPS),
     ];
     let mut valores: Vec<(&str, &str, Option<String>)> = Vec::new();
     for (k, chave) in opcoes {
@@ -665,16 +682,33 @@ fn run_dimensionar(s: &mut Session, p: &Value) -> Result<Value> {
     let feitos = ele::editar::processar_calculo(s.doc_mut()?, &setup, quadro).map_err(erro)?;
     let circuitos: usize = feitos.iter().map(|f| f.circuitos).sum();
     let avisos: usize = feitos.iter().map(|f| f.avisos.len()).sum();
-    let mut unifilares = 0;
-    if p.get("unifilar").and_then(Value::as_bool).unwrap_or(false) {
-        let alvos: Vec<Handle> = quadro.map_or_else(|| a.quadros().iter().map(|q| q.handle).collect(), |q| vec![q]);
-        let a = analise(s)?;
-        for q in alvos {
+    // A vista frontal depende dos disjuntores, DR e DPS do unifilar: pedir a vista gera os dois.
+    let frontal = p.get("frontal").and_then(Value::as_bool).unwrap_or(false);
+    let unifilar = frontal || p.get("unifilar").and_then(Value::as_bool).unwrap_or(false);
+    let alvos: Vec<Handle> = quadro.map_or_else(|| a.quadros().iter().map(|q| q.handle).collect(), |q| vec![q]);
+    let (mut unifilares, mut frontais) = (0, 0);
+    let a = analise(s)?;
+    for q in alvos {
+        if unifilar {
             ele::unifilar::gerar(s.doc_mut()?, &a, &setup, q, None).map_err(erro)?;
             unifilares += 1;
         }
+        if frontal {
+            ele::frontal::gerar(s.doc_mut()?, &a, &setup, q, None).map_err(erro)?;
+            frontais += 1;
+        }
     }
-    Ok(json!({ "quadros": json_de(&feitos)?, "circuitos": circuitos, "avisos": avisos, "unifilares": unifilares }))
+    Ok(json!({ "quadros": json_de(&feitos)?, "circuitos": circuitos, "avisos": avisos, "unifilares": unifilares, "frontais": frontais }))
+}
+
+fn run_diagnostico(s: &mut Session, p: &Value) -> Result<Value> {
+    let a = analise(s)?;
+    let q = achar_quadro(&a, p.get("quadro"))?;
+    let setup = ele::setup::atual();
+    let doc = s.doc()?;
+    let itens = ele::inspecao::diagnostico(doc, &a, &setup, q);
+    let avisos = ele::quadro::rotear(doc, &a, &setup, q).map(|r| r.avisos).unwrap_or_else(|e| vec![e]);
+    Ok(json!({ "quadro": q.hex(), "itens": json_de(&itens)?, "avisos": avisos }))
 }
 
 fn run_unifilar(s: &mut Session, p: &Value) -> Result<Value> {
@@ -704,10 +738,10 @@ fn run_frontal(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({ "frontal": h.hex(), "trilhos": mo.trilhos, "modulos": mo.modulos(), "dispositivos": json_de(&mo.dispositivos)? }))
 }
 
-/// ELEUNIFILAR e ELEQUADRO_FRONTAL digitados: o quadro (Enter: o primeiro) e o ponto de inserção.
+/// ELEUNIFILAR e ELEQUADRO_FRONTAL digitados: o quadro (o da mini-barra; sem ele, um clique ou Enter: o
+/// primeiro) e o ponto de inserção.
 #[derive(Default)]
 struct UnifilarM {
-    quadro: Option<Handle>,
     /// A vista frontal do quadro, e não o unifilar.
     frontal: bool,
 }
@@ -717,44 +751,19 @@ impl Interactive for UnifilarM {
         if self.frontal { "ELEQUADRO_FRONTAL" } else { "ELEUNIFILAR" }
     }
     fn begin(&mut self, s: &mut Session) -> Result<Step> {
-        s.set_selection(Vec::new());
-        let a = analise(s)?;
-        let quadros = a.quadros();
-        if quadros.is_empty() {
-            s.echo("Nenhum quadro no desenho: insira um com Inserir pontos.");
-            return Ok(Step::Done);
-        }
-        if let [q] = quadros.as_slice() {
-            self.quadro = Some(q.handle);
-        }
-        Ok(Step::Continue)
+        Ok(if comecar_documentacao(s, false)? { Step::Continue } else { Step::Done })
     }
-    fn prompt(&self, _s: &Session) -> Prompt {
-        match self.quadro {
-            None => Prompt::new("Selecione o quadro", Accept::SELECT).default("Primeiro"),
+    fn prompt(&self, s: &Session) -> Prompt {
+        match alvo_valido(s, false) {
+            None => Prompt::new("Selecione o quadro (ou escolha na barra)", Accept::SELECT).default("Primeiro"),
             Some(_) if self.frontal => Prompt::new("Ponto de inserção da vista frontal", Accept::POINT),
             Some(_) => Prompt::new("Ponto de inserção do diagrama", Accept::POINT),
         }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
-        match (self.quadro, i) {
-            (_, Input::Cancel) | (Some(_), Input::Enter) => Ok(Step::Done),
-            (None, Input::Enter) => {
-                self.quadro = analise(s)?.quadros().first().map(|q| q.handle);
-                Ok(Step::Continue)
-            }
-            (None, Input::Pick(hs)) => {
-                s.set_selection(Vec::new());
-                for h in hs {
-                    if quadro_valido(s, h)?.is_some() {
-                        self.quadro = Some(h);
-                        return Ok(Step::Continue);
-                    }
-                }
-                s.echo("Selecione um bloco de quadro.");
-                Ok(Step::Continue)
-            }
-            (Some(q), Input::Point(p)) => {
+        let Some(q) = alvo_valido(s, false) else { return escolher_por_clique(s, false, i) };
+        match i {
+            Input::Point(p) => {
                 let a = analise(s)?;
                 let gerar = if self.frontal { ele::frontal::gerar } else { ele::unifilar::gerar };
                 match gerar(s.doc_mut()?, &a, &ele::setup::atual(), q, Some([p.x, p.y])) {
@@ -765,6 +774,7 @@ impl Interactive for UnifilarM {
                     }
                 }
             }
+            Input::Cancel | Input::Enter => Ok(Step::Done),
             _ => Ok(Step::Continue),
         }
     }
@@ -1126,54 +1136,27 @@ impl Interactive for VincularM {
     }
 }
 
-/// TELETABELA digitado: o rack (Enter: o primeiro) e o ponto de inserção.
-#[derive(Default)]
-struct TabelaRackM {
-    rack: Option<Handle>,
-}
+/// TELETABELA digitado: o rack (o da mini-barra; sem ele, um clique ou Enter: o primeiro) e o ponto de
+/// inserção.
+struct TabelaRackM;
 
 impl Interactive for TabelaRackM {
     fn name(&self) -> &'static str {
         "TELETABELA"
     }
     fn begin(&mut self, s: &mut Session) -> Result<Step> {
-        s.set_selection(Vec::new());
-        let a = analise(s)?;
-        let racks = ele::telecom::racks(&a);
-        if racks.is_empty() {
-            s.echo("Nenhum rack / quadro VDI no desenho: insira um com Inserir rack.");
-            return Ok(Step::Done);
-        }
-        if let [r] = racks.as_slice() {
-            self.rack = Some(r.handle);
-        }
-        Ok(Step::Continue)
+        Ok(if comecar_documentacao(s, true)? { Step::Continue } else { Step::Done })
     }
-    fn prompt(&self, _s: &Session) -> Prompt {
-        match self.rack {
-            None => Prompt::new("Selecione o rack", Accept::SELECT).default("Primeiro"),
+    fn prompt(&self, s: &Session) -> Prompt {
+        match alvo_valido(s, true) {
+            None => Prompt::new("Selecione o rack (ou escolha na barra)", Accept::SELECT).default("Primeiro"),
             Some(_) => Prompt::new("Ponto de inserção da tabela do rack", Accept::POINT),
         }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
-        match (self.rack, i) {
-            (_, Input::Cancel) | (Some(_), Input::Enter) => Ok(Step::Done),
-            (None, Input::Enter) => {
-                self.rack = ele::telecom::racks(&analise(s)?).first().map(|r| r.handle);
-                Ok(Step::Continue)
-            }
-            (None, Input::Pick(hs)) => {
-                s.set_selection(Vec::new());
-                for h in hs {
-                    if rack_valido(s, h)? {
-                        self.rack = Some(h);
-                        return Ok(Step::Continue);
-                    }
-                }
-                s.echo("Selecione um rack / quadro VDI.");
-                Ok(Step::Continue)
-            }
-            (Some(r), Input::Point(p)) => {
+        let Some(r) = alvo_valido(s, true) else { return escolher_por_clique(s, true, i) };
+        match i {
+            Input::Point(p) => {
                 let a = analise(s)?;
                 match ele::telecom::inserir_tabela(s.doc_mut()?, &a, &ele::setup::atual(), r, [p.x, p.y]) {
                     Ok(_) => Ok(Step::Done),
@@ -1183,6 +1166,7 @@ impl Interactive for TabelaRackM {
                     }
                 }
             }
+            Input::Cancel | Input::Enter => Ok(Step::Done),
             _ => Ok(Step::Continue),
         }
     }
@@ -1347,55 +1331,112 @@ fn run_tabela(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({ "tabela": h.hex(), "quadro": q.hex() }))
 }
 
-/// ELEQUADRO_TABELA digitado: o quadro (Enter: o primeiro) e o ponto de inserção.
-#[derive(Default)]
-struct TabelaM {
-    quadro: Option<Handle>,
+// ---------------------------------------------------------------- quadro ou rack da documentação
+
+/// O quadro (`rack` falso) ou o rack escolhido na mini-barra para as tabelas e diagramas, se ainda existe.
+fn alvo_valido(s: &Session, rack: bool) -> Option<Handle> {
+    let uid = s.state().ok()?.uid;
+    let h = ele::quadro::alvo_documentacao(uid, rack)?;
+    let tipo = if rack { TipoPonto::Rack } else { TipoPonto::Quadro };
+    ele::ponto::ler_ponto(s.doc().ok()?, h).filter(|p| p.tipo == tipo).map(|p| p.handle)
 }
+
+fn escolher_alvo(s: &Session, rack: bool, h: Option<Handle>) {
+    if let Ok(st) = s.state() {
+        ele::quadro::definir_alvo_documentacao(st.uid, rack, h);
+    }
+}
+
+/// O começo das ferramentas de documentação: sem nenhum, encerra; com um só, ele é o alvo; o escolhido antes
+/// continua valendo enquanto existir. Devolve se há o que fazer.
+fn comecar_documentacao(s: &mut Session, rack: bool) -> Result<bool> {
+    s.set_selection(Vec::new());
+    let a = analise(s)?;
+    let lista: Vec<Handle> =
+        if rack { ele::telecom::racks(&a).iter().map(|r| r.handle).collect() } else { a.quadros().iter().map(|q| q.handle).collect() };
+    if lista.is_empty() {
+        s.echo(if rack {
+            "Nenhum rack / quadro VDI no desenho: insira um com Inserir rack."
+        } else {
+            "Nenhum quadro no desenho: insira um com Inserir pontos."
+        });
+        return Ok(false);
+    }
+    if alvo_valido(s, rack).is_none() {
+        escolher_alvo(s, rack, if let [h] = lista.as_slice() { Some(*h) } else { None });
+    }
+    Ok(true)
+}
+
+/// A escolha do quadro ou do rack por clique (ou Enter: o primeiro), enquanto a mini-barra não escolheu.
+fn escolher_por_clique(s: &mut Session, rack: bool, i: Input) -> Result<Step> {
+    match i {
+        Input::Cancel => Ok(Step::Done),
+        Input::Enter => {
+            let a = analise(s)?;
+            let primeiro = if rack { ele::telecom::racks(&a).first().map(|r| r.handle) } else { a.quadros().first().map(|q| q.handle) };
+            escolher_alvo(s, rack, primeiro);
+            Ok(Step::Continue)
+        }
+        Input::Pick(hs) => {
+            s.set_selection(Vec::new());
+            for h in hs {
+                let valido = if rack { rack_valido(s, h)? } else { quadro_valido(s, h)?.is_some() };
+                if valido {
+                    escolher_alvo(s, rack, Some(h));
+                    return Ok(Step::Continue);
+                }
+            }
+            s.echo(if rack { "Selecione um rack / quadro VDI." } else { "Selecione um bloco de quadro." });
+            Ok(Step::Continue)
+        }
+        _ => Ok(Step::Continue),
+    }
+}
+
+fn run_alvo_documentacao(s: &mut Session, p: &Value) -> Result<Value> {
+    let a = analise(s)?;
+    let quadro = match p.get("quadro") {
+        None => None,
+        Some(Value::Null) => Some(None),
+        Some(v) => Some(Some(achar_quadro(&a, Some(v))?)),
+    };
+    let rack = match p.get("rack") {
+        None => None,
+        Some(Value::Null) => Some(None),
+        Some(v) => Some(Some(achar_rack(&a, Some(v))?)),
+    };
+    if let Some(q) = quadro {
+        escolher_alvo(s, false, q);
+    }
+    if let Some(r) = rack {
+        escolher_alvo(s, true, r);
+    }
+    Ok(json!({ "quadro": alvo_valido(s, false).map(|h| h.hex()), "rack": alvo_valido(s, true).map(|h| h.hex()) }))
+}
+
+/// ELEQUADRO_TABELA digitado: o quadro (o da mini-barra; sem ele, um clique ou Enter: o primeiro) e o ponto de
+/// inserção.
+struct TabelaM;
 
 impl Interactive for TabelaM {
     fn name(&self) -> &'static str {
         "ELEQUADRO_TABELA"
     }
     fn begin(&mut self, s: &mut Session) -> Result<Step> {
-        s.set_selection(Vec::new());
         preparar(s)?;
-        let a = analise(s)?;
-        let quadros = a.quadros();
-        if quadros.is_empty() {
-            s.echo("Nenhum quadro no desenho: insira um com Inserir pontos.");
-            return Ok(Step::Done);
-        }
-        if let [q] = quadros.as_slice() {
-            self.quadro = Some(q.handle);
-        }
-        Ok(Step::Continue)
+        Ok(if comecar_documentacao(s, false)? { Step::Continue } else { Step::Done })
     }
-    fn prompt(&self, _s: &Session) -> Prompt {
-        match self.quadro {
-            None => Prompt::new("Selecione o quadro", Accept::SELECT).default("Primeiro"),
+    fn prompt(&self, s: &Session) -> Prompt {
+        match alvo_valido(s, false) {
+            None => Prompt::new("Selecione o quadro (ou escolha na barra)", Accept::SELECT).default("Primeiro"),
             Some(_) => Prompt::new("Ponto de inserção da tabela", Accept::POINT),
         }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
-        match (self.quadro, i) {
-            (_, Input::Cancel) => Ok(Step::Done),
-            (None, Input::Enter) => {
-                self.quadro = analise(s)?.quadros().first().map(|q| q.handle);
-                Ok(Step::Continue)
-            }
-            (None, Input::Pick(hs)) => {
-                s.set_selection(Vec::new());
-                for h in hs {
-                    if quadro_valido(s, h)?.is_some() {
-                        self.quadro = Some(h);
-                        return Ok(Step::Continue);
-                    }
-                }
-                s.echo("Selecione um bloco de quadro.");
-                Ok(Step::Continue)
-            }
-            (Some(q), Input::Point(p)) => {
+        let Some(q) = alvo_valido(s, false) else { return escolher_por_clique(s, false, i) };
+        match i {
+            Input::Point(p) => {
                 let a = analise(s)?;
                 match ele::tabela::inserir(s.doc_mut()?, &a, &ele::setup::atual(), q, [p.x, p.y]) {
                     Ok(_) => Ok(Step::Done),
@@ -1405,7 +1446,44 @@ impl Interactive for TabelaM {
                     }
                 }
             }
-            (Some(_), Input::Enter) => Ok(Step::Done),
+            Input::Cancel | Input::Enter => Ok(Step::Done),
+            _ => Ok(Step::Continue),
+        }
+    }
+}
+
+fn run_materiais_tabela(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "elemateriais_tabela";
+    let pos = p.get("ponto").and_then(ponto_de).ok_or_else(|| bad(CMD, "`ponto` ([x, y]) is required"))?;
+    preparar(s)?;
+    let a = analise(s)?;
+    let setup = ele::setup::atual();
+    let h = ele::materiais::inserir_tabela(s.doc_mut()?, &a, &setup, pos).map_err(erro)?;
+    let linhas = ele::materiais::linhas_da_tabela(&ele::materiais::levantar(s.doc()?, &a, &setup)).len();
+    Ok(json!({ "tabela": h.hex(), "linhas": linhas }))
+}
+
+/// ELEMATERIAIS_TABELA digitado: o ponto de inserção.
+struct MateriaisM;
+
+impl Interactive for MateriaisM {
+    fn name(&self) -> &'static str {
+        "ELEMATERIAIS_TABELA"
+    }
+    fn begin(&mut self, s: &mut Session) -> Result<Step> {
+        s.set_selection(Vec::new());
+        Ok(Step::Continue)
+    }
+    fn prompt(&self, _s: &Session) -> Prompt {
+        Prompt::new("Ponto de inserção da lista de materiais", Accept::POINT)
+    }
+    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        match i {
+            Input::Point(q) => {
+                run_materiais_tabela(s, &json!({ "ponto": [q.x, q.y] }))?;
+                Ok(Step::Done)
+            }
+            Input::Cancel | Input::Enter => Ok(Step::Done),
             _ => Ok(Step::Continue),
         }
     }
@@ -2027,7 +2105,30 @@ fn run_excluir_dr(s: &mut Session, p: &Value) -> Result<Value> {
     for c in &circuitos {
         ele::editar::definir_grupo_dr(s.doc_mut()?, q, c, None).map_err(erro)?;
     }
+    ele::editar::definir_dr(s.doc_mut()?, q, &grupo, Some(None), Some(None)).map_err(erro)?;
     Ok(json!({ "circuitos": circuitos.len() }))
+}
+
+fn run_definir_dr(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "eletrica.dr.definir";
+    let a = analise(s)?;
+    let q = achar_quadro(&a, p.get("quadro"))?;
+    let grupo = texto(CMD, p, "grupo")?;
+    let opcao = |k: &str| -> Result<Option<Option<f64>>> {
+        match p.get(k) {
+            None => Ok(None),
+            Some(Value::Null) => Ok(Some(None)),
+            Some(v) => Ok(Some(Some(v.as_f64().filter(|x| x.is_finite()).ok_or_else(|| bad(CMD, format!("`{k}` must be a number or null")))?))),
+        }
+    };
+    let (corrente, sensibilidade) = (opcao("corrente")?, opcao("sensibilidade")?);
+    if corrente.is_none() && sensibilidade.is_none() {
+        return Err(bad(CMD, "give `corrente` (A) or `sensibilidade` (mA)"));
+    }
+    ele::editar::definir_dr(s.doc_mut()?, q, &grupo, corrente, sensibilidade).map_err(|e| bad(CMD, e))?;
+    let r = ele::quadro::rotear(s.doc()?, &analise(s)?, &ele::setup::atual(), q).map_err(erro)?;
+    let g = r.grupos_dr().into_iter().find(|g| g.nome.eq_ignore_ascii_case(grupo.trim()));
+    Ok(json!({ "quadro": q.hex(), "grupo": grupo, "corrente": g.as_ref().and_then(|g| g.dr), "sensibilidade": g.as_ref().map(|g| g.sensibilidade) }))
 }
 
 fn run_encaixar(s: &mut Session, _p: &Value) -> Result<Value> {
@@ -2433,7 +2534,8 @@ fn legenda_da_disciplina(s: &mut Session, p: &Value, cmd: &str, d: ele::discipli
     let pos = p.get("ponto").and_then(ponto_de).ok_or_else(|| bad(cmd, "`ponto` ([x, y]) is required"))?;
     let (a, m) = (analise(s)?, metros(s)?);
     let h = ele::legenda::inserir(s.doc_mut()?, &a, pos, m, Some(d)).map_err(erro)?;
-    Ok(json!({ "legenda": h.hex(), "linhas": ele::legenda::linhas(&a, Some(d)).len() }))
+    let simbologia = ele::legenda::simbologia_unifilar(s.doc()?).filter(|_| d == ele::disciplina::Disciplina::Eletrica).map(|h| h.hex());
+    Ok(json!({ "legenda": h.hex(), "linhas": ele::legenda::linhas(&a, Some(d)).len(), "simbologiaUnifilar": simbologia }))
 }
 
 /// ELELEGENDA e TELELEGENDA digitados: o ponto de inserção.

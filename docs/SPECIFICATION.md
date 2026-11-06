@@ -63,17 +63,25 @@ continuam sendo lidos.
 | :--- | :--- |
 | `BLOCK_RECORD` | `schema_ver`, `domain`, `category`, `height_ref`, `fixed_elevation_m`, `physical_box`, `power_va`, `power_factor`, `voltage_v`, `keys`, `demand_class`, `demand_factor` |
 | Ponto (`INSERT`) | Atributos do bloco, incluindo `TIPO_CARGA` e `FATOR_DEMANDA`; `elevation_m` fora da legenda; `target_handles.<letra>` no interruptor |
-| Quadro (`INSERT`) | `SISTEMA_QUADRO`, `TENSAO_NOMINAL`, `CABO_PADRAO_QUADRO`, `ALIMENTADO_POR`, `DISJ_GERAL`, `SECAO_GERAL`, `USAR_DPS`, `CLASSE_DPS`, `DISJ_DPS`, `METODO_QUADRO`, `MODULOS_TRILHO`, `BARRAMENTO_FASE`, `BARRAMENTO_NT`; `DESC.`, `SECAO.`, `DISJ.`, `CURVA.`, `CABO.`, `CABONOME.`, `ESQUEMA.`, `TENSAO.`, `FASE.`, `DR.`, `DIM.`, `METODO.` + circuito |
+| Quadro (`INSERT`) | `SISTEMA_QUADRO`, `TENSAO_NOMINAL`, `CABO_PADRAO_QUADRO`, `ALIMENTADO_POR`, `DISJ_GERAL`, `SECAO_GERAL`, `USAR_DPS`, `CLASSE_DPS`, `DISJ_DPS`, `METODO_QUADRO`, `MODULOS_TRILHO`, `BARRAMENTO_FASE`, `BARRAMENTO_NT` (de versões anteriores: neutro e terra ficam sempre nas laterais), `POLOS_GERAL`, `CURVA_GERAL`, `CABO_GERAL`, `TENSAO_DPS`, `IMAX_DPS`, `POLOS_DPS`; `DRIN.` e `DRSENS.` + grupo de DR (corrente e sensibilidade); `DESC.`, `SECAO.`, `DISJ.`, `CURVA.`, `CABO.`, `CABONOME.`, `ESQUEMA.`, `TENSAO.`, `FASE.`, `DR.`, `DIM.`, `METODO.` + circuito |
 | Eletroduto | `schema_ver`, `from_handle`, `to_handle`, `install_elevation`, `conduit_type`, `conduit_profile`, `nominal_diameter_mm`, `manual_diameter_lock`, `passing_wires.<n>`, `tag_handle` |
 | Tag de fiação | `schema_ver`, `parent_conduit_handle`, `anchor_x`, `anchor_y`, `user_offset_x`, `user_offset_y` |
 | Ponto de telecom (`INSERT`) | `RACK_PAI` (handle do rack, no XDATA; `-` desvinculado à mão); `ID_PONTO` (o número da porta no rack), `TIPO_CABO` e `QTD_CABOS` no atributo ou no XDATA; `DESC_PORTA` (a descrição no quadro de telecom); `telecom_link_m` (comprimento do último cálculo) |
 | Eletroduto de telecom | `telecom_cables.<n>` (`ID:cabo:quantidade;...`) e `nominal_diameter_mm` |
 
 O tipo de linha e a cor do perfil ficam na própria entidade do eletroduto. O diagrama unifilar é o bloco
-`UNIFILAR_<handle do quadro>`; a vista frontal, `QUADRO_FRONTAL_<handle do quadro>`; a tabela, `QUADRO_TABELA_<handle do quadro>`; e a tabela do rack, `TELECOM_RACK_<handle do rack>`.
+`UNIFILAR_<handle do quadro>`; a vista frontal, `QUADRO_FRONTAL_<handle do quadro>`; a tabela, `QUADRO_TABELA_<handle do quadro>`; a tabela do rack, `TELECOM_RACK_<handle do rack>`; a lista de materiais, `LISTA_MATERIAIS`; e as legendas, `LEGENDA_SIMBOLOS_ELETRICA` (com a simbologia do unifilar ao lado, `LEGENDA_SIMBOLOGIA_UNIFILAR`) e `LEGENDA_SIMBOLOS_TELECOM`.
 
 As configurações do Setup, incluindo PE compartilhado, FCA fixo, catálogos, perfis e tabelas de demanda próprias, ficam nas
 preferências do programa, não no DXF.
+
+### Lista de materiais
+
+Os cabos são medidos condutor a condutor em cada trecho de eletroduto (planta e desníveis até os blocos), vezes a folga de
+materiais, e agrupados por (tipo de cabo, seção, função): cada fase que o circuito usa no quadro (R, S, T) na cor dela, o
+neutro azul-claro (NBR 5410, 6.1.5.3.1), os retornos que passam no trecho e o condutor de proteção verde ou verde-amarelo
+(6.1.5.3.2), um só por trecho quando é compartilhado. As cores das fases e do retorno ficam nas configurações. Um circuito
+sem eletrodutos até o quadro entra pelo percurso estimado, sem os retornos, com aviso.
 
 ## Comandos
 
@@ -87,8 +95,8 @@ próprio `CommandSpec`.
 | Atributos | `eletrica.atributos`, `eletrica.atributo.definir` |
 | Circuitos | `elecircuito`, `eleremoverponto`, `elecomando`, `eletrica.circuito.criar`, `.definir`, `.descrever`, `.juntar`, `.excluir`, `.alvo` |
 | Eletrodutos | `eleeletroduto`, `eletrica.eletroduto.modelo`, `.dividir`, `.definir`, `eletrica.eletrodutos` |
-| Cálculo | `eletrica.dimensionar`, `eletrica.rotear`, `eletrica.sobrescrever`, `eletrica.quadro`, `eletrica.quadro.equilibrar`, `eletrica.cargas`, `eletrica.demanda.tabelas`, `.salvar`, `.excluir`, `eletrica.setup` |
-| Documentação | `elefiacao` (com `ancora`: direto no eletroduto; com `tag` também: linha de chamada), `eletrica.fiacao.modo`, `eleregen`, `elequadro_tabela`, `eletrica.unifilar`, `eleunifilar`, `eletrica.quadro.frontal`, `elequadro_frontal`, `elelegenda`, `eletrica.materiais`, `eletrica.inspecionar`, `eletrica.analisar` |
+| Cálculo | `eletrica.dimensionar` (com `unifilar` e `frontal`), `eletrica.diagnostico`, `eletrica.rotear`, `eletrica.sobrescrever`, `eletrica.quadro`, `eletrica.dr.definir`, `eletrica.dr.excluir`, `eletrica.quadro.equilibrar`, `eletrica.cargas`, `eletrica.demanda.tabelas`, `.salvar`, `.excluir`, `eletrica.setup` |
+| Documentação | `elefiacao` (com `ancora`: direto no eletroduto; com `tag` também: linha de chamada), `eletrica.fiacao.modo`, `eleregen`, `elequadro_tabela`, `eletrica.unifilar`, `eleunifilar`, `eletrica.quadro.frontal`, `elequadro_frontal`, `eletrica.documentacao.alvo` (o quadro ou rack da mini-barra), `elelegenda`, `eletrica.materiais`, `elemateriais_tabela`, `eletrica.inspecionar`, `eletrica.analisar` |
 | Telecom | `televincular`, `telerotear`, `eletrica.telecom`, `eletrica.telecom.ponto`, `telefiacao` (os mesmos modos do `elefiacao`), `teletabela`, `telelegenda` |
 
 Comandos que só existem na interface, porque abrem janelas: `ELETRICA`, `ELECONFIG`, `ELEPONTOS`, `ELEBLOCOS`, `ELEATRIBUTOS`,

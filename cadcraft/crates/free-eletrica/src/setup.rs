@@ -190,6 +190,29 @@ impl CorCabo {
     }
 }
 
+/// A cor do neutro: azul-claro, obrigatória (NBR 5410, 6.1.5.3.1).
+pub const COR_NEUTRO: &str = "Azul claro";
+
+/// A cor do condutor de proteção (NBR 5410, 6.1.5.3.2): verde-amarela ou verde.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CorProtecao {
+    #[default]
+    Verde,
+    VerdeAmarelo,
+}
+
+impl CorProtecao {
+    pub const TODAS: [CorProtecao; 2] = [Self::Verde, Self::VerdeAmarelo];
+
+    pub fn nome(self) -> &'static str {
+        match self {
+            Self::Verde => "Verde",
+            Self::VerdeAmarelo => "Verde-amarelo",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum CategoriaTelecom {
@@ -511,8 +534,12 @@ pub struct Setup {
     pub fator_materiais: f64,
     /// Seções (mm²) que não são escritas nas indicações de fiação e no resumo.
     pub secoes_omitidas: Vec<f64>,
-    /// Cores das fases A, B e C.
+    /// Cores das fases A, B e C (R, S e T).
     pub cores_fase: [CorCabo; 3],
+    /// A cor dos retornos de iluminação.
+    pub cor_retorno: CorCabo,
+    /// A cor do condutor de proteção (o neutro é sempre azul-claro).
+    pub cor_protecao: CorProtecao,
     pub unidade: Unidade,
     /// Camadas dos eletrodutos, separadas por vírgula, com curingas `*` e `?`.
     pub camadas_eletroduto: String,
@@ -575,7 +602,9 @@ impl Setup {
             queda_alimentador: 1.0,
             fator_materiais: 1.10,
             secoes_omitidas: Vec::new(),
-            cores_fase: [CorCabo::Preto, CorCabo::Vermelho, CorCabo::Branco],
+            cores_fase: [CorCabo::Vermelho, CorCabo::Branco, CorCabo::Marrom],
+            cor_retorno: CorCabo::Amarelo,
+            cor_protecao: CorProtecao::Verde,
             unidade: Unidade::default(),
             camadas_eletroduto: "*ELETRODUTO*".into(),
             camadas_piso: "*PISO*".into(),

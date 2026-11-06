@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (C) 2026 Julio Ferreira. Free Elétrica: ver LICENSE e AVISO_LEGAL.md na raiz do repositorio.
 //! A vista frontal do quadro de distribuição: o layout de montagem dos dispositivos nos trilhos DIN, num bloco
-//! `QUADRO_FRONTAL_<handle do quadro>`. O invólucro tem borda dupla (a caixa e o chassi), o barramento de
-//! neutro em cima e o de terra embaixo, e os dispositivos lado a lado nos trilhos: o geral, o DPS, cada DR
+//! `QUADRO_FRONTAL_<handle do quadro>`. O invólucro tem borda dupla (a caixa e o chassi), os barramentos de
+//! neutro e de terra em pé nas laterais internas (neutro à esquerda, terra à direita), e os dispositivos lado a
+//! lado nos trilhos: o geral, o DPS, cada DR
 //! seguido dos circuitos dele, os circuitos sem DR e as reservas. Cada dispositivo ocupa a largura dos módulos
 //! dele (1 módulo, `W`; bipolar, `2W`; tripolar, `3W`; DR tetrapolar, `4W`), e um trilho que passaria de
 //! [`MODULOS_POR_TRILHO`] continua no de baixo, sem partir um dispositivo.
@@ -103,11 +104,11 @@ fn dispositivos(r: &ResumoQuadro) -> Vec<Dispositivo> {
     let corrente = |v: Option<f64>| v.map_or("-".to_string(), |a| format!("{}A", br(a)));
     let fases = u32::from(r.fases_quadro.clamp(1, 3));
     let a = &r.alimentador;
-    let mut v = vec![d(TipoDispositivo::Geral, fases, "GERAL".into(), corrente(a.disjuntor))];
+    let mut v = vec![d(TipoDispositivo::Geral, u32::from(a.polos_geral.clamp(1, 3)), "GERAL".into(), corrente(a.disjuntor))];
     // Um DPS por fase (NBR 5410, 6.3.5), da classe do quadro, depois do disjuntor exclusivo dele, se houver.
     if a.dps {
         if let Some(dd) = a.disjuntor_dps {
-            v.push(d(TipoDispositivo::DisjuntorDps, fases, "DPS".into(), corrente(Some(dd))));
+            v.push(d(TipoDispositivo::DisjuntorDps, u32::from(a.polos_dps.clamp(1, 3)), "DPS".into(), corrente(Some(dd))));
         }
         for _ in 0..fases {
             v.push(d(TipoDispositivo::Dps, 1, "DPS".into(), format!("CLASSE {}", a.classe_dps.codigo())));
@@ -119,7 +120,7 @@ fn dispositivos(r: &ResumoQuadro) -> Vec<Dispositivo> {
         let deles: Vec<&quadro::Linha> = r.linhas.iter().filter(|l| g.circuitos.iter().any(|c| c.eq_ignore_ascii_case(&l.circuito.id))).collect();
         // Como em `ResumoQuadro::modulos`: 4 módulos com circuito multipolar, 2 nos outros.
         let modulos = if deles.iter().any(|l| l.esquema.fases() > 1) { 4 } else { 2 };
-        v.push(d(TipoDispositivo::Dr, modulos, format!("DR {}", corrente(g.dr)), "30mA".into()));
+        v.push(d(TipoDispositivo::Dr, modulos, format!("DR {}", corrente(g.dr)), format!("{}mA", br(g.sensibilidade))));
         v.extend(deles.into_iter().map(circuito));
     }
     v.extend(r.linhas.iter().filter(|l| l.grupo_dr.is_none()).map(circuito));
@@ -155,7 +156,8 @@ pub fn montagem(r: &ResumoQuadro) -> Montagem {
         dispositivos: v,
         fases: u32::from(r.fases_quadro.clamp(1, 3)),
         barramento_fase: r.config.barramento_fase.unwrap_or_default(),
-        posicao_nt: r.config.posicao_barramento_nt.unwrap_or_default(),
+        // Neutro e terra sempre nas laterais internas do chassi: neutro à esquerda, terra à direita.
+        posicao_nt: quadro::PosicaoBarramentoNt::Laterais,
     }
 }
 

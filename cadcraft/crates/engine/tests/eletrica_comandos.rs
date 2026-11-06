@@ -1522,6 +1522,117 @@ fn quadro_com_montagem_observacoes_e_unifilar_clicando() {
 }
 
 #[test]
+fn documentacao_por_quadro_materiais_dr_e_diagnostico_por_comandos() {
+    let _setup = trava_setup();
+    let mut s = Session::new();
+    let mut d = Drawing::new_metric();
+    d.header.set_i64("INSUNITS", 6);
+    s.open_drawing(d, "Documentação", None);
+    s.execute("eletrica.bootstrap", &json!({})).unwrap();
+    let ponto = |s: &mut Session, b: &str, x: f64, y: f64| -> String {
+        s.execute("eleponto", &json!({ "bloco": b, "pontos": [[x, y]], "rotacaoAuto": false })).unwrap()["pontos"][0].as_str().unwrap().to_string()
+    };
+    let h = |t: &str| Handle::parse_hex(t).unwrap();
+    let q1 = ponto(&mut s, "QDG", 0.0, 0.0);
+    let q2 = ponto(&mut s, "QDC", 20.0, 0.0);
+    let t1 = ponto(&mut s, "TOM-SIM-BAIXA", 4.0, 0.0);
+    let solto = ponto(&mut s, "TOM-SIM-BAIXA", 8.0, 8.0);
+    s.execute("elecircuito", &json!({ "quadro": q1, "circuito": "1", "pontos": [t1] })).unwrap();
+    s.execute("eleeletroduto", &json!({ "de": q1, "para": t1 })).unwrap();
+
+    // A mini-barra escolhe o quadro: o comando vai direto ao ponto, para o quadro escolhido.
+    let r = s.execute("eletrica.documentacao.alvo", &json!({ "quadro": q2 })).unwrap();
+    assert_eq!(r["quadro"], q2.as_str());
+    s.start("eleunifilar").unwrap();
+    s.input(Input::Point(Vec2::new(40.0, 0.0))).unwrap();
+    assert!(s.running.is_none());
+    assert!(free_eletrica::unifilar::unifilares(s.doc().unwrap()).iter().any(|(_, q)| *q == h(&q2)));
+    // Trocar na barra com o comando correndo vale para o próximo clique.
+    s.start("elequadro_frontal").unwrap();
+    s.execute("eletrica.documentacao.alvo", &json!({ "quadro": q1 })).unwrap();
+    s.input(Input::Point(Vec2::new(40.0, -20.0))).unwrap();
+    assert!(free_eletrica::frontal::vistas(s.doc().unwrap()).iter().any(|(_, q)| *q == h(&q1)));
+    // Sem escolha e com dois quadros: o comando pede o quadro; um clique nele escolhe e fica lembrado.
+    s.execute("eletrica.documentacao.alvo", &json!({ "quadro": null })).unwrap();
+    s.start("elequadro_tabela").unwrap();
+    s.input(Input::Point(Vec2::new(0.0, 30.0))).unwrap();
+    assert!(free_eletrica::tabela::tabelas(s.doc().unwrap()).is_empty(), "ainda falta o quadro");
+    s.input(Input::Pick(vec![h(&q2)])).unwrap();
+    s.input(Input::Point(Vec2::new(0.0, 30.0))).unwrap();
+    assert!(free_eletrica::tabela::tabelas(s.doc().unwrap()).iter().any(|(_, q)| *q == h(&q2)));
+    assert_eq!(s.execute("eletrica.documentacao.alvo", &json!({})).unwrap()["quadro"], q2.as_str());
+    assert!(s.execute("eletrica.documentacao.alvo", &json!({ "quadro": "ZZZZ" })).is_err());
+    assert!(s.execute("eletrica.documentacao.alvo", &json!({ "rack": q1 })).is_err(), "um quadro não é rack");
+    s.start("teletabela").unwrap();
+    assert!(s.running.is_none(), "sem rack, avisa e termina");
+
+    // A proteção geral, o DPS e os DR, pelos comandos.
+    let r = s
+        .execute(
+            "eletrica.quadro",
+            &json!({ "quadro": q1, "polosGeral": 2, "curvaGeral": "D", "caboGeral": "HEPR_XLPE_90", "tensaoDps": 320, "imaxDps": 45, "polosDps": 1 }),
+        )
+        .unwrap();
+    let c = &r["config"];
+    assert_eq!(
+        (c["polosGeral"].as_u64(), c["tensaoDps"].as_f64(), c["imaxDps"].as_f64(), c["polosDps"].as_u64()),
+        (Some(2), Some(320.0), Some(45.0), Some(1))
+    );
+    assert!(!c["curvaGeral"].is_null() && !c["caboGeral"].is_null(), "{c}");
+    for ruim in [json!({ "polosGeral": 5 }), json!({ "tensaoDps": 250 }), json!({ "imaxDps": 30 }), json!({ "curvaGeral": "Z" })] {
+        let mut p = ruim.clone();
+        p["quadro"] = json!(q1);
+        assert!(s.execute("eletrica.quadro", &p).is_err(), "{ruim}");
+    }
+    s.execute("eletrica.circuito.definir", &json!({ "quadro": q1, "circuito": "1", "grupoDr": "IDR1" })).unwrap();
+    let r = s.execute("eletrica.dr.definir", &json!({ "quadro": q1, "grupo": "IDR1", "corrente": 40, "sensibilidade": 30 })).unwrap();
+    assert_eq!((r["corrente"].as_f64(), r["sensibilidade"].as_f64()), (Some(40.0), Some(30.0)));
+    assert!(s.execute("eletrica.dr.definir", &json!({ "quadro": q1, "grupo": "IDR1", "corrente": 50 })).is_err());
+    assert!(s.execute("eletrica.dr.definir", &json!({ "quadro": q1, "grupo": "IDR1" })).is_err(), "nada a mudar");
+    // Excluir o grupo esquece a corrente escolhida.
+    s.execute("eletrica.dr.excluir", &json!({ "quadro": q1, "grupo": "IDR1" })).unwrap();
+    s.execute("eletrica.circuito.definir", &json!({ "quadro": q1, "circuito": "1", "grupoDr": "IDR1" })).unwrap();
+    let r = s.execute("eletrica.dr.definir", &json!({ "quadro": q1, "grupo": "IDR1", "sensibilidade": 10 })).unwrap();
+    assert_eq!((r["corrente"].as_f64(), r["sensibilidade"].as_f64()), (Some(25.0), Some(10.0)), "a sugerida volta");
+
+    // Aplicar com a vista frontal gera também o unifilar.
+    let r = s.execute("eletrica.dimensionar", &json!({ "quadro": q1, "frontal": true })).unwrap();
+    assert_eq!((r["unifilares"].as_u64(), r["frontais"].as_u64()), (Some(1), Some(1)));
+
+    // O diagnóstico do quadro: o ponto sem circuito e, no outro quadro, ele mesmo fora da rede.
+    let r = s.execute("eletrica.diagnostico", &json!({ "quadro": q1 })).unwrap();
+    let itens = r["itens"].as_array().unwrap();
+    assert!(itens.iter().any(|i| i["handle"] == solto.as_str() && i["motivo"].as_str().unwrap().contains("sem circuito")), "{r}");
+    assert!(!itens.iter().any(|i| i["handle"] == t1.as_str()), "o ponto ligado e dimensionado não aparece: {r}");
+    let r = s.execute("eletrica.diagnostico", &json!({ "quadro": q2 })).unwrap();
+    assert!(r["itens"].as_array().unwrap().iter().any(|i| i["handle"] == q2.as_str()), "{r}");
+
+    // A lista de materiais na prancha: uma tabela só, que regenera no lugar e move ao inserir de novo.
+    let r = s.execute("elemateriais_tabela", &json!({ "ponto": [0.0, -40.0] })).unwrap();
+    assert!(r["linhas"].as_u64().unwrap() > 3, "{r}");
+    let tabela = h(r["tabela"].as_str().unwrap());
+    let textos: Vec<String> = s.doc().unwrap().blocks[free_eletrica::materiais::BLOCO_TABELA]
+        .entities
+        .iter()
+        .filter_map(|e| if let EntityKind::Text(t) = &e.kind { Some(t.value.clone()) } else { None })
+        .collect();
+    assert!(textos.contains(&"LISTA DE MATERIAIS".to_string()), "{textos:?}");
+    assert!(textos.iter().any(|t| t.contains("Azul claro (Neutro)")), "os cabos por cor: {textos:?}");
+    assert!(s.execute("elemateriais_tabela", &json!({})).is_err());
+    let r = s.execute("eleregen", &json!({})).unwrap();
+    assert_eq!(r["materiais"].as_u64(), Some(1));
+    s.start("elemateriais_tabela").unwrap();
+    s.input(Input::Point(Vec2::new(5.0, -45.0))).unwrap();
+    assert_eq!(free_eletrica::materiais::tabela_inserida(s.doc().unwrap()), Some(tabela));
+
+    // A legenda da elétrica traz a simbologia do unifilar ao lado; a de telecom, não.
+    let r = s.execute("elelegenda", &json!({ "ponto": [60.0, 0.0] })).unwrap();
+    assert!(r["simbologiaUnifilar"].is_string(), "{r}");
+    let r = s.execute("telelegenda", &json!({ "ponto": [90.0, 0.0] })).unwrap();
+    assert!(r["simbologiaUnifilar"].is_null(), "{r}");
+}
+
+#[test]
 fn empilhar_pontos_por_comando() {
     let _setup = trava_setup();
     let mut s = Session::new();

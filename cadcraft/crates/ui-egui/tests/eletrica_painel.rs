@@ -202,6 +202,7 @@ fn paleta_ferramentas_e_fluxo_completo() {
         "Projeto e Inspeção",
         "Tags de fiação",
         "Tabela do quadro",
+        "Tabela de materiais",
         "Atualizar tags e tabelas",
         "Inspecionar projeto",
         "Configurações...",
@@ -301,7 +302,10 @@ fn paleta_ferramentas_e_fluxo_completo() {
     h.get_by_label("Condutores").click();
     h.run_steps(3);
     h.get_by_label("Diâmetro externo dos condutores");
-    h.get_by_label("Cor da fase R");
+    // As cores da compra: as fases, o neutro azul-claro fixo (NBR 5410), o terra e o retorno.
+    for campo in ["Cor da fase R", "Cor da fase S", "Cor da fase T", "Cor do neutro", "Azul claro", "Cor do terra (PE)", "Cor do retorno"] {
+        h.get_by_label(campo);
+    }
     h.query_all_by_label("Eletrodutos").last().unwrap().click();
     h.run_steps(3);
     h.get_by_label("Diâmetro mínimo");
@@ -479,81 +483,102 @@ fn paleta_ferramentas_e_fluxo_completo() {
     assert!(h.query_by_label("PAINEL: QD-01").is_none());
     assert!(!h.state().ui.docking.layout.contains(&Panel::QuadroCargas), "Esc fecha o painel acoplado");
 
-    // Dimensionar projeto: esquema, cabo e DR por circuito; Calcular mostra, e só Aplicar grava.
+    // Dimensionar projeto: um assistente em quatro etapas, sempre no quadro escolhido em cima.
     assert!(h.state_mut().cmdline("ELEDIMENSIONAR").is_none());
     h.run_steps(3);
-    h.get_by_label("Compartilhar condutor de proteção (Terra / PE)").click();
-    h.run_steps(3);
-    h.get_by_label("Gerar / Atualizar Diagrama Unifilar");
-    h.get_by_label("Temperatura ambiente (FCT)");
-    h.get_by_label("FCA fixo");
-    for coluna in ["Circ.", "Esquema", "Tipo de cabo"] {
-        assert!(h.query_all_by_label(coluna).count() >= 1, "{coluna}");
+    for etapa in ["1. Diagnóstico", "2. Circuitos", "3. Diagrama Unifilar", "4. Vista Frontal"] {
+        h.get_by_label(etapa);
     }
-    assert!(h.query_by_label("Cabo (mm²)").is_none(), "os resultados só aparecem ao calcular");
-    let r = h.state_mut().run("eletrica.setup", json!({})).unwrap();
-    assert_eq!(r["compartilharPe"], false, "as premissas só valem ao aplicar");
-    // Grupos de DR à vontade: um grupo novo, com o circuito marcado à esquerda.
-    h.get_by_label("Circuitos sem DR");
-    h.get_by_label("Circuito 1").click();
-    h.run_steps(3);
-    h.get_by_label("+ Novo Grupo DR").click();
-    h.run_steps(3);
-    h.get_by_label("IDR1");
-    if let Ok(saida) = std::env::var("FREE_ELETRICA_PNG_DR") {
+    // Etapa 1: o diagnóstico do quadro.
+    h.get_by_label("Diagnóstico do quadro QD-01");
+    if let Ok(saida) = std::env::var("FREE_ELETRICA_PNG_DIAGNOSTICO") {
         h.render().unwrap().save(saida).unwrap();
     }
-    h.get_by_label("Mover selecionados").click();
+    h.get_by_label("Avançar para Circuitos >").click();
     h.run_steps(3);
-    let r = h.state_mut().run("eletrica.rotear", json!({})).unwrap();
-    assert_eq!(r["linhas"][0]["grupoDr"], "IDR1", "{r}");
-    h.get_by_label("Tirar do DR");
-    // Cada grupo adiciona um circuito com um clique; a tabela tem o grupo e o método de cada circuito.
-    assert!(h.query_all_by_label("+ Adicionar circuito...").count() >= 1);
-    for coluna in ["Método", "Grupo DR", "Critério do disjuntor"] {
+    // Etapa 2: as premissas em cima e a tabela dos circuitos, já com os resultados.
+    h.get_by_label("Compartilhar condutor de proteção (Terra / PE)").click();
+    h.run_steps(3);
+    for campo in ["Temperatura ambiente (FCT)", "FCA fixo", "Critério do disjuntor", "Método de instalação"] {
+        assert!(h.query_all_by_label(campo).count() >= 1, "{campo}");
+    }
+    for coluna in ["Circ.", "Esquema", "Tipo de cabo", "Método", "Grupo DR", "Cabo (mm²)", "Disjuntor (A)", "Curva", "Queda (%)"] {
         assert!(h.query_all_by_label(coluna).count() >= 1, "{coluna}");
     }
-    // A proteção geral, o DPS e a montagem do quadro.
-    h.get_by_label("Proteção geral, DPS e montagem do quadro").click();
+    let r = h.state_mut().run("eletrica.setup", json!({})).unwrap();
+    assert_eq!(r["compartilharPe"], false, "as premissas só valem ao aplicar");
+    // O DR só na coluna da linha: a área de grupos embaixo da tabela saiu.
+    for antigo in ["Circuitos sem DR", "Mover selecionados", "Tirar do DR", "+ Novo Grupo DR", "Calcular Dimensionamento"] {
+        assert!(h.query_by_label(antigo).is_none(), "{antigo}");
+    }
+    h.get_by_label("+ Criar IDR").click();
     h.run_steps(3);
+    h.state_mut().run("eletrica.circuito.definir", json!({ "circuito": "1", "grupoDr": "IDR1" })).unwrap();
+    h.run_steps(3);
+    // Nada marcado: o botão já aplica. A vista frontal marca o unifilar; desmarcar o unifilar desmarca a vista.
+    h.get_by_label("Aplicar Dimensionamento ao Quadro");
+    h.get_by_label("Configurar e gerar Vista Frontal do Quadro").click();
+    h.run_steps(3);
+    assert!(h.query_by_label("Aplicar Dimensionamento ao Quadro").is_none());
+    h.get_by_label("Configurar e gerar Diagrama Unifilar").click();
+    h.run_steps(3);
+    h.get_by_label("Aplicar Dimensionamento ao Quadro");
+    h.get_by_label("Configurar e gerar Vista Frontal do Quadro").click();
+    h.run_steps(3);
+    if let Ok(saida) = std::env::var("FREE_ELETRICA_PNG_CIRCUITOS") {
+        h.render().unwrap().save(saida).unwrap();
+    }
+    h.get_by_label("Avançar para Diagrama Unifilar >").click();
+    h.run_steps(3);
+    // Etapa 3: a proteção geral, o DPS e os DR usados.
     for campo in [
         "Disjuntor geral",
-        "Seção do alimentador",
-        "Disjuntor exclusivo de proteção do DPS",
-        "Método de instalação",
-        "Módulos por trilho DIN",
-        "Barramento das fases",
-        "Neutro e terra",
+        "Cabo alimentador geral",
+        "Incluir DPS no quadro",
+        "Tensão (Uc)",
+        "Capacidade (Imax)",
+        "Incluir disjuntor de proteção prévio para o DPS",
+        "Interruptores DR usados",
+        "IDR1",
     ] {
         assert!(h.query_all_by_label(campo).count() >= 1, "{campo}");
     }
-    h.get_by_label("Incluir DPS no Quadro").click();
+    if let Ok(saida) = std::env::var("FREE_ELETRICA_PNG_DR") {
+        h.render().unwrap().save(saida).unwrap();
+    }
+    h.get_by_label("Incluir DPS no quadro").click();
     h.run_steps(3);
     let r = h.state_mut().run("eletrica.rotear", json!({})).unwrap();
     assert_eq!(r["alimentador"]["dps"], false, "desmarcar tira o DPS do quadro");
+    assert!(h.query_by_label("Tensão (Uc)").is_none(), "sem DPS, sem os campos dele");
     h.state_mut().run("eletrica.quadro", json!({ "usarDps": null })).unwrap();
     h.run_steps(3);
-    h.get_by_label("Proteção geral, DPS e montagem do quadro").click();
+    // Voltar e avançar.
+    h.get_by_label("< Voltar").click();
     h.run_steps(3);
-    // Calcular não grava; aparece o resultado, editável, e Aplicar grava.
-    h.get_by_label("Calcular Dimensionamento").click();
+    h.get_by_label("Avançar para Diagrama Unifilar >").click();
     h.run_steps(3);
-    for coluna in ["Cabo (mm²)", "Disjuntor (A)", "Curva", "Queda (%)"] {
-        h.get_by_label(coluna);
+    h.get_by_label("Avançar para Vista Frontal >").click();
+    h.run_steps(3);
+    // Etapa 4: a montagem da vista frontal.
+    for campo in ["Largura máxima por fileira (módulos DIN)", "Barramento de distribuição das fases", "Tipo de montagem", "Módulos reserva"] {
+        assert!(h.query_all_by_label(campo).count() >= 1, "{campo}");
     }
     let r = h.state_mut().run("eletrica.rotear", json!({})).unwrap();
-    assert!(r["linhas"].as_array().unwrap().iter().all(|l| l["calculado"].is_null()), "{r}");
-    // Imagem da janela, quando pedida.
+    assert!(r["linhas"].as_array().unwrap().iter().all(|l| l["calculado"].is_null()), "nada gravado antes de aplicar: {r}");
     if let Ok(saida) = std::env::var("FREE_ELETRICA_PNG_DIMENSIONAR") {
         h.render().unwrap().save(saida).unwrap();
     }
-    h.get_by_label("Aplicar ao Quadro").click();
+    h.get_by_label("Aplicar e Concluir").click();
     h.run_steps(3);
+    assert!(h.query_by_label("4. Vista Frontal").is_none(), "aplicar fecha o assistente");
     let st = h.state_mut().run("eletrica.setup", json!({})).unwrap();
     assert_eq!(st["compartilharPe"], true);
     let r = h.state_mut().run("eletrica.rotear", json!({})).unwrap();
     assert!(r["linhas"].as_array().unwrap().iter().all(|l| l["calculado"]["secao"].is_number()), "{r}");
-    assert_eq!(free_eletrica::unifilar::unifilares(h.state().session.doc().unwrap()).len(), 1, "o diagrama nasce ao aplicar");
+    let doc = h.state().session.doc().unwrap();
+    assert_eq!(free_eletrica::unifilar::unifilares(doc).len(), 1, "o diagrama nasce ao aplicar");
+    assert_eq!(free_eletrica::frontal::vistas(doc).len(), 1, "e a vista frontal também");
     h.state_mut().run("eletrica.setup", json!({ "compartilharPe": false })).unwrap();
     h.key_press(egui::Key::Escape);
     h.run_steps(3);
@@ -634,14 +659,18 @@ fn paleta_ferramentas_e_fluxo_completo() {
     h.key_press(egui::Key::Escape);
     h.run_steps(3);
 
-    // Lista de materiais: cabos por seção e tipo, eletrodutos por tipo e diâmetro.
+    // Lista de materiais: cabos por isolação, seção e cor, com os rolos; eletrodutos por tipo e diâmetro.
     h.get_by_label("Lista de materiais...").click();
     h.run_steps(3);
-    h.get_by_label("Cabos, com a folga do projeto");
+    h.get_by_label("Cabos por isolação, seção e cor, com a folga do projeto");
     h.get_by_label("Folga de Cabos (%)");
     assert!(h.query_all_by_label("Eletrodutos").count() >= 2, "a seção da paleta e o título na lista");
     h.get_by_label("Disjuntores");
-    assert!(h.query_all_by_label("Cabo flexível PVC 70 °C (450/750 V)").count() >= 1);
+    for cabo in ["mm² - Azul claro (Neutro)", "mm² - Verde (Terra / PE)"] {
+        assert!(h.query_all(egui_kittest::kittest::by().label_contains(cabo)).count() >= 1, "{cabo}");
+    }
+    assert!(h.query_all(egui_kittest::kittest::by().label_contains("Cabo flexível PVC 70 °C (450/750 V) #")).count() >= 2);
+    assert!(h.query_all(egui_kittest::kittest::by().label_contains("rolo")).count() >= 1, "os rolos de 100 m");
     assert!(h.query_all_by_label("PVC rígido (roscável ou soldável)").count() >= 1);
     h.key_press(egui::Key::Escape);
     h.run_steps(3);
@@ -765,6 +794,20 @@ fn paleta_ferramentas_e_fluxo_completo() {
     h.state_mut().session.input(Input::Cancel).unwrap();
     h.run_steps(3);
     assert!(h.query_by_label("Com linha de chamada").is_none(), "a mini-barra some com o comando");
+
+    // Tabela do quadro, unifilar e vista frontal: a mini-barra mostra o quadro que vai para a planta.
+    for ferramenta in ["Tabela do quadro", "Diagrama unifilar", "Vista frontal do quadro"] {
+        h.get_by_label(ferramenta).click();
+        h.run_steps(3);
+        assert!(h.state().session.running.is_some(), "{ferramenta}");
+        h.get_by_label("Quadro");
+        h.get_by_label("Clique na planta para posicionar.");
+        h.state_mut().session.input(Input::Cancel).unwrap();
+        h.run_steps(3);
+        assert!(h.query_by_label("Clique na planta para posicionar.").is_none(), "a mini-barra some com o comando");
+    }
+    let uid = h.state().session.state().unwrap().uid;
+    assert!(free_eletrica::quadro::alvo_documentacao(uid, false).is_some(), "o único quadro já é o escolhido");
 
     // Editor de blocos: a paleta vira as propriedades da família.
     assert!(h.query_by_label("Propriedades da Família").is_none());

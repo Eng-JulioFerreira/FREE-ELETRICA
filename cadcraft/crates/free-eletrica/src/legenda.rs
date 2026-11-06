@@ -3,7 +3,8 @@
 //! A Legenda de Símbolos da prancha: um bloco com o símbolo e o nome de cada tipo de ponto usado no desenho,
 //! uma por disciplina: `LEGENDA_SIMBOLOS_ELETRICA` (os pontos elétricos e as caixas) e
 //! `LEGENDA_SIMBOLOS_TELECOM`. `LEGENDA_SIMBOLOS`, das versões anteriores, tem todos. O nome vem do atributo
-//! `LEGENDA` do ponto ou da família. Regenerar troca o conteúdo dos blocos e mantém as inserções.
+//! `LEGENDA` do ponto ou da família. A da elétrica vem com uma segunda tabela ao lado, a simbologia do diagrama
+//! unifilar (`LEGENDA_SIMBOLOGIA_UNIFILAR`). Regenerar troca o conteúdo dos blocos e mantém as inserções.
 
 use std::sync::Arc;
 
@@ -154,7 +155,54 @@ fn simbolo_na_celula(doc: &Drawing, bloco: &str, centro: [f64; 2], celula: [f64;
     })
 }
 
-fn pecas(doc: &Drawing, analise: &Analise, m: f64, disciplina: Option<Disciplina>) -> Vec<EntityKind> {
+/// O bloco do quadro de simbologia do diagrama unifilar: a Legenda de símbolos da aba Elétrica o põe ao lado
+/// da legenda da planta, como uma segunda tabela. O comando do unifilar desenha só o diagrama.
+pub const BLOCO_UNIFILAR: &str = "LEGENDA_SIMBOLOGIA_UNIFILAR";
+/// O espaço entre as duas tabelas lado a lado (m).
+const ENTRE_TABELAS: f64 = 0.50;
+
+/// A inserção do quadro de simbologia do unifilar.
+pub fn simbologia_unifilar(doc: &Drawing) -> Option<Handle> {
+    doc.model.iter().find(|e| matches!(&e.kind, EntityKind::Insert(i) if i.block == BLOCO_UNIFILAR)).map(|e| e.handle)
+}
+
+fn gravar_simbologia(doc: &mut Drawing, m: f64) {
+    crate::fiacao::garantir_blocos(doc, m);
+    let mut b = Block::new(BLOCO_UNIFILAR);
+    for (k, _) in crate::unifilar::pecas_da_simbologia(m).0 {
+        b.entities.push(Entity::new(doc.new_handle(), k));
+    }
+    doc.blocks.insert(BLOCO_UNIFILAR.to_string(), Arc::new(b));
+}
+
+/// Põe a inserção `nome` em `pos`: move a que existe (`existente`) ou cria uma.
+fn inserir_bloco(doc: &mut Drawing, nome: &str, existente: Option<Handle>, pos: [f64; 2]) -> Result<Handle, String> {
+    if let Some(h) = existente
+        && let Some(mut e) = doc.model.get(h).map(|e| (**e).clone())
+    {
+        if let EntityKind::Insert(i) = &mut e.kind {
+            i.insert = Vec3::new(pos[0], pos[1], 0.0);
+        }
+        doc.model.replace(e);
+        return Ok(h);
+    }
+    let ins = Insert {
+        block: nome.into(),
+        insert: Vec3::new(pos[0], pos[1], 0.0),
+        scale: Vec3::new(1.0, 1.0, 1.0),
+        rotation: 0.0,
+        attribs: Vec::new(),
+        cols: 1,
+        rows: 1,
+        col_spacing: 0.0,
+        row_spacing: 0.0,
+    };
+    doc.ensure_layer(CAMADA);
+    doc.add(&Space::Model, Common { layer: CAMADA.into(), ..Common::default() }, EntityKind::Insert(ins)).map_err(|e| e.to_string())
+}
+
+/// O conteúdo do bloco da legenda e a largura dela (m).
+fn pecas(doc: &Drawing, analise: &Analise, m: f64, disciplina: Option<Disciplina>) -> (Vec<EntityKind>, f64) {
     let u = |v: f64| v / m;
     let lista = linhas(analise, disciplina);
     let titulo = titulo(disciplina);
@@ -173,55 +221,52 @@ fn pecas(doc: &Drawing, analise: &Analise, m: f64, disciplina: Option<Disciplina
         p.push(simbolo_na_celula(doc, bloco, [u(COLUNA_SIMBOLO / 2.0), u(y - LINHA / 2.0)], [u(COLUNA_SIMBOLO), u(LINHA)]));
         p.push(texto(nome, [u(COLUNA_SIMBOLO + ALTURA), u(y - LINHA / 2.0)], u(ALTURA), HAlign::Left));
     }
-    p
+    (p, largura)
 }
-fn gravar_bloco(doc: &mut Drawing, analise: &Analise, m: f64, disciplina: Option<Disciplina>) {
+
+/// Grava o bloco da legenda e devolve a largura dela (m).
+fn gravar_bloco(doc: &mut Drawing, analise: &Analise, m: f64, disciplina: Option<Disciplina>) -> f64 {
     let nome = bloco(disciplina);
     let mut b = Block::new(nome);
-    for k in pecas(doc, analise, m, disciplina) {
+    let (lista, largura) = pecas(doc, analise, m, disciplina);
+    for k in lista {
         b.entities.push(Entity::new(doc.new_handle(), k));
     }
     doc.blocks.insert(nome.to_string(), Arc::new(b));
+    largura
 }
 
 /// Gera a legenda da disciplina (`None`: todas) em `pos`. Se o desenho já tem uma dessa disciplina, ela é
-/// refeita e movida para lá.
+/// refeita e movida para lá. A da elétrica traz, ao lado, a simbologia do diagrama unifilar
+/// ([`BLOCO_UNIFILAR`]), num bloco à parte.
 pub fn inserir(doc: &mut Drawing, analise: &Analise, pos: [f64; 2], metros: f64, disciplina: Option<Disciplina>) -> Result<Handle, String> {
     if !pos.iter().all(|v| v.is_finite()) {
         return Err("posição inválida".into());
     }
     let m = if metros > 0.0 { metros } else { 1.0 };
-    gravar_bloco(doc, analise, m, disciplina);
-    if let Some(h) = inserida_de(doc, disciplina)
-        && let Some(mut e) = doc.model.get(h).map(|e| (**e).clone())
-    {
-        if let EntityKind::Insert(i) = &mut e.kind {
-            i.insert = Vec3::new(pos[0], pos[1], 0.0);
-        }
-        doc.model.replace(e);
-        return Ok(h);
+    let largura = gravar_bloco(doc, analise, m, disciplina);
+    let existente = inserida_de(doc, disciplina);
+    let h = inserir_bloco(doc, bloco(disciplina), existente, pos)?;
+    if disciplina == Some(Disciplina::Eletrica) {
+        gravar_simbologia(doc, m);
+        let ao_lado = [pos[0] + (largura + ENTRE_TABELAS) / m, pos[1]];
+        let existente = simbologia_unifilar(doc);
+        inserir_bloco(doc, BLOCO_UNIFILAR, existente, ao_lado)?;
     }
-    let ins = Insert {
-        block: bloco(disciplina).into(),
-        insert: Vec3::new(pos[0], pos[1], 0.0),
-        scale: Vec3::new(1.0, 1.0, 1.0),
-        rotation: 0.0,
-        attribs: Vec::new(),
-        cols: 1,
-        rows: 1,
-        col_spacing: 0.0,
-        row_spacing: 0.0,
-    };
-    doc.ensure_layer(CAMADA);
-    doc.add(&Space::Model, Common { layer: CAMADA.into(), ..Common::default() }, EntityKind::Insert(ins)).map_err(|e| e.to_string())
+    Ok(h)
 }
 
 /// Refaz as legendas do desenho, sem mexer nas inserções. Devolve quantas refez.
 pub fn regenerar(doc: &mut Drawing, analise: &Analise, metros: f64) -> usize {
+    let m = if metros > 0.0 { metros } else { 1.0 };
     let mut disciplinas: Vec<Option<Disciplina>> = legendas(doc).into_iter().map(|(_, d)| d).collect();
     disciplinas.dedup();
     for d in &disciplinas {
-        gravar_bloco(doc, analise, if metros > 0.0 { metros } else { 1.0 }, *d);
+        gravar_bloco(doc, analise, m, *d);
     }
-    disciplinas.len()
+    let simbologia = simbologia_unifilar(doc).is_some();
+    if simbologia {
+        gravar_simbologia(doc, m);
+    }
+    disciplinas.len() + usize::from(simbologia)
 }

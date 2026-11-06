@@ -2100,8 +2100,8 @@ fn lista_de_materiais_separa_por_tipo_e_diametro() {
     // O quadro: DPS (um por fase), barramentos de neutro, terra e das fases, e a caixa com a capacidade DIN.
     let r = quadro::rotear(&d, &analisar(&d), &setup, q).unwrap();
     let fases = usize::from(r.fases_quadro.clamp(1, 3));
-    let dps = format!("DPS Classe II - {} V", crate::ponto::br(r.alimentador.dps_uc.ceil()));
-    assert_eq!(qtd(&m.quadros, &dps), fases, "{:?}", m.quadros);
+    assert_eq!((r.alimentador.dps_tensao, r.alimentador.dps_imax), (275.0, 20.0), "o padrão: 275 V e 20 kA");
+    assert_eq!(qtd(&m.quadros, "DPS Classe II - 275 V - 20 kA"), fases, "{:?}", m.quadros);
     for prefixo in ["Barramento de neutro - ", "Barramento de terra - ", "Barramento pente ", "Quadro de distribuição"] {
         assert!(m.quadros.iter().any(|i| i.nome.starts_with(prefixo)), "falta {prefixo}: {:?}", m.quadros);
     }
@@ -2112,12 +2112,117 @@ fn lista_de_materiais_separa_por_tipo_e_diametro() {
     let m = materiais::levantar(&d, &analisar(&d), &setup);
     assert!(m.quadros.iter().any(|i| i.nome.starts_with("Interruptor DR 2P ") && i.nome.ends_with(" A - 30 mA")), "{:?}", m.quadros);
     assert_eq!(m.disjuntores.iter().map(|i| i.quantidade).sum::<usize>(), 4, "com o do DPS: {:?}", m.disjuntores);
+    // O DR com a corrente e a sensibilidade escolhidas; o geral com os polos e a curva escolhidos.
+    editar::definir_dr(&mut d, q, "IDR1", Some(Some(63.0)), Some(Some(10.0))).unwrap();
+    editar::definir_opcao_quadro(&mut d, q, quadro::CHAVE_POLOS_GERAL, Some("2")).unwrap();
+    editar::definir_opcao_quadro(&mut d, q, quadro::CHAVE_CURVA_GERAL, Some("D")).unwrap();
+    editar::definir_opcao_quadro(&mut d, q, quadro::CHAVE_TENSAO_DPS, Some("320")).unwrap();
+    editar::definir_opcao_quadro(&mut d, q, quadro::CHAVE_IMAX_DPS, Some("45")).unwrap();
+    let m = materiais::levantar(&d, &analisar(&d), &setup);
+    assert!(m.quadros.iter().any(|i| i.nome == "Interruptor DR 2P 63 A - 10 mA"), "{:?}", m.quadros);
+    assert!(m.quadros.iter().any(|i| i.nome == "DPS Classe II - 320 V - 45 kA"), "{:?}", m.quadros);
+    let geral = r.alimentador.disjuntor.unwrap();
+    assert!(m.disjuntores.iter().any(|i| i.nome == materiais::nome_do_disjuntor(2, geral, Some(nbr5410::Curva::D))), "{:?}", m.disjuntores);
     editar::definir_opcao_quadro(&mut d, q, quadro::CHAVE_USAR_DPS, Some("0")).unwrap();
     let m = materiais::levantar(&d, &analisar(&d), &setup);
     assert!(!m.quadros.iter().any(|i| i.nome.starts_with("DPS")) && m.disjuntores.iter().map(|i| i.quantidade).sum::<usize>() == 3);
+    // Sem DPS, nenhum desenho nem tabela o mostra.
+    let an = analisar(&d);
+    unifilar::gerar(&mut d, &an, &setup, q, Some([0.0, 30.0])).unwrap();
+    frontal::gerar(&mut d, &an, &setup, q, Some([0.0, 60.0])).unwrap();
+    tabela::inserir(&mut d, &an, &setup, q, [0.0, 90.0]).unwrap();
+    for prefixo in [unifilar::PREFIXO, frontal::PREFIXO, tabela::PREFIXO] {
+        let textos = textos_do_bloco(&d, &format!("{prefixo}{}", q.hex()));
+        assert!(textos.iter().all(|t| !t.0.starts_with("DPS") && !t.0.ends_with(" kA")), "{prefixo}: {textos:?}");
+    }
+    assert!(textos_do_bloco(&d, &format!("{}{}", tabela::PREFIXO, q.hex())).iter().any(|t| t.0.contains("sem DPS")));
+    // Valores fora do catálogo são recusados sem gravar nada.
+    assert!(editar::definir_dr(&mut d, q, "IDR1", Some(Some(50.0)), None).is_err());
+    assert!(editar::definir_dr(&mut d, q, "IDR1", None, Some(Some(20.0))).is_err());
+    assert!(editar::definir_opcao_quadro(&mut d, q, quadro::CHAVE_POLOS_GERAL, Some("4")).is_err());
+    assert!(editar::definir_opcao_quadro(&mut d, q, quadro::CHAVE_TENSAO_DPS, Some("250")).is_err());
+    assert!(editar::definir_opcao_quadro(&mut d, q, quadro::CHAVE_IMAX_DPS, Some("NaN")).is_err());
     assert_eq!(m.pontos_sem_caixa, 0);
     // Desenho vazio.
     assert_eq!(materiais::levantar(&metros(), &analisar(&metros()), &setup), materiais::Materiais::default());
+}
+
+#[test]
+fn cabos_na_compra_por_isolacao_secao_e_cor() {
+    use materiais::FuncaoCondutor as F;
+    let setup = Setup::default();
+    let mut d = planta();
+    let q = quadro(&d);
+    // Iluminação na fase R, as TUG na S e o chuveiro (2F+T) em R+T.
+    editar::travar_fases(&mut d, q, "1", Some("R")).unwrap();
+    editar::travar_fases(&mut d, q, "2", Some("S")).unwrap();
+    editar::travar_fases(&mut d, q, "3", Some("RT")).unwrap();
+    let an = analisar(&d);
+    let m = materiais::levantar(&d, &an, &setup);
+    let f = fiacao::calcular(&d, &an, &setup, q).unwrap();
+    let r = quadro::rotear(&d, &an, &setup, q).unwrap();
+    let secao = |c: &str| r.linhas.iter().find(|l| l.circuito.id == c).unwrap().escolha.secao.unwrap();
+    let k = setup.fator_materiais;
+    // Metros de um circuito nos trechos, vezes os condutores que `papel` conta em cada um.
+    let medir = |c: &str, papel: &dyn Fn(&fiacao::Condutores) -> f64| -> f64 {
+        f.trechos.iter().flat_map(|t| t.circuitos.iter().filter(move |x| x.circuito == c).map(move |x| papel(x) * t.comprimento * k)).sum()
+    };
+    let item = |funcao: F, s: f64| m.cabos.iter().find(|c| c.funcao == funcao && (c.secao - s).abs() < 1e-6).cloned();
+    let metros_de = |funcao: F, s: f64| item(funcao, s).map_or(0.0, |c| c.metros);
+    // Cada fase do quadro na cor dela: as TUG só na S; o chuveiro uma vez na R e outra na T.
+    let s2 = metros_de(F::FaseS, secao("2"));
+    assert!(s2 > 0.0 && perto(s2, medir("2", &|x| f64::from(x.fases)), 1e-9), "{:?}", m.cabos);
+    let chuveiro = medir("3", &|_| 1.0);
+    assert!(perto(metros_de(F::FaseT, secao("3")), chuveiro, 1e-9));
+    assert!(metros_de(F::FaseR, secao("3")) >= chuveiro - 1e-9);
+    // O retorno conta os que passam em cada trecho; o neutro e o PE, um por circuito.
+    let retorno = metros_de(F::Retorno, secao("1"));
+    assert!(retorno > 0.0 && perto(retorno, medir("1", &|x| x.retornos.len() as f64), 1e-9));
+    assert!(perto(metros_de(F::Neutro, secao("2")), medir("2", &|x| f64::from(u8::from(x.neutro))), 1e-9));
+    // Nada se perde: a soma é a de todos os condutores marcados nos trechos.
+    let total: f64 = f.trechos.iter().map(|t| t.condutores() as f64 * t.comprimento * k).sum();
+    assert!(perto(m.cabos.iter().map(|c| c.metros).sum::<f64>(), total, 1e-6));
+    // O item de compra: isolação, seção, cor e função, e os rolos de 100 m.
+    let neutro = item(F::Neutro, secao("2")).unwrap();
+    assert_eq!(neutro.descricao, format!("Cabo flexível PVC 70 °C (450/750 V) #{} mm² - Azul claro (Neutro)", crate::ponto::br(secao("2"))));
+    assert_eq!(neutro.rolos, (neutro.metros / 100.0).ceil() as u32);
+    assert!(item(F::FaseS, secao("2")).unwrap().descricao.ends_with(" - Branco (Fase S)"));
+    assert!(item(F::Protecao, secao("2")).unwrap().descricao.ends_with(" - Verde (Terra / PE)"));
+    assert!(item(F::Retorno, secao("1")).unwrap().descricao.ends_with(" - Amarelo (Retorno)"));
+    // As cores vêm das configurações.
+    let cinza = Setup { cores_fase: [setup::CorCabo::Preto, setup::CorCabo::Cinza, setup::CorCabo::Marrom], ..Setup::default() };
+    let m2 = materiais::levantar(&d, &an, &cinza);
+    assert!(m2.cabos.iter().any(|c| c.funcao == F::FaseS && c.descricao.ends_with(" - Cinza (Fase S)")), "{:?}", m2.cabos);
+    // A tabela na prancha: o título, o cabeçalho, os grupos e cada cabo, tudo dentro da moldura.
+    let h = materiais::inserir_tabela(&mut d, &an, &setup, [30.0, 0.0]).unwrap();
+    assert_eq!(materiais::tabela_inserida(&d), Some(h));
+    let textos = textos_do_bloco(&d, materiais::BLOCO_TABELA);
+    for v in
+        ["LISTA DE MATERIAIS", "ITEM", "QUANTIDADE", "UNIDADE", "ROLOS DE 100 m", "CABOS", "ELETRODUTOS", "DISJUNTORES", neutro.descricao.as_str()]
+    {
+        assert!(textos.iter().any(|t| t.0 == v), "falta {v}: {textos:?}");
+    }
+    let linhas: Vec<_> = d.blocks[materiais::BLOCO_TABELA]
+        .entities
+        .iter()
+        .filter_map(|e| if let EntityKind::Line(l) = &e.kind { Some(l.clone()) } else { None })
+        .collect();
+    let direita = linhas.iter().map(|l| l.a.x.max(l.b.x)).fold(0.0, f64::max);
+    let fundo = linhas.iter().map(|l| l.a.y.min(l.b.y)).fold(0.0, f64::min);
+    for t in &textos {
+        let largura = t.0.chars().count() as f64 * t.3 * 0.95;
+        let inicio = if t.4 == HAlign::Center { t.1 - largura / 2.0 } else { t.1 };
+        assert!(inicio >= -1e-9 && inicio + largura <= direita + 1e-6 && t.2 >= fundo - 1e-9 && t.2 <= 1e-9, "{t:?} fora de {direita} x {fundo}");
+    }
+    assert_eq!(materiais::regenerar_tabela(&mut d, &an, &setup), 1);
+    // Sem eletrodutos até o quadro: o percurso estimado, com aviso.
+    let mut solto = metros();
+    let q2 = qd(&mut solto, 0.0, 0.0);
+    tug(&mut solto, 5.0, 0.0, "1");
+    let m3 = materiais::levantar(&solto, &analisar(&solto), &setup);
+    assert!(m3.cabos.iter().any(|c| c.funcao == F::Neutro && c.metros > 0.0), "{:?}", m3.cabos);
+    assert!(m3.avisos.iter().any(|a| a.contains("sem eletrodutos até o quadro")), "{:?}", m3.avisos);
+    let _ = q2;
 }
 
 #[test]
@@ -3393,7 +3498,8 @@ fn tabela_do_quadro_fica_toda_dentro_da_moldura() {
         "MONTAGEM: Embutir",
         "OBSERVAÇÕES: Quadro de PVC",
         "ALIMENTADOR / GERAL: Cabo #",
-        "PROTEÇÕES: DR",
+        // Sem grupo de DR, a tabela diz; o DPS sai com a classe, Uc e Imax.
+        "PROTEÇÕES: sem DR | DPS Classe II 275 V 20 kA",
         "CIRCUITO",
         "DESCRIÇÃO",
         "CORRENTE (A)",
@@ -3492,9 +3598,12 @@ fn diagrama_unifilar_com_entrada_barra_dr_e_reservas() {
     let textos = textos_do_bloco(&d, &nome);
     let achar = |v: &str| textos.iter().find(|(t, ..)| t == v).unwrap_or_else(|| panic!("falta {v}: {textos:?}"));
     let tem = |v: &str| textos.iter().any(|(t, ..)| t.starts_with(v));
-    for v in ["PAINEL:", "POT. INSTALADA:", "POT. DEMANDADA:", "In: ", "IN: ", "1 - Sala", "POT: ", "FASE: "] {
+    for v in ["PAINEL:", "POT. INSTALADA:", "POT. DEMANDADA:", "3P In: ", "Curva C", "IN: ", "1 - Sala", "POT: ", "FASE: "] {
         assert!(tem(v), "falta {v}: {textos:?}");
     }
+    // O DR com a sensibilidade dele; o DPS com Uc e Imax.
+    assert!(textos.iter().any(|(t, ..)| t.starts_with("IN: ") && t.ends_with("A / 30mA")), "{textos:?}");
+    assert!(tem("275 V / 20 kA"));
     // O circuito 3 sai da barra: disjuntor, número em cima e bitola embaixo; as reservas fecham a lista.
     let disjuntor = achar("1P/20A");
     let secao = achar("#2,5");
@@ -3533,21 +3642,17 @@ fn diagrama_unifilar_com_entrada_barra_dr_e_reservas() {
     assert!(circulos >= 2 * (3 + 2 + 1), "{circulos}");
     // O disjuntor é curvo; a barra tem nós; a caixa fica alinhada à direita.
     let contar = |f: &dyn Fn(&EntityKind) -> bool| d.blocks[&nome].entities.iter().filter(|e| f(&e.kind)).count();
-    assert_eq!(contar(&|k| matches!(k, EntityKind::Arc(_))), 3 + 2 + 1 + 3, "circuitos, reservas, o geral e os três da simbologia");
+    assert_eq!(contar(&|k| matches!(k, EntityKind::Arc(_))), 3 + 2 + 1, "circuitos, reservas e o geral");
     // Os riscos dos polos e os traços de fase ficam a 90° da linha do circuito: nenhuma linha inclinada além
-    // das setas do DPS (o da entrada, depois do geral, e o da simbologia).
+    // da seta do DPS da entrada, depois do geral.
     let inclinadas = d.blocks[&nome]
         .entities
         .iter()
         .filter(|e| matches!(&e.kind, EntityKind::Line(l) if (l.a.x - l.b.x).abs() > 1e-9 && (l.a.y - l.b.y).abs() > 1e-9))
         .count();
-    assert_eq!(inclinadas, 2);
-    // O quadro de simbologia, embaixo do diagrama: cada símbolo usado com a explicação.
-    let simbologia = achar("SIMBOLOGIA DO DIAGRAMA UNIFILAR");
-    assert!(simbologia.2 < baixo, "embaixo da moldura");
-    for v in unifilar::SIMBOLOGIA {
-        assert!(achar(v).2 < simbologia.2);
-    }
+    assert_eq!(inclinadas, 1);
+    // O comando do unifilar desenha só o diagrama: a simbologia fica na Legenda de símbolos da elétrica.
+    assert!(!tem(unifilar::TITULO_SIMBOLOGIA) && unifilar::SIMBOLOGIA.iter().all(|v| !tem(v)), "{textos:?}");
     assert!(textos.iter().all(|(_, _, _, h, _)| (0.08..=0.16).contains(h)), "textos em 1:50");
     assert!(contar(&|k| matches!(k, EntityKind::Circle(_))) >= 6);
     let caixas: Vec<f64> = textos.iter().filter(|(t, ..)| t.contains(" - ")).map(|(_, x, ..)| *x).collect();
@@ -3744,13 +3849,11 @@ fn disjuntor_do_unifilar_tem_um_risco_por_polo() {
     let an = analisar(&d);
     unifilar::gerar(&mut d, &an, &setup, q, Some([0.0, 0.0])).unwrap();
     let nome = format!("{}{}", unifilar::PREFIXO, q.hex());
-    // Os disjuntores do diagrama, acima do quadro de simbologia.
-    let simbologia = textos_do_bloco(&d, &nome).into_iter().find(|t| t.0 == "SIMBOLOGIA DO DIAGRAMA UNIFILAR").unwrap().2;
+    // Os disjuntores do diagrama (a simbologia fica na legenda).
     let arcos: Vec<(f64, f64, f64)> = d.blocks[&nome]
         .entities
         .iter()
         .filter_map(|e| if let EntityKind::Arc(a) = &e.kind { Some((a.center.x, a.center.y, a.radius)) } else { None })
-        .filter(|a| a.1 > simbologia)
         .collect();
     assert_eq!(arcos.len(), 2);
     let riscos = |c: (f64, f64, f64)| {
@@ -3822,9 +3925,11 @@ fn vista_frontal_do_quadro_nos_trilhos_din() {
     let nome = format!("{}{}", frontal::PREFIXO, q.hex());
     let textos = textos_do_bloco(&d, &nome);
     let tem = |v: &str| textos.iter().any(|(t, ..)| t == v);
-    for v in [frontal::titulo("QD-01").as_str(), "GERAL", "DPS", "BARRAMENTO DE NEUTRO (N)", "BARRAMENTO DE TERRA (PE)", "RESERVA", "T", "30mA"] {
+    // Neutro e terra sempre em pé nas laterais internas do chassi.
+    for v in [frontal::titulo("QD-01").as_str(), "GERAL", "DPS", "NEUTRO (N)", "TERRA (PE)", "RESERVA", "T", "30mA"] {
         assert!(tem(v), "falta {v}: {textos:?}");
     }
+    assert!(!tem("BARRAMENTO DE NEUTRO (N)") && !tem("BARRAMENTO DE TERRA (PE)"));
     assert!(textos.iter().any(|(t, ..)| t.starts_with("DR ")));
     let cor = |c: u8| d.blocks[&nome].entities.iter().filter(|e| e.common.color == cadcraft_doc::color::Color::Index(c)).count();
     assert!(cor(5) > 0 && cor(3) > 0, "neutro azul e terra verde");
@@ -4193,10 +4298,13 @@ fn vista_frontal_e_unifilar_seguem_o_dps_e_a_montagem_do_quadro() {
     }
     let resumo = |d: &Drawing| quadro::rotear(d, &analisar(d), &setup, q).unwrap();
     let tipos = |mo: &frontal::Montagem| mo.dispositivos.iter().map(|x| x.tipo).collect::<Vec<_>>();
-    // O padrão: DPS classe II, sem disjuntor próprio, barramento pente, neutro e terra em cima e embaixo.
+    // O padrão: DPS classe II, sem disjuntor próprio, barramento pente, neutro e terra nas laterais.
     let mo = frontal::montagem(&resumo(&d));
     assert!(tipos(&mo).contains(&T::Dps) && !tipos(&mo).contains(&T::DisjuntorDps));
-    assert_eq!((mo.barramento_fase, mo.posicao_nt), (quadro::TipoBarramentoFase::Pente, quadro::PosicaoBarramentoNt::TopoBase));
+    assert_eq!((mo.barramento_fase, mo.posicao_nt), (quadro::TipoBarramentoFase::Pente, quadro::PosicaoBarramentoNt::Laterais));
+    // Mesmo com a posição antiga gravada, neutro e terra ficam nas laterais.
+    editar::definir_opcao_quadro(&mut d, q, quadro::CHAVE_BARRAMENTO_NT, Some("TOPO_BASE")).unwrap();
+    assert_eq!(frontal::montagem(&resumo(&d)).posicao_nt, quadro::PosicaoBarramentoNt::Laterais);
     // Com o disjuntor exclusivo do DPS: ele vem antes dos DPS, com os polos do quadro.
     editar::definir_opcao_quadro(&mut d, q, quadro::CHAVE_DISJ_DPS, Some("40")).unwrap();
     editar::definir_opcao_quadro(&mut d, q, quadro::CHAVE_CLASSE_DPS, Some("I")).unwrap();
@@ -4226,26 +4334,25 @@ fn vista_frontal_e_unifilar_seguem_o_dps_e_a_montagem_do_quadro() {
     assert_eq!(mo.modulos_por_trilho, 12);
     assert_eq!(mo.trilhos, usize::try_from(mo.modulos().div_ceil(12)).unwrap().max(1));
     assert!(mo.dispositivos.iter().all(|x| x.posicao + x.modulos <= 12));
-    // Neutro e terra nas laterais, e espinha de peixe: a caixa fica mais larga e os nomes mudam.
-    let largura = |d: &Drawing| {
-        let nome = format!("{}{}", frontal::PREFIXO, q.hex());
+    // Neutro e terra em pé nas laterais desde o início; a espinha de peixe troca as réguas do pente pelas
+    // derivações inclinadas.
+    let nome = format!("{}{}", frontal::PREFIXO, q.hex());
+    let inclinadas = |d: &Drawing| {
         d.blocks[&nome]
             .entities
             .iter()
-            .filter_map(|e| if let EntityKind::Line(l) = &e.kind { Some(l.a.x.max(l.b.x)) } else { None })
-            .fold(0.0, f64::max)
+            .filter(|e| matches!(&e.kind, EntityKind::Line(l) if (l.a.x - l.b.x).abs() > 1e-9 && (l.a.y - l.b.y).abs() > 1e-9))
+            .count()
     };
     let an = analisar(&d);
     frontal::gerar(&mut d, &an, &setup, q, Some([0.0, -20.0])).unwrap();
-    let antes = largura(&d);
-    editar::definir_opcao_quadro(&mut d, q, quadro::CHAVE_BARRAMENTO_NT, Some("LATERAIS")).unwrap();
+    let textos: Vec<String> = textos_do_bloco(&d, &nome).into_iter().map(|t| t.0).collect();
+    assert!(textos.contains(&"NEUTRO (N)".to_string()) && textos.contains(&"TERRA (PE)".to_string()), "{textos:?}");
+    assert_eq!(inclinadas(&d), 0, "pente");
     editar::definir_opcao_quadro(&mut d, q, quadro::CHAVE_BARRAMENTO_FASE, Some("ESCAMA")).unwrap();
     let an = analisar(&d);
     frontal::regenerar(&mut d, &an, &setup).unwrap();
-    let nome = format!("{}{}", frontal::PREFIXO, q.hex());
-    let textos: Vec<String> = textos_do_bloco(&d, &nome).into_iter().map(|t| t.0).collect();
-    assert!(textos.contains(&"NEUTRO (N)".to_string()) && textos.contains(&"TERRA (PE)".to_string()), "{textos:?}");
-    assert!(largura(&d) > antes, "{} > {antes}", largura(&d));
+    assert!(inclinadas(&d) > 0, "espinha de peixe");
 }
 
 #[test]
@@ -4277,10 +4384,25 @@ fn legenda_separada_por_disciplina() {
     let titulo = |nome: &str| textos_do_bloco(&d, nome).into_iter().map(|t| t.0).find(|t| t.starts_with("LEGENDA")).unwrap();
     assert_eq!(titulo("LEGENDA_SIMBOLOS_ELETRICA"), "LEGENDA DE SÍMBOLOS ELÉTRICOS");
     assert_eq!(titulo("LEGENDA_SIMBOLOS_TELECOM"), "LEGENDA DE SÍMBOLOS TELECOM");
-    assert_eq!(fiacao::regenerar(&mut d, &setup, None).unwrap().legendas, 2);
-    // Inserir de novo a mesma disciplina só move.
+    // A da elétrica traz, num segundo bloco à direita, a simbologia do diagrama unifilar; a de telecom, não.
+    let simbologia = legenda::simbologia_unifilar(&d).expect("a simbologia do unifilar");
+    let x_de = |d: &Drawing, h: Handle| match &d.model.get(h).unwrap().kind {
+        EntityKind::Insert(i) => i.insert.x,
+        _ => f64::NAN,
+    };
+    assert!(x_de(&d, simbologia) > x_de(&d, he) && x_de(&d, simbologia) < x_de(&d, ht), "ao lado da legenda elétrica");
+    let textos_simb: Vec<String> = textos_do_bloco(&d, legenda::BLOCO_UNIFILAR).into_iter().map(|t| t.0).collect();
+    assert!(textos_simb.contains(&unifilar::TITULO_SIMBOLOGIA.to_string()), "{textos_simb:?}");
+    assert!(unifilar::SIMBOLOGIA.iter().all(|v| textos_simb.contains(&v.to_string())));
+    assert!(!textos_do_bloco(&d, "LEGENDA_SIMBOLOS_ELETRICA").iter().any(|t| t.0 == unifilar::TITULO_SIMBOLOGIA), "tabelas separadas");
+    // Regenerar refaz as duas legendas e a simbologia, sem mexer nas inserções.
+    assert_eq!(fiacao::regenerar(&mut d, &setup, None).unwrap().legendas, 3);
+    assert_eq!(legenda::simbologia_unifilar(&d), Some(simbologia));
+    // Inserir de novo a mesma disciplina só move; a simbologia vai junto com a elétrica.
     assert_eq!(legenda::inserir(&mut d, &an, [30.0, 0.0], 1.0, Some(D::Telecom)).unwrap(), ht);
     assert_eq!(legenda::legendas(&d).len(), 2);
+    legenda::inserir(&mut d, &an, [50.0, 0.0], 1.0, Some(D::Eletrica)).unwrap();
+    assert!(x_de(&d, legenda::simbologia_unifilar(&d).unwrap()) > 50.0);
 }
 
 #[test]

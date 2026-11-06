@@ -263,9 +263,31 @@ pub struct Condutores {
     /// A seção do neutro (tabela 48) e a do condutor de proteção (tabela 58), quando diferem da fase.
     pub secao_neutro: Option<f64>,
     pub secao_pe: Option<f64>,
+    /// O quadro do circuito.
+    #[serde(serialize_with = "hex")]
+    pub quadro: Handle,
+    /// As fases do quadro que o circuito usa (índices em `quadro::NOMES_FASES`), para as cores na compra.
+    pub fases_do_quadro: Vec<usize>,
+    /// O nome do cabo no catálogo.
+    pub nome_cabo: String,
 }
 
 impl Condutores {
+    /// As fases do quadro de cada condutor fase deste trecho: as primeiras do circuito (um interruptor leva
+    /// só a primeira). Sem o equilíbrio de fases, R, S e T na ordem.
+    pub fn fases_no_trecho(&self) -> Vec<usize> {
+        let n = usize::from(self.fases);
+        let mut v: Vec<usize> = self.fases_do_quadro.iter().copied().filter(|f| *f < 3).take(n).collect();
+        let mut proxima = 0;
+        while v.len() < n && proxima < 3 {
+            if !v.contains(&proxima) {
+                v.push(proxima);
+            }
+            proxima += 1;
+        }
+        v
+    }
+
     /// As marcas, na ordem em que são desenhadas: fases, neutro, retornos, proteção.
     pub fn marcas(&self) -> Vec<(TipoCondutor, Option<&str>)> {
         let mut v: Vec<(TipoCondutor, Option<&str>)> = (0..self.fases).map(|_| (TipoCondutor::Fase, None)).collect();
@@ -280,7 +302,7 @@ impl Condutores {
     }
 
     /// A seção de cada condutor: o neutro e o PE podem ser menores que a fase.
-    fn secao_de(&self, tipo: TipoCondutor) -> Option<f64> {
+    pub fn secao_de(&self, tipo: TipoCondutor) -> Option<f64> {
         match tipo {
             TipoCondutor::Neutro => self.secao_neutro.or(self.secao),
             TipoCondutor::Protecao => self.secao_pe.or(self.secao),
@@ -529,6 +551,9 @@ pub fn calcular(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle)
             tipo_cabo: linha.tipo_cabo,
             secao_neutro: linha.secao_neutro,
             secao_pe: linha.secao_pe,
+            quadro,
+            fases_do_quadro: linha.fases.clone(),
+            nome_cabo: linha.nome_cabo.clone(),
             ..Condutores::default()
         };
         let mut marcar = |arestas: &[usize], f: &dyn Fn(&mut Condutores)| {
@@ -1091,6 +1116,8 @@ pub struct Regeneracao {
     pub frontais: usize,
     /// Tabelas de rack (quadro VDI) refeitas.
     pub racks: usize,
+    /// Tabelas da lista de materiais refeitas.
+    pub materiais: usize,
     pub avisos: Vec<String>,
 }
 
@@ -1223,6 +1250,7 @@ pub fn regenerar(doc: &mut Drawing, setup: &Setup, criar: Option<&[Handle]>) -> 
     crate::telecom::gravar(doc, &telecom);
     reg.racks = crate::telecom::regenerar_tabelas(doc, &telecom, setup);
     reg.legendas = crate::legenda::regenerar(doc, &analise, m);
+    reg.materiais = crate::materiais::regenerar_tabela(doc, &analise, setup);
     Ok(reg)
 }
 
@@ -1234,6 +1262,7 @@ pub fn regenerar_se_houver(doc: &mut Drawing, setup: &Setup) -> Result<Option<Re
         && crate::frontal::vistas(doc).is_empty()
         && crate::telecom::tabelas(doc).is_empty()
         && crate::legenda::inserida(doc).is_none()
+        && crate::materiais::tabela_inserida(doc).is_none()
     {
         return Ok(None);
     }

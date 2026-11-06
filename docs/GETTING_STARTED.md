@@ -75,18 +75,32 @@ piso, com o material e os diâmetros) e o **traçado**: **Reto**, **Ângulo 45°
 
 ## Passo 6: Dimensionando e gerando as tags (`Dimensionar projeto...` e `ELEFIACAO`)
 
-Abra **Dimensionar projeto...** (`ELEDIMENSIONAR`) e escolha o quadro.
+Abra **Dimensionar projeto...** (`ELEDIMENSIONAR`) e escolha o quadro no topo. O assistente tem quatro etapas, com o
+progresso no topo (**1. Diagnóstico → 2. Circuitos → 3. Diagrama Unifilar → 4. Vista Frontal**) e os botões no rodapé.
 
-1. Em cada circuito, escolha o **esquema**, o **tipo de cabo**, o **método** de instalação e o **grupo DR**.
-2. **Vários de uma vez:** clique no número de um circuito para selecioná-lo, **Ctrl+clique** para somar outros,
-   **Shift+clique** para pegar um intervalo e **Ctrl+A** para todos. Com duas ou mais linhas selecionadas, a mudança
-   feita numa delas vale para todas. O mesmo vale no quadro de cargas, no Quadro de Telecomunicações e nas listas de
-   pontos e de eletrodutos.
-3. Monte os grupos de DR com **+ Novo Grupo DR** e **+ Adicionar circuito...**, ou pelo botão **Adicionar ao DR** de cada
-   circuito sem DR.
-4. Em **Proteção geral, DPS e montagem do quadro**, confira o disjuntor geral, a seção do alimentador, o DPS e a montagem
-   dos trilhos DIN. O cadeado mostra o que você travou à mão.
-5. Clique em **Calcular Dimensionamento**, revise e clique em **Aplicar ao Quadro**.
+1. **Diagnóstico:** o que corrigir antes de dimensionar, do mais grave ao menos: pontos sem circuito, pontos fora da
+   rede de eletrodutos, eletrodutos soltos e trechos com ocupação ou queda de tensão acima do limite. **Localizar** leva
+   até cada um. Siga com **Avançar para Circuitos >**.
+2. **Circuitos:** em cima, a temperatura ambiente (FCT), o FCA fixo, o compartilhamento do condutor de proteção, o
+   critério do disjuntor e o método de instalação do quadro. Na tabela, o **esquema**, o **tipo de cabo**, o **método**, o
+   **grupo DR** (na própria linha: Nenhum, IDR1, IDR2...; **+ Criar IDR** cria um grupo novo) e já o resultado: Ib, cabo,
+   disjuntor, curva e queda, que você pode travar à mão.
+   - **Vários de uma vez:** clique no número de um circuito para selecioná-lo, **Ctrl+clique** para somar outros,
+     **Shift+clique** para pegar um intervalo e **Ctrl+A** para todos. Com duas ou mais linhas selecionadas, a mudança
+     feita numa delas vale para todas. O mesmo vale no quadro de cargas, no Quadro de Telecomunicações e nas listas de
+     pontos e de eletrodutos.
+   - No rodapé, marque **Configurar e gerar Diagrama Unifilar** e **Configurar e gerar Vista Frontal do Quadro** se
+     quiser os desenhos. A vista frontal depende do unifilar: marcá-la marca o unifilar. Sem nenhum marcado, **Aplicar
+     Dimensionamento ao Quadro** já grava.
+3. **Diagrama Unifilar:** o disjuntor geral (polos, corrente e curva), o cabo alimentador (seção e tipo), o DPS (marque
+   **Incluir DPS no quadro**: desmarcado, o quadro fica sem DPS; classe, tensão Uc, capacidade em kA e o disjuntor de
+   proteção prévio) e a corrente e a sensibilidade de cada DR usado. O cadeado mostra o que você travou à mão.
+4. **Vista Frontal:** a largura máxima por fileira (12, 16, 18 ou 24 módulos DIN), o barramento das fases (pente DIN ou
+   espinha de peixe), a montagem (embutir ou sobrepor) e os módulos reserva. Neutro e terra ficam sempre nas laterais
+   internas do chassi.
+
+**Aplicar e Concluir** grava o cálculo no quadro, atualiza as tags e as tabelas e desenha o unifilar e a vista frontal ao
+lado do quadro, se marcados. Ctrl+Z desfaz.
 
 **Tags de fiação** (`ELEFIACAO`): a mini-barra escolhe o modo. **Direto no eletroduto** é um clique no trecho.
 **Com linha de chamada** são dois cliques: o ponto no eletroduto e onde a base da tag começa, no ângulo que você quiser.
@@ -97,10 +111,16 @@ Enter no começo põe uma tag no meio de todos os eletrodutos.
 Na seção **Documentação e Tabelas**:
 
 - **Tabela do quadro** (`ELEQUADRO_TABELA`): o quadro de cargas desenhado na planta.
-- **Diagrama unifilar** (`ELEUNIFILAR`): o diagrama do quadro, com o quadro de simbologia embaixo.
+- **Diagrama unifilar** (`ELEUNIFILAR`): só o diagrama do quadro.
 - **Vista frontal do quadro** (`ELEQUADRO_FRONTAL`): o layout de montagem nos trilhos DIN, com os barramentos.
-- **Legenda de símbolos** (`ELELEGENDA`): os símbolos elétricos usados no desenho.
-- **Lista de materiais...** (`ELEMATERIAIS`): cabos, eletrodutos, caixas, disjuntores, DR, DPS, barramentos e quadros.
+- Nessas três e na **Tabela do rack**, a mini-barra no topo do desenho mostra qual quadro (ou rack) vai para a planta;
+  troque nela antes de clicar. Com um quadro só, ele já vem escolhido.
+- **Legenda de símbolos** (`ELELEGENDA`): duas tabelas lado a lado, a legenda dos símbolos da planta elétrica e a
+  simbologia do diagrama unifilar. Na aba Telecom, a legenda é só a de telecomunicações.
+- **Lista de materiais...** (`ELEMATERIAIS`): os cabos por isolação, seção e cor (cada fase na cor dela, neutro
+  azul-claro, terra verde e retorno amarelo, com os rolos de 100 m), eletrodutos, caixas, disjuntores, DR, DPS,
+  barramentos e quadros. As cores ficam em **Configurações... > Condutores**.
+- **Tabela de materiais** (`ELEMATERIAIS_TABELA`): a mesma lista desenhada como tabela na planta.
 - **Atualizar tags e tabelas** (`ELEREGEN`): refaz tudo o que foi gerado, sem mudar as posições. Use depois de qualquer
   mudança.
 
@@ -131,14 +151,15 @@ No seletor do topo, escolha **Telecom**.
 | Comandos e luminárias | `ELECOMANDO` | Ligar interruptores às luminárias |
 | Quadro de cargas... | `ELECARGAS` | Fases, DR e ficha de cada circuito |
 | Inserir eletroduto | `ELEELETRODUTO` | Ligar os blocos pelo teto, parede ou piso |
-| Dimensionar projeto... | `ELEDIMENSIONAR` | Cabos, disjuntores, DR, DPS; calcular e aplicar |
+| Dimensionar projeto... | `ELEDIMENSIONAR` | Assistente: diagnóstico, circuitos e DR, unifilar e vista frontal |
 | Tags de fiação | `ELEFIACAO` | Simbologia de fiação nos eletrodutos |
 | Tabela do quadro | `ELEQUADRO_TABELA` | O quadro de cargas na prancha |
-| Diagrama unifilar | `ELEUNIFILAR` | O unifilar com o quadro de simbologia |
+| Diagrama unifilar | `ELEUNIFILAR` | O unifilar do quadro escolhido na mini-barra |
 | Vista frontal do quadro | `ELEQUADRO_FRONTAL` | A montagem nos trilhos DIN |
-| Legenda de símbolos | `ELELEGENDA` | A legenda dos símbolos elétricos |
+| Legenda de símbolos | `ELELEGENDA` | A legenda da planta e a simbologia do unifilar |
 | Atualizar tags e tabelas | `ELEREGEN` | Refazer tudo o que foi gerado |
-| Lista de materiais... | `ELEMATERIAIS` | O levantamento de materiais |
+| Lista de materiais... | `ELEMATERIAIS` | O levantamento de materiais, com os cabos por cor |
+| Tabela de materiais | `ELEMATERIAIS_TABELA` | A lista de materiais na prancha |
 | Inspecionar projeto | `ELEINSPECAO` | Os halos do que falta no projeto |
 | Numerar e vincular ao rack | `TELEVINCULAR` | Porta e rack de cada ponto de telecom |
 | Dimensionar telecom... | `TELEROTEAR` | Cabos em estrela e eletrodutos de telecom |

@@ -82,6 +82,40 @@ pub fn definir_grupo_dr(doc: &mut Drawing, quadro: Handle, circuito: &str, grupo
     gravar_xdata(doc, quadro, &chave_do_circuito(CHAVE_DR, circuito)?, grupo.map(str::trim).filter(|g| !g.is_empty()))
 }
 
+/// A corrente nominal (A) e a sensibilidade (mA) de um grupo de DR do quadro. `Some(None)` volta à sugerida
+/// (a corrente) ou a 30 mA (a sensibilidade); `None` não mexe. Tudo é conferido antes de gravar.
+pub fn definir_dr(
+    doc: &mut Drawing,
+    quadro: Handle,
+    grupo: &str,
+    corrente: Option<Option<f64>>,
+    sensibilidade: Option<Option<f64>>,
+) -> Result<(), String> {
+    use crate::quadro as q;
+    if ler_ponto(doc, quadro).is_none_or(|p| p.tipo != crate::ponto::TipoPonto::Quadro) {
+        return Err("o objeto não é um quadro".into());
+    }
+    let na_lista = |v: f64, lista: &[f64]| lista.iter().any(|x| (x - v).abs() < 1e-6);
+    if let Some(Some(c)) = corrente
+        && !na_lista(c, &q::CORRENTES_DR)
+    {
+        return Err(format!("corrente do DR de {} A: use 25, 40, 63, 80, 100 ou 125 A", crate::ponto::br(c)));
+    }
+    if let Some(Some(s)) = sensibilidade
+        && !na_lista(s, &q::SENSIBILIDADES_DR)
+    {
+        return Err(format!("sensibilidade do DR de {} mA: use 10, 30, 100 ou 300 mA", crate::ponto::br(s)));
+    }
+    let texto = |v: Option<f64>| v.map(|x| x.to_string());
+    if let Some(c) = corrente {
+        gravar_xdata(doc, quadro, &chave_do_circuito(q::CHAVE_DR_CORRENTE, grupo)?, texto(c).as_deref())?;
+    }
+    if let Some(s) = sensibilidade {
+        gravar_xdata(doc, quadro, &chave_do_circuito(q::CHAVE_DR_SENSIBILIDADE, grupo)?, texto(s).as_deref())?;
+    }
+    Ok(())
+}
+
 /// Processa o cálculo: dimensiona os quadros (`None`: todos), grava o resultado de cada circuito no
 /// quadro, para a tabela mostrar, e atualiza as tags e tabelas que já existem. Só aqui o desenho
 /// recebe o dimensionamento.
@@ -312,6 +346,17 @@ pub fn definir_opcao_quadro(doc: &mut Drawing, quadro: Handle, chave: &str, valo
             q::CHAVE_BARRAMENTO_NT => {
                 q::PosicaoBarramentoNt::de_codigo(v).ok_or("barramentos de neutro e terra: TOPO_BASE ou LATERAIS")?.codigo().into()
             }
+            q::CHAVE_POLOS_GERAL | q::CHAVE_POLOS_DPS => v.parse::<u8>().ok().filter(|n| (1..=3).contains(n)).ok_or("polos: 1, 2 ou 3")?.to_string(),
+            q::CHAVE_CURVA_GERAL => crate::nbr5410::Curva::de_codigo(v).ok_or("curva do disjuntor geral: B, C ou D")?.codigo().into(),
+            q::CHAVE_CABO_GERAL => crate::nbr5410::TipoCabo::de_codigo(v).ok_or("tipo de cabo do alimentador desconhecido")?.codigo().into(),
+            q::CHAVE_TENSAO_DPS => crate::ponto::numero(v)
+                .filter(|t| q::TENSOES_DPS.iter().any(|x| (x - t).abs() < 1e-6))
+                .ok_or("tensão do DPS: 175, 275, 320, 385 ou 440 V")?
+                .to_string(),
+            q::CHAVE_IMAX_DPS => crate::ponto::numero(v)
+                .filter(|t| q::CORRENTES_DPS_KA.iter().any(|x| (x - t).abs() < 1e-6))
+                .ok_or("capacidade do DPS: 20 ou 45 kA")?
+                .to_string(),
             _ => return Err(format!("\"{chave}\" não é uma opção do quadro")),
         }),
     };
@@ -326,6 +371,12 @@ pub fn definir_opcao_quadro(doc: &mut Drawing, quadro: Handle, chave: &str, valo
             | q::CHAVE_MODULOS_TRILHO
             | q::CHAVE_BARRAMENTO_FASE
             | q::CHAVE_BARRAMENTO_NT
+            | q::CHAVE_POLOS_GERAL
+            | q::CHAVE_CURVA_GERAL
+            | q::CHAVE_CABO_GERAL
+            | q::CHAVE_TENSAO_DPS
+            | q::CHAVE_IMAX_DPS
+            | q::CHAVE_POLOS_DPS
     ) {
         return Err(format!("\"{chave}\" não é uma opção do quadro"));
     }

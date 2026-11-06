@@ -158,12 +158,12 @@ impl Pecas {
         self.linha(ponta, [ponta[0], ponta[1] - 0.035]);
     }
 
-    /// O quadro de simbologia do diagrama, com o canto superior esquerdo em (`x0`, `topo`).
-    fn simbologia(&mut self, x0: f64, topo: f64) {
+    /// O quadro de simbologia do diagrama, com o canto superior esquerdo em (`x0`, `topo`). Devolve a largura.
+    fn simbologia(&mut self, x0: f64, topo: f64) -> f64 {
         const LINHA_S: f64 = 0.30;
         const COLUNA: f64 = 0.80;
         let maior = SIMBOLOGIA.iter().map(|t| t.chars().count()).max().unwrap_or(0) as f64;
-        let titulo = "SIMBOLOGIA DO DIAGRAMA UNIFILAR";
+        let titulo = TITULO_SIMBOLOGIA;
         let largura = (COLUNA + maior * ALTURA * crate::tabela::LARGURA_CARACTERE + 2.0 * ALTURA)
             .max(titulo.chars().count() as f64 * TITULO * crate::tabela::LARGURA_CARACTERE + ALTURA);
         let alto_titulo = 0.30;
@@ -207,6 +207,7 @@ impl Pecas {
             }
             self.texto(nome, [x0 + COLUNA + ALTURA, yc], ALTURA, HAlign::Left);
         }
+        largura
     }
 
     /// Um nó circular na barra.
@@ -362,8 +363,14 @@ fn pecas(r: &ResumoQuadro, alimentado_por: &str, m: f64) -> Vec<(EntityKind, Opt
     p.marcas(0.45, entrada, r.fases_quadro.clamp(1, 3), neutro, true);
     let a = &r.alimentador;
     p.texto(&a.secao.map_or("#-".to_string(), |s| format!("#{}", br(s))), [0.45, entrada - 0.18], MENOR, HAlign::Center);
-    p.disjuntor(geral_x, entrada, 0.26, r.fases_quadro);
-    p.texto(&format!("In: {} A", a.disjuntor.map_or("-".to_string(), br)), [geral_x + 0.13, entrada + 0.24], MENOR, HAlign::Center);
+    p.disjuntor(geral_x, entrada, 0.26, a.polos_geral);
+    p.texto(
+        &format!("{}P In: {} A", a.polos_geral, a.disjuntor.map_or("-".to_string(), br)),
+        [geral_x + 0.13, entrada + 0.24],
+        MENOR,
+        HAlign::Center,
+    );
+    p.texto(&format!("Curva {}", a.curva_geral.codigo()), [geral_x + 0.13, entrada - 0.14], MENOR, HAlign::Center);
     p.linha([geral_x + 0.26, entrada], [BARRA, entrada]);
     p.no(BARRA, entrada);
     // O DPS (NBR 5410, 6.3.5), quando o quadro tem: depois do geral, para o terra; com o disjuntor exclusivo
@@ -375,7 +382,7 @@ fn pecas(r: &ResumoQuadro, alimentado_por: &str, m: f64) -> Vec<(EntityKind, Opt
         if let Some(dd) = a.disjuntor_dps {
             // O disjuntor em pé, na descida: os dois terminais na vertical e o arco ao lado.
             p.linha([dps_x, y], [dps_x, y - 0.06]);
-            p.disjuntor_vertical(dps_x, y - 0.06, 0.18, r.fases_quadro);
+            p.disjuntor_vertical(dps_x, y - 0.06, 0.18, a.polos_dps);
             p.texto(&format!("{} A", br(dd)), [dps_x + 0.14, y - 0.15], MENOR, HAlign::Left);
             y -= 0.24;
         }
@@ -383,7 +390,8 @@ fn pecas(r: &ResumoQuadro, alimentado_por: &str, m: f64) -> Vec<(EntityKind, Opt
         p.dps(dps_x, y - 0.20);
         p.linha([dps_x, y - 0.28], [dps_x, y - 0.33]);
         p.terra(dps_x, y - 0.33);
-        p.texto(&format!("DPS {}", a.classe_dps.codigo()), [dps_x - 0.09, y - 0.20], MENOR, HAlign::Right);
+        p.texto(&format!("DPS {}", a.classe_dps.codigo()), [dps_x - 0.09, y - 0.16], MENOR, HAlign::Right);
+        p.texto(&format!("{} V / {} kA", br(a.dps_tensao), br(a.dps_imax)), [dps_x - 0.09, y - 0.28], MENOR, HAlign::Right);
     }
 
     // Os grupos de DR: o módulo e a sub-barra de onde saem os circuitos dele.
@@ -396,7 +404,7 @@ fn pecas(r: &ResumoQuadro, alimentado_por: &str, m: f64) -> Vec<(EntityKind, Opt
         p.texto("DR", [DR_X + DR_LARGURA / 2.0, meio], ALTURA, HAlign::Center);
         p.linha([DR_X + DR_LARGURA, meio], [SUB_BARRA, meio]);
         let corrente = g.dr.map_or("-".to_string(), br);
-        p.texto(&format!("IN: {corrente}A / 30mA"), [DR_X + DR_LARGURA / 2.0, meio + 0.20], MENOR, HAlign::Center);
+        p.texto(&format!("IN: {corrente}A / {}mA", br(g.sensibilidade)), [DR_X + DR_LARGURA / 2.0, meio + 0.20], MENOR, HAlign::Center);
         p.texto(&g.nome, [DR_X + DR_LARGURA / 2.0, meio - 0.20], MENOR, HAlign::Center);
         p.linha([SUB_BARRA, *y0], [SUB_BARRA, *y1]);
         p.no(SUB_BARRA, meio);
@@ -410,9 +418,19 @@ fn pecas(r: &ResumoQuadro, alimentado_por: &str, m: f64) -> Vec<(EntityKind, Opt
     // O invólucro do quadro, aterrado: o alimentador entra pela esquerda; o título fica fora.
     let baixo = ramais_grupo.iter().chain(&ramais_barra).map(|x| x.y).fold(fundo, f64::min) - 0.35;
     p.moldura_aterrada(0.25, baixo, CAIXA_X + largura_caixa + 0.15, -0.80, BARRA);
-    // O quadro de simbologia, embaixo do diagrama, alinhado à esquerda, na mesma camada e escala.
-    p.simbologia(0.25, baixo - 0.70);
     p.lista
+}
+
+/// O título do quadro de simbologia do diagrama unifilar.
+pub const TITULO_SIMBOLOGIA: &str = "SIMBOLOGIA DO DIAGRAMA UNIFILAR";
+
+/// O quadro de simbologia do unifilar, com o canto superior esquerdo na origem, em unidades do desenho
+/// (`m` metros por unidade), e a largura dele em metros. Vai na Legenda de símbolos da aba Elétrica, ao lado
+/// da legenda da planta.
+pub(crate) fn pecas_da_simbologia(m: f64) -> (Vec<(EntityKind, Option<&'static str>)>, f64) {
+    let mut p = Pecas { lista: Vec::new(), m };
+    let largura = p.simbologia(0.0, 0.0);
+    (p.lista, largura)
 }
 
 /// O texto de quem alimenta o quadro, para o título do diagrama.

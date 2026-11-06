@@ -4,7 +4,7 @@
 //! (pré-seleção automática de seção e disjuntor, que o projetista pode sobrescrever) e
 //! distribuídos nas fases. É a tabela de resumo da janela Rotear fiação.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use cadcraft_doc::{Drawing, Handle};
 use serde::Serialize;
@@ -77,8 +77,29 @@ pub const CHAVE_METODO: &str = "METODO.";
 pub const CHAVE_MODULOS_TRILHO: &str = "MODULOS_TRILHO";
 pub const CHAVE_BARRAMENTO_FASE: &str = "BARRAMENTO_FASE";
 pub const CHAVE_BARRAMENTO_NT: &str = "BARRAMENTO_NT";
+/// A proteção geral: os polos e a curva do disjuntor geral e o tipo de cabo do alimentador.
+pub const CHAVE_POLOS_GERAL: &str = "POLOS_GERAL";
+pub const CHAVE_CURVA_GERAL: &str = "CURVA_GERAL";
+pub const CHAVE_CABO_GERAL: &str = "CABO_GERAL";
+/// O DPS: a tensão máxima de operação contínua (Uc, V), a corrente máxima de descarga (Imax, kA) e os polos
+/// do disjuntor exclusivo dele.
+pub const CHAVE_TENSAO_DPS: &str = "TENSAO_DPS";
+pub const CHAVE_IMAX_DPS: &str = "IMAX_DPS";
+pub const CHAVE_POLOS_DPS: &str = "POLOS_DPS";
+/// A corrente nominal (A) e a sensibilidade (mA) de cada grupo de DR, + o nome do grupo.
+pub const CHAVE_DR_CORRENTE: &str = "DRIN.";
+pub const CHAVE_DR_SENSIBILIDADE: &str = "DRSENS.";
+
 /// Os tamanhos de trilho DIN oferecidos (módulos).
 pub const MODULOS_POR_TRILHO: [u32; 4] = [12, 16, 18, 24];
+/// As tensões Uc de DPS de catálogo (V). O padrão é 275 V, desde que passe de 1,1 × Uo (NBR 5410, 6.3.5.2.2).
+pub const TENSOES_DPS: [f64; 5] = [175.0, 275.0, 320.0, 385.0, 440.0];
+/// As correntes máximas de descarga de DPS oferecidas (kA).
+pub const CORRENTES_DPS_KA: [f64; 2] = [20.0, 45.0];
+/// As sensibilidades de DR (mA). 30 mA é o exigido na proteção complementar (NBR 5410, 5.1.3.2.2).
+pub const SENSIBILIDADES_DR: [f64; 4] = [10.0, 30.0, 100.0, 300.0];
+/// Correntes nominais de DR (A).
+pub const CORRENTES_DR: [f64; 6] = [25.0, 40.0, 63.0, 80.0, 100.0, 125.0];
 
 /// A classe do DPS (NBR 5410, 6.3.5; ABNT NBR IEC 61643-11).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
@@ -138,8 +159,8 @@ impl TipoBarramentoFase {
 
     pub fn nome(self) -> &'static str {
         match self {
-            Self::Pente => "Pente",
-            Self::EscamaDePeixe => "Espinha de peixe",
+            Self::Pente => "Barramento pente DIN",
+            Self::EscamaDePeixe => "Escama de peixe (espinha de peixe)",
         }
     }
 
@@ -338,7 +359,27 @@ pub struct ConfigQuadro {
     /// Módulos por trilho DIN. `None`: 12 até 12 módulos, 18 acima.
     pub modulos_por_trilho: Option<u32>,
     pub barramento_fase: Option<TipoBarramentoFase>,
+    /// Gravado por versões anteriores: os barramentos de neutro e terra ficam sempre nas laterais.
     pub posicao_barramento_nt: Option<PosicaoBarramentoNt>,
+    /// Os polos e a curva do disjuntor geral. `None`: os polos do quadro e a curva C.
+    pub polos_geral: Option<u8>,
+    pub curva_geral: Option<nbr5410::Curva>,
+    /// O tipo de cabo do alimentador. `None`: o cabo padrão do quadro.
+    pub cabo_geral: Option<nbr5410::TipoCabo>,
+    /// A tensão Uc (V) e a corrente máxima de descarga (kA) do DPS, e os polos do disjuntor dele.
+    pub tensao_dps: Option<f64>,
+    pub imax_dps: Option<f64>,
+    pub polos_dps: Option<u8>,
+    /// A corrente nominal (A) e a sensibilidade (mA) escolhidas por grupo de DR (nome em maiúsculas).
+    pub drs: BTreeMap<String, ConfigDr>,
+}
+
+/// O que foi escolhido para um grupo de DR. `None`: a corrente sugerida e 30 mA.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigDr {
+    pub corrente: Option<f64>,
+    pub sensibilidade: Option<f64>,
 }
 
 impl ConfigQuadro {
@@ -378,7 +419,52 @@ pub fn config_do_quadro(q: &PontoEletrico) -> ConfigQuadro {
         modulos_por_trilho: valor(CHAVE_MODULOS_TRILHO).and_then(|v| v.trim().parse().ok()).filter(|n| MODULOS_POR_TRILHO.contains(n)),
         barramento_fase: valor(CHAVE_BARRAMENTO_FASE).and_then(TipoBarramentoFase::de_codigo),
         posicao_barramento_nt: valor(CHAVE_BARRAMENTO_NT).and_then(PosicaoBarramentoNt::de_codigo),
+        polos_geral: valor(CHAVE_POLOS_GERAL).and_then(|v| v.trim().parse().ok()).filter(|n| (1..=3).contains(n)),
+        curva_geral: valor(CHAVE_CURVA_GERAL).and_then(nbr5410::Curva::de_codigo),
+        cabo_geral: valor(CHAVE_CABO_GERAL).and_then(nbr5410::TipoCabo::de_codigo),
+        tensao_dps: valor(CHAVE_TENSAO_DPS).and_then(positivo).filter(|v| TENSOES_DPS.iter().any(|t| (t - v).abs() < 1e-6)),
+        imax_dps: valor(CHAVE_IMAX_DPS).and_then(positivo).filter(|v| CORRENTES_DPS_KA.iter().any(|t| (t - v).abs() < 1e-6)),
+        polos_dps: valor(CHAVE_POLOS_DPS).and_then(|v| v.trim().parse().ok()).filter(|n| (1..=3).contains(n)),
+        drs: configs_de_dr(q),
     }
+}
+
+/// A corrente e a sensibilidade gravadas para cada grupo de DR.
+fn configs_de_dr(q: &PontoEletrico) -> BTreeMap<String, ConfigDr> {
+    let mut m: BTreeMap<String, ConfigDr> = BTreeMap::new();
+    for (k, v) in &q.extras {
+        let k = k.to_uppercase();
+        if let Some(g) = k.strip_prefix(CHAVE_DR_CORRENTE) {
+            m.entry(g.to_string()).or_default().corrente = positivo(v).filter(|c| CORRENTES_DR.iter().any(|x| (x - c).abs() < 1e-6));
+        } else if let Some(g) = k.strip_prefix(CHAVE_DR_SENSIBILIDADE) {
+            m.entry(g.to_string()).or_default().sensibilidade = positivo(v).filter(|c| SENSIBILIDADES_DR.iter().any(|x| (x - c).abs() < 1e-6));
+        }
+    }
+    m
+}
+
+/// A tensão Uc padrão do DPS: 275 V, ou a primeira de catálogo que passe de 1,1 × Uo.
+pub fn tensao_dps_padrao(tensao_fn: f64) -> f64 {
+    let minima = 1.1 * tensao_fn;
+    TENSOES_DPS.iter().copied().filter(|t| *t >= 275.0).find(|t| *t + 1e-9 >= minima).unwrap_or(440.0)
+}
+
+/// O quadro e o rack escolhidos na mini-barra das ferramentas de documentação (tabela do quadro, unifilar,
+/// vista frontal e tabela do rack), por desenho aberto (`uid`): (desenho, é rack) → bloco.
+static ALVO_DOCUMENTACAO: std::sync::Mutex<BTreeMap<(u64, bool), Handle>> = std::sync::Mutex::new(BTreeMap::new());
+
+/// Escolhe o quadro (`rack` falso) ou o rack das próximas tabelas e diagramas do desenho. `None` esquece.
+pub fn definir_alvo_documentacao(desenho: u64, rack: bool, alvo: Option<Handle>) {
+    let mut m = ALVO_DOCUMENTACAO.lock().unwrap_or_else(|e| e.into_inner());
+    match alvo {
+        Some(h) => m.insert((desenho, rack), h),
+        None => m.remove(&(desenho, rack)),
+    };
+}
+
+/// O quadro (ou rack) escolhido para as próximas tabelas e diagramas do desenho.
+pub fn alvo_documentacao(desenho: u64, rack: bool) -> Option<Handle> {
+    ALVO_DOCUMENTACAO.lock().unwrap_or_else(|e| e.into_inner()).get(&(desenho, rack)).copied()
 }
 
 /// O quadro que alimenta este, quando é outro quadro.
@@ -527,8 +613,19 @@ pub struct GrupoDr {
     pub circuitos: Vec<String>,
     /// Soma das correntes de projeto dos circuitos (A).
     pub ib: f64,
-    /// Corrente nominal sugerida para o DR (A), a conferir. `None`: a soma passa da tabela.
+    /// Corrente nominal do DR (A): a escolhida ou a sugerida, a conferir. `None`: a soma passa da tabela.
     pub dr: Option<f64>,
+    /// A corrente foi escolhida à mão.
+    pub corrente_travada: bool,
+    /// A sensibilidade (corrente diferencial residual nominal, mA).
+    pub sensibilidade: f64,
+}
+
+impl GrupoDr {
+    /// O nome do DR na compra e nos desenhos: `DR 40 A / 30 mA`.
+    pub fn texto(&self) -> String {
+        format!("{} A / {} mA", self.dr.map_or("-".to_string(), br), br(self.sensibilidade))
+    }
 }
 
 /// O próximo nome livre de grupo de DR.
@@ -769,14 +866,24 @@ impl ResumoQuadro {
             let i = match grupos.iter().position(|g| g.nome.eq_ignore_ascii_case(nome)) {
                 Some(i) => i,
                 None => {
-                    grupos.push(GrupoDr { nome: nome.clone(), circuitos: Vec::new(), ib: 0.0, dr: None });
+                    let escolhido = self.config.drs.get(&nome.to_uppercase()).copied().unwrap_or_default();
+                    grupos.push(GrupoDr {
+                        nome: nome.clone(),
+                        circuitos: Vec::new(),
+                        ib: 0.0,
+                        dr: escolhido.corrente,
+                        corrente_travada: escolhido.corrente.is_some(),
+                        sensibilidade: escolhido.sensibilidade.unwrap_or(30.0),
+                    });
                     grupos.len() - 1
                 }
             };
             if let Some(g) = grupos.get_mut(i) {
                 g.circuitos.push(l.circuito.id.clone());
                 g.ib += l.escolha.ib;
-                g.dr = CORRENTES_DR.iter().copied().find(|c| *c >= g.ib);
+                if !g.corrente_travada {
+                    g.dr = CORRENTES_DR.iter().copied().find(|c| *c >= g.ib);
+                }
             }
         }
         grupos.sort_by(|a, b| crate::circuito::ordem_natural(&a.nome, &b.nome));
@@ -844,15 +951,21 @@ pub struct Alimentador {
     pub dps: bool,
     pub classe_dps: ClasseDps,
     pub disjuntor_dps: Option<f64>,
+    /// A tensão Uc (V) e a corrente máxima de descarga (kA) do DPS, e os polos do disjuntor dele.
+    pub dps_tensao: f64,
+    pub dps_imax: f64,
+    pub polos_dps: u8,
+    /// Os polos e a curva do disjuntor geral.
+    pub polos_geral: u8,
+    pub curva_geral: nbr5410::Curva,
+    /// O tipo de cabo do alimentador.
+    pub cabo_geral: nbr5410::TipoCabo,
     /// A seção e o disjuntor geral foram travados à mão.
     pub secao_travada: bool,
     pub disjuntor_travado: bool,
     /// O que a norma não aceita na escolha travada: avisa sem impedir.
     pub avisos: Vec<String>,
 }
-
-/// Correntes nominais de DR (A).
-const CORRENTES_DR: [f64; 6] = [25.0, 40.0, 63.0, 80.0, 100.0, 125.0];
 
 /// Dimensiona o alimentador do quadro pela corrente demandada. A seção e o disjuntor geral travados no
 /// quadro valem sobre os calculados, conferidos contra Ib ≤ In ≤ Iz (5.3.4.1).
@@ -887,16 +1000,28 @@ pub fn alimentador(ib: f64, fases: u8, tensao_fn: f64, cfg: &nbr5410::Config, co
     {
         avisos.push(format!("disjuntor do DPS de {} A maior que o geral de {} A", br(dd), br(dg)));
     }
+    let dps_uc = 1.1 * tensao_fn;
+    let dps_tensao = config.tensao_dps.unwrap_or_else(|| tensao_dps_padrao(tensao_fn));
+    if config.tem_dps() && dps_tensao + 1e-9 < dps_uc {
+        avisos.push(format!("DPS de {} V abaixo de 1,1 × Uo ({} V): NBR 5410, 6.3.5.2.2", br(dps_tensao), br(dps_uc.ceil())));
+    }
+    let fases = fases.clamp(1, 3);
     Alimentador {
         ib,
         secao,
         iz,
         disjuntor,
         dr: disjuntor.and_then(|d| CORRENTES_DR.iter().copied().find(|c| *c >= d)),
-        dps_uc: 1.1 * tensao_fn,
+        dps_uc,
         dps: config.tem_dps(),
         classe_dps: config.classe_do_dps(),
         disjuntor_dps: config.disjuntor_dps.filter(|_| config.tem_dps()),
+        dps_tensao,
+        dps_imax: config.imax_dps.unwrap_or(CORRENTES_DPS_KA[0]),
+        polos_dps: config.polos_dps.unwrap_or(fases),
+        polos_geral: config.polos_geral.unwrap_or(fases),
+        curva_geral: config.curva_geral.unwrap_or(nbr5410::Curva::C),
+        cabo_geral: config.cabo_geral.unwrap_or_else(|| nbr5410::TipoCabo::de_isolacao(cfg.isolacao)),
         secao_travada: config.secao_geral.is_some(),
         disjuntor_travado: config.disjuntor_geral.is_some(),
         avisos,
@@ -1194,7 +1319,13 @@ pub fn rotear(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle) -
     let (tensao_fn, tensao_ff) = (cfg_base.tensao_fn, cfg_base.tensao_ff);
     let vazios = circuitos_do_quadro(analise, quadro).into_iter().filter(|c| c.circuito.is_none()).collect();
     let corrente_demandada = corrente_quadro(demanda.demandada, fases_quadro, tensao_fn, tensao_ff);
-    let alimentador = alimentador(corrente_demandada, fases_quadro, tensao_fn, &cfg_base, &config);
+    // O alimentador com a isolação do cabo dele, quando foi escolhido.
+    let cfg_alimentador = match config.cabo_geral {
+        Some(c) => nbr5410::Config { isolacao: c.isolacao(), fct: c.isolacao().fct(setup.temperatura_ambiente), ..cfg_base.clone() },
+        None => cfg_base.clone(),
+    };
+    let mut alimentador = alimentador(corrente_demandada, fases_quadro, tensao_fn, &cfg_alimentador, &config);
+    alimentador.cabo_geral = config.cabo_geral.unwrap_or(cabo_padrao);
     avisos.extend(alimentador.avisos.iter().cloned());
     if linhas.iter().any(|l| l.metodo == nbr5410::MetodoInstalacao::D) {
         avisos.push("método D (enterrado): o FCT do solo e o FCA da tabela 44 não são aplicados; confira".into());

@@ -141,3 +141,29 @@ pub fn inspecionar(doc: &Drawing, analise: &Analise, setup: &Setup) -> Vec<Item>
     itens.sort_by_key(|i| i.nivel);
     itens
 }
+
+/// Os problemas de um quadro antes de dimensionar, do mais grave ao menos: os pontos sem circuito (ainda sem
+/// quadro), os pontos dos circuitos dele sem caminho de eletrodutos ou com queda acima do limite, o próprio
+/// quadro desligado da rede, os eletrodutos soltos e os trechos dos circuitos dele com ocupação acima do limite.
+pub fn diagnostico(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle) -> Vec<Item> {
+    let trechos_do_quadro: Vec<Handle> =
+        fiacao::calcular(doc, analise, setup, quadro).map(|f| f.trechos.iter().map(|t| t.handle).collect()).unwrap_or_default();
+    let soltos: Vec<Handle> = Rede::montar(doc, setup, &analise.pontos, setup.unidade.metros(doc.header.i64("INSUNITS", 0)).0)
+        .soltos
+        .iter()
+        .map(|s| s.eletroduto)
+        .collect();
+    inspecionar(doc, analise, setup)
+        .into_iter()
+        .filter(|i| i.nivel != Nivel::Verde)
+        .filter(|i| {
+            if i.eletroduto {
+                return soltos.contains(&i.handle) || trechos_do_quadro.contains(&i.handle);
+            }
+            if i.handle == quadro {
+                return true;
+            }
+            analise.ponto(i.handle).is_some_and(|p| p.tipo != TipoPonto::Quadro && (p.circuito.is_none() || p.quadro == Some(quadro)))
+        })
+        .collect()
+}

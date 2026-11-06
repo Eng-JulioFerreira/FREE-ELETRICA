@@ -194,20 +194,36 @@ fn pecas_da_tabela(r: &ResumoQuadro, m: f64) -> Vec<EntityKind> {
 
     // O sub-cabeçalho: alimentação e alimentador; montagem e proteções; módulos e observações.
     let a = &r.alimentador;
+    let grupos = r.grupos_dr();
+    let drs = if grupos.is_empty() {
+        "sem DR".to_string()
+    } else {
+        grupos.iter().map(|g| format!("{} {}", g.nome, g.texto())).collect::<Vec<_>>().join(", ")
+    };
+    let dps =
+        if a.dps { format!("DPS Classe {} {} V {} kA", a.classe_dps.codigo(), br(a.dps_tensao), br(a.dps_imax)) } else { "sem DPS".to_string() };
     let sub_cabecalho: [[String; 2]; 3] = [
         [
             format!("ALIMENTAÇÃO: {}", r.alimentacao()),
-            format!("ALIMENTADOR / GERAL: Cabo #{} mm² | Disj. {} A", a.secao.map_or("-".to_string(), br), a.disjuntor.map_or("-".to_string(), br)),
+            format!(
+                "ALIMENTADOR / GERAL: Cabo #{} mm² | Disj. {}P {} A curva {}",
+                a.secao.map_or("-".to_string(), br),
+                a.polos_geral,
+                a.disjuntor.map_or("-".to_string(), br),
+                a.curva_geral.codigo()
+            ),
         ],
-        [
-            format!("MONTAGEM: {}", r.config.montagem.map_or("-", crate::quadro::Montagem::nome)),
-            format!("PROTEÇÕES: DR {} A / 30 mA | DPS Classe II, Uc >= {} V", a.dr.map_or("-".to_string(), br), fixo(a.dps_uc, 0)),
-        ],
+        [format!("MONTAGEM: {}", r.config.montagem.map_or("-", crate::quadro::Montagem::nome)), format!("PROTEÇÕES: {drs} | {dps}")],
         [format!("Nº DE MÓDULOS DIN: {}", r.modulos()), format!("OBSERVAÇÕES: {}", r.config.observacoes.as_deref().unwrap_or("-"))],
     ];
-    // As colunas cabem os textos, menos as observações, que quebram.
-    let maior_texto =
-        sub_cabecalho.iter().flatten().filter(|t| !t.starts_with("OBSERVAÇÕES")).map(|t| largura(t, ALTURA)).fold(0.0, f64::max) + ALTURA;
+    // As colunas cabem os textos, menos as observações e as proteções, que quebram.
+    let maior_texto = sub_cabecalho
+        .iter()
+        .flatten()
+        .filter(|t| !t.starts_with("OBSERVAÇÕES") && !t.starts_with("PROTEÇÕES"))
+        .map(|t| largura(t, ALTURA))
+        .fold(0.0, f64::max)
+        + ALTURA;
     // A largura total: a grade, o dobro da maior metade do rodapé, o título e o sub-cabeçalho. A sobra vai
     // para a descrição.
     let total = larguras

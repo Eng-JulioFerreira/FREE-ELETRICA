@@ -29,11 +29,14 @@ aplicativo desconhecido: clique em **Mais informações** e **Executar assim mes
   pelo piso. O comprimento soma a planta e as subidas e descidas reais até cada bloco (o desnível em Z). A taxa de
   ocupação do eletroduto e o fator de agrupamento (FCA) saem do roteamento.
 - **Quadro de cargas acoplado:** embaixo do desenho, com equilíbrio de fases, grupos de DR e a ficha de cada circuito.
+- **Dimensionar projeto em quatro etapas:** diagnóstico, circuitos com o DR na própria linha, diagrama unifilar (proteção
+  geral, DPS e DR) e vista frontal do quadro.
 - **Dimensionamento pela NBR 5410:** seção pela capacidade de condução nos métodos A1 a F, queda de tensão, disjuntor
   entre Ib e Iz, neutro e PE pelas tabelas 48 e 58, disjuntor geral, DR e DPS, com travas para o que você escolher à mão.
   Seleção múltipla com Shift e Ctrl para editar vários circuitos de uma vez.
 - **Documentação gerada na prancha DXF:** tabela do quadro de cargas, diagrama unifilar com quadro de simbologia, vista
-  frontal de montagem nos trilhos DIN, legendas de símbolos elétrica e de telecom, tags de fiação e lista de materiais.
+  frontal de montagem nos trilhos DIN, legendas de símbolos elétrica e de telecom, tags de fiação e lista de materiais
+  com os cabos por cor (fase, neutro azul-claro, terra e retorno) e os rolos de 100 m.
   Tudo se refaz com um comando, sem mudar as posições.
 - **Telecomunicações (NBR 14565):** topologia em estrela, um cabo inteiro de cada ponto até o rack; comprimento 3D com
   alerta acima de 90 m; eletroduto com 40 % de ocupação; o Quadro de Telecomunicações espelha as portas do rack.

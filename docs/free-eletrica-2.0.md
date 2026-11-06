@@ -422,3 +422,19 @@ Ajustes de interface e de prancha:
   valor padrão do ATTDEF `TENSAO`). Cada ponto inserido herda a tensão da família.
 - **Tensão** no inspetor de um ponto selecionado grava o `TENSAO` dele (`eletrica.ponto.tensao`); vazio volta à família ou ao quadro.
 - **Sem travar:** um `TENSAO` vazio ou ilegível cai na tensão da família e, sem ela, na do quadro (ou do Setup), com aviso.
+
+## Cabos por cor, assistente do dimensionamento e legendas separadas
+
+- **Lista de materiais:** cabos por isolação, seção e cor, medidos condutor a condutor nos trechos 3D: cada fase na cor
+  dela (R vermelho, S branco, T marrom, editáveis), neutro azul-claro, terra verde (ou verde-amarelo), retorno amarelo,
+  com os rolos de 100 m. A **Tabela de materiais** (`ELEMATERIAIS_TABELA`) desenha a lista na prancha.
+- **Dimensionar projeto em quatro etapas:** diagnóstico, circuitos (o DR escolhido na coluna da linha, + Criar IDR; a área
+  de grupos embaixo saiu), diagrama unifilar (disjuntor geral com polos, corrente e curva; cabo alimentador; DPS com
+  classe, Uc, kA e disjuntor prévio; corrente e sensibilidade dos DR) e vista frontal (largura da fileira, barramento,
+  montagem e reservas). A vista frontal marca o unifilar.
+- **Neutro e terra** sempre nas laterais internas do chassi da vista frontal.
+- **Legendas:** o unifilar sai só com o diagrama; a Legenda de símbolos da elétrica traz duas tabelas lado a lado, a da
+  planta e a simbologia do unifilar. A de telecom é só a de telecom.
+- **Mini-barra das tabelas e diagramas:** Tabela do quadro, Diagrama unifilar, Vista frontal e Tabela do rack mostram qual
+  quadro ou rack vai para a planta.
+- Sem DPS, nenhum desenho nem tabela o mostra: a tabela do quadro diz "sem DPS".
