@@ -66,7 +66,7 @@ continuam sendo lidos.
 | Quadro (`INSERT`) | `SISTEMA_QUADRO`, `TENSAO_NOMINAL`, `CABO_PADRAO_QUADRO`, `ALIMENTADO_POR`, `DISJ_GERAL`, `SECAO_GERAL`, `USAR_DPS`, `CLASSE_DPS`, `DISJ_DPS`, `METODO_QUADRO`, `MODULOS_TRILHO`, `BARRAMENTO_FASE`, `BARRAMENTO_NT`; `DESC.`, `SECAO.`, `DISJ.`, `CURVA.`, `CABO.`, `CABONOME.`, `ESQUEMA.`, `TENSAO.`, `FASE.`, `DR.`, `DIM.`, `METODO.` + circuito |
 | Eletroduto | `schema_ver`, `from_handle`, `to_handle`, `install_elevation`, `conduit_type`, `conduit_profile`, `nominal_diameter_mm`, `manual_diameter_lock`, `passing_wires.<n>`, `tag_handle` |
 | Tag de fiação | `schema_ver`, `parent_conduit_handle`, `anchor_x`, `anchor_y`, `user_offset_x`, `user_offset_y` |
-| Ponto de telecom (`INSERT`) | `RACK_PAI` (handle do rack, no XDATA); `ID_PONTO`, `TIPO_CABO` e `QTD_CABOS` no atributo ou no XDATA; `telecom_link_m` (comprimento do último cálculo) |
+| Ponto de telecom (`INSERT`) | `RACK_PAI` (handle do rack, no XDATA; `-` desvinculado à mão); `ID_PONTO` (o número da porta no rack), `TIPO_CABO` e `QTD_CABOS` no atributo ou no XDATA; `DESC_PORTA` (a descrição no quadro de telecom); `telecom_link_m` (comprimento do último cálculo) |
 | Eletroduto de telecom | `telecom_cables.<n>` (`ID:cabo:quantidade;...`) e `nominal_diameter_mm` |
 
 O tipo de linha e a cor do perfil ficam na própria entidade do eletroduto. O diagrama unifilar é o bloco

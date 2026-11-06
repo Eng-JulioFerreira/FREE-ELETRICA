@@ -3872,14 +3872,14 @@ fn telecom_em_estrela_do_rack_a_cada_ponto() {
     camera.name = "CAMERA-CFTV".into();
     d.blocks.insert("CAMERA-CFTV".into(), Arc::new(camera));
     familia::gravar(&mut d, "CAMERA-CFTV", Some(&familia::Familia::da_categoria(familia::FamilyCategory::Dados))).unwrap();
-    let cam = ponto(&mut d, "CAMERA-CFTV", 5.0, -5.0);
+    let cam = ponto(&mut d, "CAMERA-CFTV", 5.0, -8.0);
     duto(&mut d, p1, cam);
 
-    // Vincular: um rack só no projeto, todos vão para ele; a numeração segue a distância pela rede.
+    // Vincular: um rack só no projeto, todos vão para ele. O número do ponto é a porta no rack, pela distância
+    // na rede: p1 (5 m), p2 (10 m), a câmera (13 m), p3 (15 m) e, sem caminho, o de trás da tomada.
     let v = telecom::vincular(&mut d, &setup, None, None, false).unwrap();
     let id = |d: &Drawing, h: Handle| telecom::id_do_ponto(&ponto::ler_ponto(d, h).unwrap()).unwrap();
-    assert_eq!((id(&d, p1), id(&d, p2), id(&d, p3)), ("D-01".to_string(), "D-02".to_string(), "D-03".to_string()));
-    assert_eq!(id(&d, cam), "CFTV-01");
+    assert_eq!([id(&d, p1), id(&d, p2), id(&d, cam), id(&d, p3), id(&d, atras)], ["1", "2", "3", "4", "5"]);
     assert_eq!(TipoTelecom::de_ponto(&ponto::ler_ponto(&d, cam).unwrap(), &setup), TipoTelecom::Cftv);
     assert!(v.pontos.iter().all(|p| p.rack == Some(rack) && p.cabo == "UTP Cat 6" && p.quantidade == 1), "{:?}", v.pontos);
     let lido = ponto::ler_ponto(&d, p1).unwrap();
@@ -3887,23 +3887,25 @@ fn telecom_em_estrela_do_rack_a_cada_ponto() {
     assert_eq!((lido.valor(telecom::TAGS_CABO), lido.valor(telecom::TAGS_QTD)), (Some("UTP Cat 6"), Some("1")));
     // De novo: as identificações ficam; com renumerar, refaz na mesma ordem.
     telecom::vincular(&mut d, &setup, None, None, false).unwrap();
-    assert_eq!(id(&d, p3), "D-03");
-    // Um ponto empilhado na caixa de p1 sai dela, com a identificação seguinte.
+    assert_eq!(id(&d, p3), "4");
+    // Um ponto empilhado na caixa de p1 sai dela, com dois cabos: as duas portas livres seguintes, 6 e 7.
     let pilha = ponto(&mut d, "RJ45", 5.02, 0.0);
     biblioteca::empilhar(&mut d, pilha, None, 1.0).unwrap();
+    editar::definir(&mut d, pilha, telecom::TAGS_QTD, Some("2")).unwrap();
     telecom::vincular(&mut d, &setup, None, Some(&[pilha]), false).unwrap();
-    assert_eq!(id(&d, pilha), format!("D-0{}", 5));
+    assert_eq!(id(&d, pilha), "6");
 
     // Rotear: cada ponto leva o cabo dele inteiro até o rack.
     let an = analisar(&d);
     let t = telecom::rotear(&d, &an, &setup);
     let no = |h: Handle| t.trecho(h).unwrap();
     let ids = |h: Handle| no(h).cabos.iter().map(|c| c.id.clone()).collect::<Vec<_>>();
-    assert_eq!(ids(tronco), ["D-01", "D-02", "D-03", "D-05", "CFTV-01"]);
-    assert_eq!(ids(meio), ["D-02", "D-03"]);
-    assert_eq!(ids(ponta), ["D-03"]);
-    assert_eq!(no(tronco).texto_ids, "D-01..D-03, D-05, CFTV-01");
-    assert!(no(tronco).texto_cabos.starts_with("5x Cat6 %%c"), "{}", no(tronco).texto_cabos);
+    assert_eq!(ids(tronco), ["1", "2", "3", "4", "6"]);
+    assert_eq!(ids(meio), ["2", "4"]);
+    assert_eq!(ids(ponta), ["4"]);
+    // A tag diz só a quantidade e o tipo de cabo, e o diâmetro: seis cabos (o empilhado leva dois).
+    assert_eq!(no(tronco).texto_cabos, "6x UTP Cat 6");
+    assert!(no(tronco).texto_diametro.starts_with("%%c"), "{}", no(tronco).texto_diametro);
     // O eletroduto: o menor do tipo com até 40 % de ocupação.
     for h in [tronco, meio, ponta] {
         let tr = no(h);
@@ -3919,7 +3921,7 @@ fn telecom_em_estrela_do_rack_a_cada_ponto() {
     assert!(no(tronco).eletroduto_escolhido.as_ref().unwrap().nominal >= no(ponta).eletroduto_escolhido.as_ref().unwrap().nominal);
     // O enlace: o caminho em planta, as descidas do teto até os pontos e as folgas.
     let rack_t = &t.racks[0];
-    let e3 = rack_t.enlaces.iter().find(|e| e.id == "D-03").unwrap();
+    let e3 = rack_t.enlaces.iter().find(|e| e.id == "4").unwrap();
     let z_rack = rota::altura(&ponto::ler_ponto(&d, rack).unwrap(), &setup);
     let z_ponto = rota::altura(&ponto::ler_ponto(&d, p3).unwrap(), &setup);
     let esperado = 15.0
@@ -3930,9 +3932,10 @@ fn telecom_em_estrela_do_rack_a_cada_ponto() {
         + telecom::FOLGA_PONTO;
     assert!(perto(e3.comprimento, esperado, 1e-6), "{} {esperado}", e3.comprimento);
     assert_eq!((e3.status, e3.estimado), (StatusEnlace::Ok, false));
-    // As portas do rack, na ordem das identificações.
+    // As portas do rack são os números dos pontos; o de dois cabos ocupa duas.
     let portas: Vec<(&str, &str)> = rack_t.enlaces.iter().map(|e| (e.id.as_str(), e.porta.as_str())).collect();
-    assert_eq!(&portas[..3], &[("D-01", "1"), ("D-02", "2"), ("D-03", "3")]);
+    assert_eq!(portas, [("1", "1"), ("2", "2"), ("3", "3"), ("4", "4"), ("5", "5"), ("6", "6-7")]);
+    assert_eq!(rack_t.portas, 7);
     // O ponto atrás da tomada não tem caminho de telecom: comprimento estimado e aviso.
     let e_atras = rack_t.enlaces.iter().find(|e| e.ponto == atras).unwrap();
     assert_eq!((e_atras.status, e_atras.estimado), (StatusEnlace::SemCaminho, true));
@@ -3946,15 +3949,16 @@ fn telecom_em_estrela_do_rack_a_cada_ponto() {
     assert_eq!(e.status, StatusEnlace::AcimaDoLimite);
     assert!(t.avisos.iter().any(|a| a.contains("90 m") && a.contains("NBR 14565")), "{:?}", t.avisos);
 
-    // As tags: em cima os pontos, embaixo os cabos e o diâmetro.
+    // As tags: em cima a quantidade e o tipo de cabo, embaixo o diâmetro; sem os números dos pontos.
     fiacao::regenerar(&mut d, &setup, Some(&[tronco])).unwrap();
     let (tag, _) = fiacao::tags(&d).into_iter().find(|(_, p)| *p == tronco).unwrap();
     let EntityKind::Insert(i) = &d.model.get(tag).unwrap().kind else { panic!("tag") };
     let textos: Vec<String> = textos_do_bloco(&d, &i.block).into_iter().map(|t| t.0).collect();
-    assert!(textos[0].starts_with("D-01..D-03") && textos[1].starts_with("6x Cat6 %%c"), "{textos:?}");
+    assert_eq!(textos[0], "7x UTP Cat 6", "{textos:?}");
+    assert!(textos[1].starts_with("%%c") && textos.len() == 2, "{textos:?}");
     // O diâmetro e os cabos ficam no eletroduto, e o comprimento no ponto.
     let xd = xdata::ler(&d.model.get(tronco).unwrap().common.xdata);
-    assert!(xd.iter().any(|(k, v)| k.starts_with(telecom::CHAVE_CABOS) && v.contains("D-01:UTP Cat 6:1")), "{xd:?}");
+    assert!(xd.iter().any(|(k, v)| k.starts_with(telecom::CHAVE_CABOS) && v.contains("1:UTP Cat 6:1")), "{xd:?}");
     assert!(xd.iter().any(|(k, _)| k == rota::CHAVE_DIAMETRO));
     assert!(ponto::ler_ponto(&d, p3).unwrap().extras.iter().any(|(k, _)| k == telecom::CHAVE_COMPRIMENTO));
     // A lista de eletrodutos dá o diâmetro de telecom; os materiais, os cabos e as terminações.
@@ -3964,16 +3968,17 @@ fn telecom_em_estrela_do_rack_a_cada_ponto() {
     assert!(tt.eletroduto.is_some() && tt.cabos_telecom.len() == 6);
     let m = materiais::levantar(&d, &an, &setup);
     let utp = m.cabos_telecom.iter().find(|c| c.nome == "UTP Cat 6").unwrap();
-    let soma: f64 = telecom::rotear(&d, &an, &setup).enlaces().filter(|e| e.cabo == "UTP Cat 6").map(|e| e.comprimento).sum();
+    let soma: f64 =
+        telecom::rotear(&d, &an, &setup).enlaces().filter(|e| e.cabo == "UTP Cat 6").map(|e| e.comprimento * f64::from(e.quantidade)).sum();
     assert!(perto(utp.metros, soma, 1e-6));
-    assert!(m.telecom.iter().any(|i| i.nome == "Porta no rack (patch panel / DIO) - UTP Cat 6" && i.quantidade == 7), "{:?}", m.telecom);
+    assert!(m.telecom.iter().any(|i| i.nome == "Porta no rack (patch panel / DIO) - UTP Cat 6" && i.quantidade == 8), "{:?}", m.telecom);
 
     // A tabela do rack no desenho, refeita pelo ELEREGEN.
     let h = telecom::inserir_tabela(&mut d, &an, &setup, rack, [30.0, 0.0]).unwrap();
     assert_eq!(telecom::tabelas(&d), [(h, rack)]);
     let nome = format!("{}{}", telecom::PREFIXO_TABELA, rack.hex());
     let textos: Vec<String> = textos_do_bloco(&d, &nome).into_iter().map(|t| t.0).collect();
-    for v in ["PORTA", "ID DO PONTO", "COMPRIMENTO 3D (m)", "STATUS", "D-01", "CFTV-01", "OK", "SEM CAMINHO", "ACIMA DE 90 m"] {
+    for v in ["PORTA / PONTO", "COMPRIMENTO 3D (m)", "STATUS", "1", "6-7", "OK", "SEM CAMINHO", "ACIMA DE 90 m"] {
         assert!(textos.iter().any(|t| t == v), "falta {v}: {textos:?}");
     }
     assert!(textos.contains(&telecom::titulo_da_tabela("RACK")));
@@ -4021,9 +4026,24 @@ fn telecom_com_dois_racks_e_textos_da_tag() {
         c("D-03", "UTP Cat 6", 1),
     ];
     assert_eq!(telecom::texto_ids(&cabos), "D-01..D-04, FO-01");
-    assert_eq!(telecom::texto_cabos(&cabos, Some(25.0)), "5x Cat6 + 1x FO-N2 %%c25");
+    // Na tag, só a quantidade e o tipo de cabo em cima, e o diâmetro embaixo.
+    assert_eq!(telecom::texto_cabos(&cabos), "1x Fibra N2 + 5x UTP Cat 6");
+    assert_eq!(telecom::texto_diametro(Some(25.0)), "%%c25");
     assert_eq!(telecom::texto_ids(&cabos[..2]), "D-01, D-02");
-    assert_eq!(telecom::abreviar_cabo("Coaxial RG 59"), "RG59");
+    let numeros = [c("1", "UTP Cat 6", 1), c("2", "UTP Cat 6", 1), c("3", "UTP Cat 6", 1), c("5", "UTP Cat 6", 1)];
+    assert_eq!(telecom::texto_ids(&numeros), "1..3, 5");
+    assert_eq!(telecom::abreviar_cabo("Coaxial RG 59"), "Coaxial RG 59");
+    // Pelo quadro VDI: o número, a descrição, o cabo e desvincular, mesmo com um rack só no ramo.
+    let e = telecom::EdicaoPonto { id: Some("12".into()), descricao: Some("Recepção".into()), ..Default::default() };
+    telecom::editar_pontos(&mut d, &setup, &[a], &e).unwrap();
+    let t = telecom::rotear(&d, &analisar(&d), &setup);
+    let ea = t.enlaces().find(|x| x.ponto == a).unwrap();
+    assert_eq!((ea.id.as_str(), ea.porta.as_str(), ea.descricao.as_str()), ("12", "12", "Recepção"));
+    telecom::editar_pontos(&mut d, &setup, &[a], &telecom::EdicaoPonto { rack: Some(None), ..Default::default() }).unwrap();
+    assert_eq!(telecom::rack_do_ponto(&ponto::ler_ponto(&d, a).unwrap(), &analisar(&d)), None);
+    telecom::editar_pontos(&mut d, &setup, &[a], &telecom::EdicaoPonto { rack: Some(Some(r1)), ..Default::default() }).unwrap();
+    assert_eq!(telecom::rack_do_ponto(&ponto::ler_ponto(&d, a).unwrap(), &analisar(&d)), Some(r1));
+    assert!(telecom::editar_pontos(&mut d, &setup, &[a], &telecom::EdicaoPonto { rack: Some(Some(a)), ..Default::default() }).is_err());
 }
 
 #[test]

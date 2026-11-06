@@ -890,8 +890,8 @@ fn bloco_da_tag(
     b
 }
 
-/// O conteúdo da tag de um eletroduto de telecom, em coordenadas locais como [`bloco_da_tag`]: em cima, os
-/// pontos que passam (`D-01..D-04`); embaixo, a quantidade e o tipo de cabo e o diâmetro (`4x Cat6 Ø25`).
+/// O conteúdo da tag de um eletroduto de telecom, em coordenadas locais como [`bloco_da_tag`]: em cima, a
+/// quantidade e o tipo de cabo (`3x UTP Cat 6`); embaixo, o diâmetro do eletroduto (`Ø25`).
 fn bloco_da_tag_telecom(
     doc: &mut Drawing,
     nome: &str,
@@ -901,7 +901,7 @@ fn bloco_da_tag_telecom(
     m: f64,
 ) -> Block {
     let mut b = Block::new(nome);
-    let (cima, baixo) = (crate::telecom::texto_ids(cabos), crate::telecom::texto_cabos(cabos, diametro));
+    let (cima, baixo) = (crate::telecom::texto_cabos(cabos), crate::telecom::texto_diametro(diametro));
     let largura = largura_texto(&cima, ALTURA_TEXTO).max(largura_texto(&baixo, ALTURA_TEXTO)) / m;
     let fora = largura / 2.0 + FOLGA_BASE / m;
     let lado = match ligacao {

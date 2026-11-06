@@ -1,126 +1,153 @@
-# Primeiros passos
+# Guia de Início Rápido
 
-Um projeto segue a ordem da paleta **Elétrica**. Lançar pontos, circuitos e eletrodutos não calcula nada:
-os cabos e disjuntores só mudam quando você manda dimensionar.
+Você acabou de abrir o Free Elétrica e quer saber por onde começar. Este guia leva do desenho vazio até a prancha
+documentada, em oito passos. Cada passo diz o botão da paleta e o comando que você pode digitar na linha de comando.
 
-A paleta é a aba **Instalações** das **Ferramentas**, à esquerda, ao lado de **Desenho** e **Modelagem**. No topo
-dela, o seletor **Elétrica | Telecom** troca as ferramentas: baixa tensão de um lado, cabeamento estruturado do outro.
-As seções recolhem pela seta. Nada fica aberto sem ser pedido. As janelas fecham no X do cabeçalho ou com Esc, e Esc
-fecha a última aberta. Com um comando em andamento, Esc cancela o comando.
+Uma regra vale para tudo: **lançar não calcula**. Inserir pontos, circuitos e eletrodutos não muda nenhum cabo ou
+disjuntor. O cálculo só muda quando você manda dimensionar.
 
-## 1. Prepare o projeto
+## Passo 1: Onde encontrar as ferramentas
 
-Abra sua planta em DXF ou comece um desenho novo. Em **Configurações...**, ajuste:
+À esquerda da tela fica o painel **Conjuntos de ferramentas**, com as abas **Desenho**, **Modelagem** e **Instalações**.
+As ferramentas do Free Elétrica estão na aba **Instalações**.
 
-- **Critérios elétricos:** temperatura e limites de queda.
-- **Alturas:** pé-direito e alturas baixa, média e alta do projeto.
-- **Eletrodutos:** perfis com tipo de linha, cor, caminhamento e tabela de diâmetros.
-- **Cabos:** os catálogos de cabos elétricos e de telecom.
-- **Demanda / Concessionárias:** a tabela da sua concessionária e o tipo de edificação. Se ela não estiver na lista,
-  use **+ Criar / Editar Tabela de Concessionária**.
+- No topo da aba, o seletor **Elétrica | Telecom** troca as ferramentas: baixa tensão de um lado, cabeamento estruturado do
+  outro.
+- As ferramentas ficam em seções que recolhem pela seta: **Pontos e Famílias**, **Circuitos e Comandos**, **Quadros e
+  Dimensionamento**, **Eletrodutos**, **Documentação e Tabelas** e **Projeto e Inspeção**.
+- Nenhuma janela fica aberta sem ser pedida. Cada janela fecha no X do cabeçalho ou com **Esc**. Com um comando em
+  andamento, Esc cancela o comando.
+
+## Passo 2: Configurando o projeto (`ELECONFIG`)
+
+Abra sua planta em DXF ou comece um desenho novo e clique em **Configurações...**, em **Projeto e Inspeção**.
+
+- **Unidade:** trabalhe com **1 unidade = 1 metro** (escala 1:50 na impressão). Tabelas, tags e símbolos são feitos nessa
+  medida.
+- **Alturas:** pé-direito e as alturas baixa (tomadas, 0,30 m), média (interruptores, 1,20 m) e alta (2,10 m). Um ponto na
+  altura padrão não escreve nada na planta; em outra altura, aparece como `h=1,45m`.
+- **Critérios:** temperatura ambiente, quedas de tensão admissíveis, método de instalação padrão e critério do disjuntor.
+- **Cabos e eletrodutos:** os catálogos de cabos elétricos e de telecom e os perfis de eletroduto.
+- **Demanda / Concessionárias:** a tabela da sua concessionária e o tipo de edificação. De fábrica vem a da Equatorial
+  (NT.00001.EQTL); para outra, use **+ Cadastrar / Criar Nova Tabela de Demanda**.
 
 As camadas e os blocos base entram sozinhos na primeira ferramenta que você usar.
 
-## 2. Insira os pontos
+## Passo 3: Inserindo pontos e empilhando na parede (`ELEPONTOS`)
 
-Clique em **Inserir pontos**. Na mini-barra sobre o desenho, **Pesquisar ponto...** filtra os blocos pelo nome ou pela
-legenda enquanto você digita, junto com a categoria; a lista mostra a potência e a altura padrão de cada um. Escolha
-categoria, bloco, potência, altura e
-quadro pai. Cada clique no desenho insere um ponto, que alinha à parede mais próxima. **Tab** gira e
-**Enter** termina.
+Clique em **Inserir pontos**. Uma mini-barra aparece sobre o desenho:
 
-Comece pelo quadro: categoria **Quadros/Racks**, bloco **Quadro QDG**.
+1. Escolha a **categoria** (tomadas, iluminação, interruptores, quadros...) e o **bloco**. O campo **Pesquisar ponto...**
+   filtra a lista enquanto você digita; cada item mostra a potência e a altura padrão.
+2. Ajuste a potência, a altura e o quadro, se precisar.
+3. Clique na planta. Cada clique insere um ponto, alinhado à parede mais próxima. **Tab** gira, **Enter** termina.
 
-Cada quadro tem o seu **Sistema**, **Tensão Nominal**, **Tipo de Cabo Padrão** e **Alimentado por**. Selecione o
-quadro e abra o **Inspetor de atributos...**, ou use o topo do **Quadro de cargas...**.
+**Empilhar módulos:** para ter uma tomada e um interruptor (ou duas tomadas) na mesma caixa, clique **em cima de um
+ponto que já está na parede**. O módulo novo encosta no de baixo, sem outra caixa. Dá para empilhar 2, 3 ou mais módulos
+numa caixa 4x2. Cada módulo tem o seu circuito e o seu comando, e o eletroduto que chega na caixa atende todos.
 
-Um ponto na altura da legenda não escreve nada na planta. Em outra altura, aparece como `h=1,45m`.
+Para um símbolo próprio, use **Blocos e famílias...**: a família guarda categoria, altura, caixa, potência e classe de
+demanda. Para mudar um ponto já inserido, selecione-o e abra o **Inspetor de atributos...**.
 
-Para um símbolo próprio, use **Blocos e famílias...** e **+ Criar novo bloco elétrico**. A família guarda a
-**Classe de Demanda** e o **Fator de Demanda**. Para mudar valores de um bloco já inserido, selecione-o e abra o
-**Inspetor de atributos...**: um ponto pode ter classe e fator próprios, que valem sobre os da família.
+## Passo 4: Criando o quadro, os circuitos e os comandos (`ELECARGAS` / `ELECOMANDO`)
 
-Na aba **Telecom** da paleta, **Inserir ponto de dados** e **Inserir rack** já começam com o bloco certo. Ligue os pontos ao
-rack com eletrodutos (um cabo de telecom passa por outros pontos de dados e por caixas de passagem, nunca por uma caixa de
-tomada) e use a seção **Cabeamento (NBR 14565)**:
+1. **O quadro:** em **Inserir pontos**, escolha a categoria **Quadros/Racks** e o bloco **Quadro QDG**, e clique na planta.
+2. **Os circuitos:** clique em **Criar circuito** (`ELECIRCUITO`), depois no quadro, informe o número e clique nos pontos do
+   circuito. Enter termina. A mini-barra edita descrição, esquema e tensão.
+3. **Os comandos:** clique em **Comandos e luminárias** (`ELECOMANDO`), no interruptor e nas luminárias que ele acende.
+   Para paralelos (three-way) e intermediários (four-way), clique também nos outros interruptores do mesmo comando, na
+   ordem do caminho.
+4. **O quadro de cargas:** **Quadro de cargas...** (`ELECARGAS`) abre o quadro embaixo do desenho, com as fases, os grupos de
+   DR e a ficha de cada circuito. O menu **...** de cada linha adiciona e remove pontos, localiza o circuito e o exclui.
 
-- **Numerar e vincular ao rack:** liga cada ponto ao rack (com um rack só, automático) e numera `D-01`, `CFTV-01`, `AP-01`,
-  `FO-01`, com o cabo (`UTP Cat 6` por padrão) e a quantidade de cabos.
-- **Dimensionar telecom...:** um cabo inteiro de cada ponto até o rack, o comprimento 3D com as folgas e o aviso acima de 90 m,
-  e o diâmetro de cada eletroduto com 40 % de ocupação. O resultado abre no **Quadro VDI / Rack**, embaixo do desenho.
-- **Tags de cabeamento** e **Tabela do rack** desenham o resultado; **Atualizar tags e tabelas** refaz tudo.
+Ligue **Inspecionar projeto** para ver o que falta: vermelho falta circuito ou comando, laranja sem caminho até o quadro,
+amarelo acima do limite e verde válido.
 
-## 3. Crie os circuitos e os comandos
+## Passo 5: Traçando os eletrodutos (`ELEELETRODUTO`)
 
-- **Criar circuito:** clique no quadro, informe o número e clique nos pontos. Enter termina. A mini-barra edita
-  descrição, esquema e tensão.
-- **Comandos e luminárias:** clique no interruptor e nas luminárias dele. Enter termina. Para paralelos (three-way) e
-  intermediários (four-way), clique também nos outros interruptores do mesmo comando, na ordem do caminho: o primeiro recebe
-  a fase, os intermediários ficam no meio e do último sai o retorno às luminárias. A fiação passa dois retornos (`a'` e
-  `a"`) entre eles e um (`a`) até as luminárias.
+Clique em **Inserir eletroduto** e depois nos blocos, em sequência. Na mini-barra, escolha o **perfil** (teto, parede ou
+piso, com o material e os diâmetros) e o **traçado**: **Reto**, **Ângulo 45°** ou **Arco**. Enter termina.
 
-Ligue **Inspecionar projeto** para ver os halos: vermelho falta circuito ou comando, laranja sem caminho até o
-quadro, amarelo acima do limite e verde válido.
-
-Duas tomadas no mesmo ponto, ou duas teclas: insira um módulo sobre o outro. Cada um tem o seu circuito e o seu
-comando; a planta mostra uma caixa 4x2 só, com os símbolos empilhados, e o eletroduto da caixa atende todos.
-
-## 4. Lance os eletrodutos
-
-Clique em **Inserir eletroduto** e depois nos blocos, em sequência. Na mini-barra, escolha o perfil, que traz o tipo de
-linha, a cor, o caminhamento e os diâmetros, e o traçado: **Reto**, **Ângulo 45°** ou **Arco**. Enter termina.
-
-Para mudar a curvatura ou o lado do arco, digite `Flecha` ou `Inverter` na linha de comando.
-
-- Um clique no vazio vira um desvio do trajeto, para contornar pilares.
+- Um clique no vazio vira um desvio, para contornar um pilar.
 - Um clique no meio de um eletroduto insere uma caixa de passagem.
-- Um clique num bloco que está no caminho de um eletroduto divide o trecho nele: o próprio bloco já é a caixa.
-- Cruzamentos sem bloco **não conectam**: cada eletroduto liga exatamente dois blocos.
-- Cada trecho é uma linha, um arco ou uma polilinha a 45°. Um trecho novo nunca mexe nos que já existem.
-- A cor vem do material e o tipo de linha vem do caminhamento: contínua no teto, tracejada ou pontilhada na parede, traço e ponto no piso.
+- Cruzamentos sem bloco **não conectam**: cada eletroduto liga exatamente dois blocos, como na obra.
+- O tipo de linha mostra o caminho: contínua no teto, tracejada na parede, traço e ponto no piso.
 
-## 5. Dimensione
+## Passo 6: Dimensionando e gerando as tags (`Dimensionar projeto...` e `ELEFIACAO`)
 
-Abra **Dimensionar projeto...** e escolha o quadro:
+Abra **Dimensionar projeto...** (`ELEDIMENSIONAR`) e escolha o quadro.
 
-1. Em cada circuito, escolha o esquema (`F+N`, `F+N+T`, `2F+T`, `2F+N+T`, `3F+T`, `3F+N+T`) e o tipo de cabo.
-2. Monte os grupos de DR: marque os circuitos à esquerda, crie o grupo com **+ Novo Grupo DR** e use
-   **Mover selecionados**. Pode haver quantos grupos o projeto pedir.
-3. Marque, se quiser, **Compartilhar condutor de proteção (Terra / PE)** e **Gerar / Atualizar Diagrama Unifilar**.
-4. Clique em **Calcular Dimensionamento**. Os cabos, os disjuntores e as curvas aparecem por circuito, sem gravar
-   nada, e você pode trocar cada valor.
-5. Clique em **Aplicar ao Quadro**.
+1. Em cada circuito, escolha o **esquema**, o **tipo de cabo**, o **método** de instalação e o **grupo DR**.
+2. **Vários de uma vez:** clique no número de um circuito para selecioná-lo, **Ctrl+clique** para somar outros,
+   **Shift+clique** para pegar um intervalo e **Ctrl+A** para todos. Com duas ou mais linhas selecionadas, a mudança
+   feita numa delas vale para todas. O mesmo vale no quadro de cargas, no Quadro de Telecomunicações e nas listas de
+   pontos e de eletrodutos.
+3. Monte os grupos de DR com **+ Novo Grupo DR** e **+ Adicionar circuito...**, ou pelo botão **Adicionar ao DR** de cada
+   circuito sem DR.
+4. Em **Proteção geral, DPS e montagem do quadro**, confira o disjuntor geral, a seção do alimentador, o DPS e a montagem
+   dos trilhos DIN. O cadeado mostra o que você travou à mão.
+5. Clique em **Calcular Dimensionamento**, revise e clique em **Aplicar ao Quadro**.
 
-**Quadro de cargas...** abre um painel embaixo do desenho, entre as Ferramentas e as Camadas, sem cobrir nada. A borda
-de cima muda a altura; o X do canto ou Esc fecha, e o desenho volta a ocupar a tela toda. Nele:
+**Tags de fiação** (`ELEFIACAO`): a mini-barra escolhe o modo. **Direto no eletroduto** é um clique no trecho.
+**Com linha de chamada** são dois cliques: o ponto no eletroduto e onde a base da tag começa, no ângulo que você quiser.
+Enter no começo põe uma tag no meio de todos os eletrodutos.
 
-- A tabela mostra fases, grupo DR, cabo e disjuntor calculados. Um circuito que mudou depois do cálculo aparece
-  como **Desatualizado**.
-- O menu **...** de cada linha adiciona e remove pontos, localiza o circuito, abre a ficha de engenharia (tipo de
-  cabo, FCT, FCA, correntes, queda de tensão e as travas de seção e disjuntor) e exclui o circuito.
-- **Configurações e dados do quadro** abre sistema, tensão, cabo padrão, alimentação, montagem, módulos, reservas e
-  observações.
+## Passo 7: Gerando a documentação na prancha
 
-Depois de mudar algo, calcule e aplique de novo.
+Na seção **Documentação e Tabelas**:
 
-## 6. Documente
+- **Tabela do quadro** (`ELEQUADRO_TABELA`): o quadro de cargas desenhado na planta.
+- **Diagrama unifilar** (`ELEUNIFILAR`): o diagrama do quadro, com o quadro de simbologia embaixo.
+- **Vista frontal do quadro** (`ELEQUADRO_FRONTAL`): o layout de montagem nos trilhos DIN, com os barramentos.
+- **Legenda de símbolos** (`ELELEGENDA`): os símbolos elétricos usados no desenho.
+- **Lista de materiais...** (`ELEMATERIAIS`): cabos, eletrodutos, caixas, disjuntores, DR, DPS, barramentos e quadros.
+- **Atualizar tags e tabelas** (`ELEREGEN`): refaz tudo o que foi gerado, sem mudar as posições. Use depois de qualquer
+  mudança.
 
-- **Tags de fiação:** a mini-barra escolhe o modo. **Direto no eletroduto:** um clique no trecho, e as marcas ficam sobre ele.
-  **Com linha de chamada:** clique no eletroduto e depois onde a base da tag começa; a chamada liga os dois pontos no ângulo que
-  você der. Enter no começo põe uma tag no meio de todos os eletrodutos. Mova a tag para onde quiser; ela fica lá.
-- **Tabela do quadro:** desenha o quadro de cargas, todo dentro de uma moldura. Montagem, módulos, reservas e observações ficam
-  no Inspetor de atributos do quadro.
-- **Diagrama unifilar:** desenha o diagrama do quadro num ponto da planta, com os grupos de DR e as reservas.
-- **Legenda de símbolos:** desenha o símbolo e o **Nome na Legenda** de cada tipo de ponto usado.
-- **Atualizar tags e tabelas:** refaz o conteúdo das tags, tabelas e diagramas sem mudar as posições. Aplicar ao
-  quadro também atualiza.
-- **Lista de materiais...:** cabos, eletrodutos, caixas, pontos e disjuntores. A **Folga de Cabos** fica no topo da janela.
+## Passo 8: Fluxo rápido de telecomunicações (`Telecom`)
+
+No seletor do topo, escolha **Telecom**.
+
+1. **Inserir rack** e **Inserir ponto de dados** já começam com o bloco certo. Para CFTV, acesso sem fio ou fibra, use uma
+   família de dados com esse nome ou escolha o cabo do ponto.
+2. Ligue os pontos ao rack com **Inserir eletroduto**. O cabo de telecom passa por outros pontos de dados e por caixas de
+   passagem, nunca por uma caixa de tomada.
+3. **Numerar e vincular ao rack** (`TELEVINCULAR`): liga cada ponto ao rack e dá a ele o número da porta (1, 2, 3...), com o
+   cabo e a quantidade de cabos.
+4. **Dimensionar telecom...** (`TELEROTEAR`): um cabo inteiro de cada ponto até o rack (topologia em estrela), o comprimento
+   3D com alerta acima de 90 m e o diâmetro de cada eletroduto com 40 % de ocupação. O resultado abre no **Quadro de
+   Telecomunicações**, embaixo do desenho, onde você troca a descrição, o cabo e a quantidade de cada porta.
+5. **Tags de cabeamento** (`TELEFIACAO`): a quantidade e o tipo de cabo em cima, o diâmetro embaixo, nos mesmos dois modos
+   da elétrica. **Tabela do rack** (`TELETABELA`) e **Legenda de símbolos de telecom** (`TELELEGENDA`) completam a prancha.
+
+## Referência rápida dos comandos
+
+| Botão | Comando | Para que serve |
+| :--- | :--- | :--- |
+| Configurações... | `ELECONFIG` | Unidade, alturas, critérios, catálogos e demanda |
+| Inserir pontos | `ELEPONTOS` | Lançar e empilhar pontos com a mini-barra |
+| Blocos e famílias... | `ELEBLOCOS` | Criar e editar símbolos próprios |
+| Criar circuito | `ELECIRCUITO` | Agrupar pontos num circuito do quadro |
+| Comandos e luminárias | `ELECOMANDO` | Ligar interruptores às luminárias |
+| Quadro de cargas... | `ELECARGAS` | Fases, DR e ficha de cada circuito |
+| Inserir eletroduto | `ELEELETRODUTO` | Ligar os blocos pelo teto, parede ou piso |
+| Dimensionar projeto... | `ELEDIMENSIONAR` | Cabos, disjuntores, DR, DPS; calcular e aplicar |
+| Tags de fiação | `ELEFIACAO` | Simbologia de fiação nos eletrodutos |
+| Tabela do quadro | `ELEQUADRO_TABELA` | O quadro de cargas na prancha |
+| Diagrama unifilar | `ELEUNIFILAR` | O unifilar com o quadro de simbologia |
+| Vista frontal do quadro | `ELEQUADRO_FRONTAL` | A montagem nos trilhos DIN |
+| Legenda de símbolos | `ELELEGENDA` | A legenda dos símbolos elétricos |
+| Atualizar tags e tabelas | `ELEREGEN` | Refazer tudo o que foi gerado |
+| Lista de materiais... | `ELEMATERIAIS` | O levantamento de materiais |
+| Inspecionar projeto | `ELEINSPECAO` | Os halos do que falta no projeto |
+| Numerar e vincular ao rack | `TELEVINCULAR` | Porta e rack de cada ponto de telecom |
+| Dimensionar telecom... | `TELEROTEAR` | Cabos em estrela e eletrodutos de telecom |
+| Tags de cabeamento | `TELEFIACAO` | Cabos e diâmetro nos eletrodutos de telecom |
+| Tabela do rack | `TELETABELA` | As portas do rack na prancha |
+| Legenda de símbolos de telecom | `TELELEGENDA` | A legenda dos símbolos de telecom |
 
 ## Antes de usar em projeto real
 
-Os resultados são apoio ao projeto e precisam da conferência de um profissional habilitado. Confira também:
-
-- os diâmetros internos de eletroduto, que são valores típicos de catálogo;
-- os diâmetros externos de cabo, também típicos;
-- as sugestões de DR e DPS e a curva sugerida para cada disjuntor;
-- a tabela de demanda da sua concessionária, na revisão em vigor.
+Os resultados apoiam o projeto e precisam da conferência de um profissional habilitado. Confira em especial os diâmetros
+de cabos e eletrodutos (valores típicos de catálogo), as tabelas de capacidade de condução na norma vigente, as sugestões
+de DR e DPS e a tabela de demanda da sua concessionária.

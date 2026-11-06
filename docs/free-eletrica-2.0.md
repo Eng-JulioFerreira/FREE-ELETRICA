@@ -398,3 +398,18 @@ Ajustes de interface e de prancha:
   (`eletrica.telecom.ponto`).
 - **Materiais:** disjuntores por polos, corrente e curva (inclusive o geral e o do DPS); DR, DPS, barramentos de neutro, terra e
   das fases, e a caixa com a capacidade em módulos DIN.
+
+## Telecom no padrão do quadro de cargas e seleção múltipla
+
+- **Tags de cabeamento:** só a quantidade e o tipo de cabo em cima (`3x UTP Cat 6`, `2x UTP Cat 6 + 1x Fibra N2`) e o
+  diâmetro embaixo (`Ø25`), sem os números dos pontos; os dois modos da mini-barra, como na elétrica.
+- **Quadro de Telecomunicações:** é o título da aba e do painel acoplado com o rack aberto. A coluna **Porta / Ponto** junta a
+  porta e o número do ponto: `TELEVINCULAR` numera os pontos pela porta (1, 2, 3...; um ponto de dois cabos ocupa duas portas e
+  leva o número da primeira). No painel: o rack em **Rack / Quadro:**, **+ Nova porta / ponto**, a descrição editável na linha
+  (`DESC_PORTA`), o cabo e a quantidade, e o menu **...** com o número do ponto, vincular, desvincular (`RACK_PAI = -`), localizar
+  e excluir. Os pontos sem rack aparecem no fim, para vincular.
+- **Seleção múltipla:** clique, Ctrl+clique, Shift+clique e Ctrl+A no Dimensionar projeto, no quadro de cargas, no Quadro de
+  Telecomunicações e nas listas de pontos e de eletrodutos. Com duas ou mais linhas selecionadas, uma mudança num campo de uma
+  delas (esquema, cabo, método, grupo DR, curva, fases, seção e disjuntor, cabo e quantidade de telecom, altura, tipo, cota e
+  diâmetro de eletroduto) vale para todas.
+- Identificações de versões anteriores (`D-01`) continuam valendo; **Numerar e vincular** com renumerar passa todas para porta.

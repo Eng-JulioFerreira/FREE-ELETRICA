@@ -1,7 +1,11 @@
 # Free Elétrica
 
-Projeto elétrico predial de baixa tensão direto no CAD: pontos, circuitos, eletrodutos, dimensionamento pela
-ABNT NBR 5410, quadro de cargas, tags de fiação e lista de materiais. Software livre, em português.
+**👉 [Guia de Início Rápido (Getting Started): aprenda a criar seu primeiro projeto passo a passo](docs/GETTING_STARTED.md)**
+
+O Free Elétrica é uma ferramenta CAD nativa para projetos de **instalações elétricas de baixa tensão** (ABNT NBR 5410, com a
+simbologia da NBR 5444) e de **cabeamento estruturado / telecomunicações** (ABNT NBR 14565). Funciona dentro do
+[CADCraft](https://github.com/storytold/cadcraft): você desenha na planta, e o programa calcula, dimensiona e documenta
+a prancha. Software livre, em português.
 
 ## Baixar para Windows
 
@@ -11,48 +15,49 @@ ABNT NBR 5410, quadro de cargas, tags de fiação e lista de materiais. Software
 2. Extraia em qualquer pasta.
 3. Clique duas vezes em `FreeEletrica.exe`.
 
-Não precisa instalar nada: nem Rust, nem compilador, nem scripts. Funciona no Windows 10 e 11, 64 bits. Na
-primeira vez, o Windows pode avisar que o aplicativo é desconhecido: clique em **Mais informações** e
-**Executar assim mesmo**. Veja o [guia de instalação](docs/INSTALL.md).
+Não precisa instalar nada: nem Rust, nem compilador, nem scripts. Funciona no Windows 10 e 11, 64 bits. Na primeira vez,
+o Windows pode avisar que o aplicativo é desconhecido: clique em **Mais informações** e **Executar assim mesmo**. Veja o
+[guia de instalação](docs/INSTALL.md).
 
-## O que ele faz
+## Principais recursos
 
-- **Dimensionamento pela NBR 5410:** corrente de projeto, FCT, FCA real por trecho, capacidade de condução,
-  queda de tensão em 3D, seção e disjuntor, com travas para o que você escolher à mão.
-- **Eletrodutos que seguem a obra:** retos, a 45° ou em arco, com desvios e perfis que trazem o tipo de linha, a cor, o
-  caminhamento e os diâmetros. Cruzamento sem bloco não conecta, como na instalação real; um bloco no caminho do eletroduto já é a caixa e divide o trecho.
-- **Cada quadro com o seu sistema:** sistema, tensão nominal, cabo padrão e quem o alimenta ficam no próprio quadro.
-- **Dimensionamento revisável:** esquema, cabo, curva e grupos de DR por circuito, com o resultado à vista antes de aplicar.
-- **Catálogos editáveis:** cabos elétricos e de telecom e perfis de eletroduto, com editar e excluir.
-- **Blocos como famílias:** categoria, altura padrão, caixa, potência e classe de demanda no próprio bloco. A altura fora
-  da legenda aparece sozinha na planta, como `h=1,45m`.
-- **Documentação que não se desfaz:** tags de fiação que guardam a posição que você deu, tabela do quadro e diagrama unifilar
-  no desenho e lista de materiais.
+- **Blocos modulares com empilhamento:** tomadas, interruptores e pontos de dados como famílias, com potência, altura e
+  caixa. Clique sobre um ponto da parede e o módulo novo entra na mesma caixa 4x2" ou 4x4", sem duplicar a caixa.
+- **Grafo 3D de eletrodutos:** cada eletroduto liga dois blocos, em linha reta, a 45° ou em arco, pelo teto, pela parede ou
+  pelo piso. O comprimento soma a planta e as subidas e descidas reais até cada bloco (o desnível em Z). A taxa de
+  ocupação do eletroduto e o fator de agrupamento (FCA) saem do roteamento.
+- **Quadro de cargas acoplado:** embaixo do desenho, com equilíbrio de fases, grupos de DR e a ficha de cada circuito.
+- **Dimensionamento pela NBR 5410:** seção pela capacidade de condução nos métodos A1 a F, queda de tensão, disjuntor
+  entre Ib e Iz, neutro e PE pelas tabelas 48 e 58, disjuntor geral, DR e DPS, com travas para o que você escolher à mão.
+  Seleção múltipla com Shift e Ctrl para editar vários circuitos de uma vez.
+- **Documentação gerada na prancha DXF:** tabela do quadro de cargas, diagrama unifilar com quadro de simbologia, vista
+  frontal de montagem nos trilhos DIN, legendas de símbolos elétrica e de telecom, tags de fiação e lista de materiais.
+  Tudo se refaz com um comando, sem mudar as posições.
+- **Telecomunicações (NBR 14565):** topologia em estrela, um cabo inteiro de cada ponto até o rack; comprimento 3D com
+  alerta acima de 90 m; eletroduto com 40 % de ocupação; o Quadro de Telecomunicações espelha as portas do rack.
+- **Demanda da concessionária:** a tabela oficial da Equatorial (NT.00001.EQTL) e um editor para cadastrar a sua.
 - **Tudo dentro do DXF:** circuitos, famílias e resultados viajam com o arquivo.
-- **Demanda da concessionária:** tabelas da Equatorial, da CEMIG e da Enel Goiás, e um editor para cadastrar a sua. Cada
-  ponto ou família pode ter fator próprio.
 - **Pronto para automação:** todo o motor responde por comandos JSON, sem interface.
-
-Os símbolos dos blocos base seguem as formas usuais da NBR 5444, com medidas proporcionais do projeto.
 
 ## O fluxo de um projeto
 
-| Etapa | Ferramenta | O que você faz |
+| Etapa | Onde | O que você faz |
 | :--- | :--- | :--- |
-| 1. Setup | Configurações | Temperatura, limites de queda, alturas, cabos, perfis de eletroduto e demanda. Camadas e blocos entram sozinhos. |
-| 2. Blocos e pontos | Blocos e famílias, Inserir pontos | Crie seus símbolos ou use os prontos. Na mini-barra, escolha bloco, potência e altura, e clique na planta. |
-| 3. Circuitos e comandos | Criar circuito, Comandos e luminárias | Agrupe os pontos e ligue interruptores às luminárias. A inspeção visual aponta o que falta. |
-| 4. Eletrodutos | Inserir eletroduto | Escolha o perfil e ligue os blocos em traçado reto, a 45° ou em arco. Clique no meio de um trecho para pôr uma caixa. |
-| 5. Dimensionamento | Dimensionar projeto | Escolha esquema, cabo e grupos de DR, calcule, revise e aplique ao quadro. |
-| 6. Quadro e tags | Quadro de cargas, Tags de fiação, Lista de materiais | Confira o resumo e a ficha de cada circuito e documente na planta. |
+| 1. Configurar | Configurações... | Unidade, alturas, critérios, cabos, eletrodutos e demanda. |
+| 2. Pontos | Inserir pontos | Quadro, tomadas, luminárias e interruptores; módulos empilhados na mesma caixa. |
+| 3. Circuitos | Criar circuito, Comandos e luminárias | Agrupe os pontos e ligue interruptores simples e paralelos às luminárias. |
+| 4. Eletrodutos | Inserir eletroduto | Ligue os blocos pelo teto, pela parede ou pelo piso. |
+| 5. Dimensionar | Dimensionar projeto... | Esquema, cabo, método, DR e proteção geral; calcule, revise e aplique. |
+| 6. Documentar | Documentação e Tabelas | Tags, tabela do quadro, unifilar, vista frontal, legenda e materiais. |
+| 7. Telecom | Aba Telecom | Pontos de dados e rack, vínculo, dimensionamento, tags e tabela do rack. |
 
-O passo a passo completo está em [Primeiros passos](docs/GETTING_STARTED.md).
+O passo a passo completo está no [Guia de Início Rápido](docs/GETTING_STARTED.md).
 
 ## Responsabilidade técnica
 
 O Free Elétrica apoia o projeto, e os resultados precisam da conferência de um profissional habilitado. Diâmetros de
-cabos e eletrodutos são valores típicos de catálogo, e as sugestões de DR e DPS devem ser conferidas. Veja o
-[aviso legal](AVISO_LEGAL.md).
+cabos e eletrodutos são valores típicos de catálogo, as tabelas de capacidade devem ser conferidas na norma vigente e as
+sugestões de DR e DPS devem ser revisadas. Veja o [aviso legal](AVISO_LEGAL.md).
 
 ## Para desenvolvedores
 

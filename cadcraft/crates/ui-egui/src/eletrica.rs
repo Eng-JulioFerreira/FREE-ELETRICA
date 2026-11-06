@@ -255,6 +255,123 @@ enum Acao {
     Localizar(Vec<[f64; 2]>),
 }
 
+/// As linhas selecionadas de uma tabela, pelo id de cada linha (o circuito, o handle do ponto ou do eletroduto).
+/// Clique seleciona uma; Ctrl+clique liga e desliga; Shift+clique pega o intervalo desde a última; Ctrl+A, todas.
+#[derive(Clone, Default)]
+struct Selecao {
+    linhas: std::collections::BTreeSet<String>,
+    ultima: Option<usize>,
+}
+
+impl Selecao {
+    /// A seleção de uma tabela, guardada na memória da interface.
+    fn ler(ui: &egui::Ui, tabela: &str) -> Selecao {
+        ui.ctx().data_mut(|d| d.get_temp(egui::Id::new(("ele-selecao", tabela)))).unwrap_or_default()
+    }
+
+    fn guardar(self, ui: &egui::Ui, tabela: &str) {
+        ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new(("ele-selecao", tabela)), self));
+    }
+
+    /// Um clique na linha `i` de `ids`, com as teclas que estavam apertadas.
+    fn clicar(&mut self, ids: &[String], i: usize, m: egui::Modifiers) {
+        let Some(id) = ids.get(i) else { return };
+        if m.shift
+            && let Some(u) = self.ultima.filter(|u| *u < ids.len())
+        {
+            if !m.command {
+                self.linhas.clear();
+            }
+            let (a, b) = (u.min(i), u.max(i));
+            self.linhas.extend(ids.iter().skip(a).take(b - a + 1).cloned());
+            return;
+        }
+        if m.command {
+            if !self.linhas.remove(id) {
+                self.linhas.insert(id.clone());
+            }
+        } else {
+            self.linhas.clear();
+            self.linhas.insert(id.clone());
+        }
+        self.ultima = Some(i);
+    }
+
+    /// Ctrl+A com o mouse sobre a tabela (e nenhum campo de texto em edição) seleciona todas.
+    fn ctrl_a(&mut self, ui: &egui::Ui, area: egui::Rect, ids: &[String]) {
+        let pediu = ui.ctx().input(|i| i.modifiers.command && i.key_pressed(egui::Key::A));
+        if pediu && ui.rect_contains_pointer(area) && !ui.ctx().egui_wants_keyboard_input() {
+            self.linhas = ids.iter().cloned().collect();
+        }
+    }
+
+    /// Tira da seleção o que não está mais na tabela.
+    fn manter(&mut self, ids: &[String]) {
+        self.linhas.retain(|x| ids.contains(x));
+        if self.ultima.is_some_and(|u| u >= ids.len()) {
+            self.ultima = None;
+        }
+    }
+
+    fn tem(&self, id: &str) -> bool {
+        self.linhas.contains(id)
+    }
+
+    /// As linhas que uma mudança na linha `id` alcança: todas as selecionadas, com duas ou mais e ela entre elas.
+    fn lote(&self, id: &str) -> Vec<String> {
+        if self.linhas.len() >= 2 && self.linhas.contains(id) { self.linhas.iter().cloned().collect() } else { vec![id.to_string()] }
+    }
+}
+
+/// A primeira célula de uma linha selecionável: o texto, destacado quando a linha está selecionada. Devolve o
+/// clique e as teclas apertadas.
+fn celula_de_selecao(ui: &mut egui::Ui, largura: f32, texto: impl Into<egui::WidgetText>, selecionada: bool) -> (egui::Response, egui::Modifiers) {
+    let r = ui
+        .allocate_ui_with_layout(vec2(largura, LINHA), Layout::left_to_right(Align::Center), |ui| ui.selectable_label(selecionada, texto))
+        .inner
+        .on_hover_text(
+            "Clique seleciona; Ctrl+clique soma; Shift+clique pega o intervalo; Ctrl+A, todas. Uma mudança numa linha selecionada vale para todas",
+        );
+    let m = ui.ctx().input(|i| i.modifiers);
+    (r, m)
+}
+
+/// As edições que valem em lote: as dos campos e listas das linhas.
+const EDICOES_EM_LOTE: [&str; 5] =
+    ["eletrica.circuito.definir", "eletrica.sobrescrever", "eletrica.telecom.ponto", "eletrica.eletroduto.definir", "eletrica.ponto.altura"];
+
+/// Repete nas linhas selecionadas as edições feitas numa delas: o `campo` com o id da linha passa a ter o de
+/// cada uma (um texto: uma ação por linha; uma lista de um id: a lista de todos, numa ação só).
+fn em_lote(acoes: Vec<Acao>, sel: &Selecao, campo: &str) -> Vec<Acao> {
+    let mut v = Vec::new();
+    for a in acoes {
+        let (id, p) = match &a {
+            Acao::Rodar(id, p) if EDICOES_EM_LOTE.contains(id) => (*id, p.clone()),
+            _ => {
+                v.push(a);
+                continue;
+            }
+        };
+        match p.get(campo) {
+            Some(Value::String(linha)) => {
+                for outra in sel.lote(linha) {
+                    let mut q = p.clone();
+                    q[campo] = json!(outra);
+                    v.push(Acao::Rodar(id, q));
+                }
+            }
+            Some(Value::Array(lista)) if lista.len() == 1 => {
+                let linha = lista.first().and_then(Value::as_str).unwrap_or_default().to_string();
+                let mut q = p.clone();
+                q[campo] = json!(sel.lote(&linha));
+                v.push(Acao::Rodar(id, q));
+            }
+            _ => v.push(a),
+        }
+    }
+    v
+}
+
 /// As configurações em uso (guardadas no motor: `free_eletrica::setup`).
 pub fn setup() -> Setup {
     ele::setup::atual()
@@ -846,7 +963,7 @@ const PALETA_TELECOM: [Secao; 4] = [
                 Icone::Etiqueta,
                 "Numerar e vincular ao rack",
                 "televincular",
-                "Liga cada ponto ao rack (com um só, automático) e numera: D-01, CFTV-01, AP-01, FO-01, com o cabo e a quantidade (TELEVINCULAR)",
+                "Liga cada ponto ao rack (com um só, automático) e dá a porta como número do ponto: 1, 2, 3..., com o cabo e a quantidade (TELEVINCULAR)",
             ),
             ferr(
                 Icone::Engrenagem,
@@ -858,7 +975,7 @@ const PALETA_TELECOM: [Secao; 4] = [
                 Icone::Quadro,
                 "Quadro VDI / Rack...",
                 "ui.eletrica.telecom.vdi",
-                "Portas do rack com o ponto, a descrição, o cabo, o comprimento 3D e a situação de cada enlace",
+                "O Quadro de Telecomunicações: as portas do rack com a descrição, o cabo, o comprimento 3D e a situação de cada enlace",
             ),
             ferr(
                 Icone::Chamada,
@@ -1374,6 +1491,12 @@ fn acoplar_quadro(app: &mut CadApp) {
     trava(&JANELAS).cargas_acoplado = agora;
 }
 
+/// O título do painel acoplado: com o quadro VDI aberto, "Quadro de Telecomunicações", e nunca o do quadro de
+/// cargas. `None`: o título do CADCraft.
+pub fn titulo_do_painel(panel: Panel) -> Option<&'static str> {
+    (panel == Panel::QuadroCargas && trava(&JANELAS).abertas.contains(&Qual::Vdi)).then_some("Quadro de Telecomunicações")
+}
+
 /// O corpo do quadro de cargas acoplado (`docking`): o X no canto de cima e a tabela.
 pub fn quadro_acoplado(app: &mut CadApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
@@ -1426,22 +1549,23 @@ fn painel_vdi(ui: &mut egui::Ui, app: &CadApp, t: &Tokens, st: &mut Estado, s: &
     *rack = rack.filter(|h| tel.racks.iter().any(|r| r.rack == *h)).or_else(|| tel.racks.first().map(|r| r.rack));
     let atual = tel.racks.iter().find(|r| Some(r.rack) == *rack);
     ui.horizontal_wrapped(|ui| {
-        ui.label(RichText::new("Quadro VDI / Rack").strong());
-        if tel.racks.len() > 1 {
-            egui::ComboBox::from_id_salt("ele-vdi-rack").selected_text(atual.map_or("-", |r| r.tag.as_str())).show_ui(ui, |ui| {
-                for r in &tel.racks {
-                    if ui.selectable_label(Some(r.rack) == *rack, &r.tag).clicked() {
-                        *rack = Some(r.rack);
-                    }
+        ui.label(RichText::new("Quadro de Telecomunicações").strong());
+        ui.add_space(8.0);
+        ui.label("Rack / Quadro:");
+        egui::ComboBox::from_id_salt("ele-vdi-rack").selected_text(atual.map_or("-", |r| r.tag.as_str())).show_ui(ui, |ui| {
+            for r in &tel.racks {
+                if ui.selectable_label(Some(r.rack) == *rack, &r.tag).clicked() {
+                    *rack = Some(r.rack);
                 }
-            });
-        } else if let Some(r) = atual {
-            ui.label(&r.tag);
-        }
+            }
+        });
         ui.separator();
+        if ui.button("+ Nova porta / ponto").on_hover_text("Insere um ponto de dados: cada clique no desenho é uma porta nova").clicked() {
+            acoes.push(Acao::Rodar("ui.eletrica.telecom.dados", Value::Null));
+        }
         if ui
             .button("Numerar e vincular")
-            .on_hover_text("Liga cada ponto de telecom ao rack e numera os sem identificação: D-01, CFTV-01, AP-01, FO-01 (TELEVINCULAR)")
+            .on_hover_text("Liga cada ponto de telecom ao rack e dá a porta como número do ponto: 1, 2, 3... (TELEVINCULAR)")
             .clicked()
         {
             acoes.push(Acao::RodarComStatus("televincular", json!({}), |v| {
@@ -1478,62 +1602,101 @@ fn painel_vdi(ui: &mut egui::Ui, app: &CadApp, t: &Tokens, st: &mut Estado, s: &
         ui.label(pequeno("Nenhum rack / quadro VDI no desenho: insira um com Inserir rack, na aba Telecom.", t.text_dim));
         return;
     };
-    if r.enlaces.is_empty() {
-        ui.label(pequeno("Nenhum ponto de telecom ligado a este rack: use Numerar e vincular.", t.text_dim));
+    // As portas do rack e, no fim, os pontos sem rack, que um clique vincula a este.
+    let linhas: Vec<&ele::telecom::Enlace> = r.enlaces.iter().chain(tel.sem_rack.iter()).collect();
+    if linhas.is_empty() {
+        ui.label(pequeno("Nenhum ponto de telecom: use + Nova porta / ponto e Numerar e vincular.", t.text_dim));
     }
+    let ids: Vec<String> = linhas.iter().map(|e| e.ponto.hex()).collect();
+    let mut sel = Selecao::ler(ui, "vdi");
+    sel.manter(&ids);
+    let antes = acoes.len();
     egui::ScrollArea::vertical().id_salt("ele-vdi-lista").auto_shrink([false, true]).show(ui, |ui| {
-        egui::Grid::new("ele-vdi").num_columns(6).striped(true).spacing(vec2(14.0, 2.0)).show(ui, |ui| {
-            for c in ["Porta", "ID do ponto", "Descrição", "Cabo", "Comprimento 3D", "Status"] {
-                ui.label(RichText::new(c).strong());
-            }
-            ui.end_row();
-            for e in &r.enlaces {
-                celula(ui, 50.0, numero(e.porta.clone()), true);
-                let id = if e.id.is_empty() { "sem número" } else { e.id.as_str() };
-                if ui.link(id).on_hover_text("Seleciona e mostra o ponto no desenho").clicked() {
-                    acoes.push(Acao::Selecionar(vec![e.ponto]));
-                    if let Some(p) = st.analise.ponto(e.ponto) {
-                        acoes.push(Acao::Localizar(vec![p.posicao]));
-                    }
+        let colunas: [Coluna; 6] = [
+            ("Porta / Ponto", 92.0, false),
+            ("Descrição", 230.0, false),
+            ("Cabo", 210.0, false),
+            ("Comprimento 3D", 100.0, true),
+            ("Status", 100.0, false),
+            ("", 40.0, false),
+        ];
+        let grade = egui::Grid::new("ele-vdi").num_columns(colunas.len()).striped(true).spacing(vec2(10.0, 2.0)).show(ui, |ui| {
+            cabecalho(ui, t, &colunas);
+            for (i, e) in linhas.iter().enumerate() {
+                let h = e.ponto.hex();
+                let numero_da_porta = if e.porta.is_empty() { "-".to_string() } else { e.porta.clone() };
+                let (clique, teclas) = celula_de_selecao(ui, colunas[0].1, numero(numero_da_porta), sel.tem(&h));
+                if clique.clicked() {
+                    sel.clicar(&ids, i, teclas);
                 }
-                celula(ui, 220.0, e.descricao.as_str(), false);
-                // O cabo e a quantidade de cabos do ponto, trocados aqui: o próximo cálculo e as tags seguem.
-                na_celula(ui, 200.0, |ui| {
+                // A descrição da porta, editável na linha.
+                if let Some(v) = campo_de_texto(ui, egui::Id::new(("ele-vdi-desc", e.ponto)), &e.descricao, colunas[1].1) {
+                    acoes.push(Acao::Rodar("eletrica.telecom.ponto", json!({ "pontos": [h], "descricao": v })));
+                }
+                // O cabo e a quantidade de cabos do ponto: o próximo cálculo e as tags seguem.
+                na_celula(ui, colunas[2].1, |ui| {
                     egui::ComboBox::from_id_salt(("ele-vdi-cabo", e.ponto)).selected_text(e.cabo.as_str()).width(140.0).show_ui(ui, |ui| {
                         for c in &s.cabos_telecom {
                             if ui.selectable_label(c.nome.eq_ignore_ascii_case(&e.cabo), c.nome.as_str()).clicked() {
-                                acoes.push(Acao::Rodar("eletrica.telecom.ponto", json!({ "pontos": [e.ponto.hex()], "cabo": c.nome })));
+                                acoes.push(Acao::Rodar("eletrica.telecom.ponto", json!({ "pontos": [h], "cabo": c.nome })));
                             }
                         }
                     });
                     let mut q = e.quantidade;
-                    let r = ui.add(egui::DragValue::new(&mut q).range(1..=48).speed(0.1).suffix("x")).on_hover_text("Cabos do ponto");
-                    if q != e.quantidade && !r.dragged() {
-                        acoes.push(Acao::Rodar("eletrica.telecom.ponto", json!({ "pontos": [e.ponto.hex()], "quantidade": q })));
+                    let resp = ui.add(egui::DragValue::new(&mut q).range(1..=48).speed(0.1).suffix("x")).on_hover_text("Cabos do ponto");
+                    if q != e.quantidade && !resp.dragged() {
+                        acoes.push(Acao::Rodar("eletrica.telecom.ponto", json!({ "pontos": [h], "quantidade": q })));
                     }
                 });
-                celula(ui, 90.0, numero(format!("{}{} m", if e.estimado { "~" } else { "" }, fixo(e.comprimento, 1))), true);
+                celula(ui, colunas[3].1, numero(format!("{}{} m", if e.estimado { "~" } else { "" }, fixo(e.comprimento, 1))), true);
                 let cor = if e.status == ele::telecom::StatusEnlace::Ok { t.text } else { COR_AVISO };
-                ui.label(RichText::new(e.status.texto()).color(cor));
+                celula(ui, colunas[4].1, RichText::new(e.status.texto()).color(cor), false);
+                ui.menu_button("...", |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("Número do ponto");
+                        if let Some(v) = campo_de_texto(ui, egui::Id::new(("ele-vdi-id", e.ponto)), &e.id, 60.0) {
+                            acoes.push(Acao::Rodar("eletrica.telecom.ponto", json!({ "pontos": [h], "id": v })));
+                        }
+                    });
+                    if ui.button(format!("➕ Vincular ponto ao {}", r.tag)).clicked() {
+                        acoes.push(Acao::Rodar("eletrica.telecom.ponto", json!({ "pontos": [h], "rack": r.rack.hex() })));
+                        ui.close();
+                    }
+                    if ui.button("➖ Desvincular ponto").clicked() {
+                        acoes.push(Acao::Rodar("eletrica.telecom.ponto", json!({ "pontos": [h], "rack": null })));
+                        ui.close();
+                    }
+                    if ui.button("🔍 Localizar ponto").clicked() {
+                        acoes.push(Acao::Selecionar(vec![e.ponto]));
+                        if let Some(p) = st.analise.ponto(e.ponto) {
+                            acoes.push(Acao::Localizar(vec![p.posicao]));
+                        }
+                        ui.close();
+                    }
+                    if ui.button("🗑 Excluir linha (o ponto)").on_hover_text("Apaga o ponto do desenho; Ctrl+Z desfaz").clicked() {
+                        acoes.push(Acao::Rodar("eletrica.ponto.excluir", json!({ "pontos": [h] })));
+                        ui.close();
+                    }
+                });
                 ui.end_row();
             }
         });
+        sel.ctrl_a(ui, grade.response.rect, &ids);
     });
+    let novas = acoes.split_off(antes);
+    acoes.extend(em_lote(novas, &sel, "pontos"));
+    sel.guardar(ui, "vdi");
     ui.label(pequeno(
         format!(
-            "{} porta(s). Comprimento: caminho pelos eletrodutos, subidas e descidas até os blocos e folgas de {} m no rack e {} m no ponto. Limite do cabo horizontal UTP: 90 m (NBR 14565).",
+            "{} porta(s). O número do ponto é a porta no rack. Comprimento: caminho pelos eletrodutos, subidas e descidas até os blocos e folgas de {} m no rack e {} m no ponto. Limite do cabo horizontal UTP: 90 m (NBR 14565).",
             r.portas,
             fixo(ele::telecom::FOLGA_RACK, 1),
             fixo(ele::telecom::FOLGA_PONTO, 2)
         ),
         t.text_dim,
     ));
-    if !tel.sem_rack.is_empty() {
-        ui.label(pequeno(format!("{} ponto(s) sem rack: use Numerar e vincular.", tel.sem_rack.len()), COR_AVISO));
-    }
     lista_avisos(ui, "ele-vdi-avisos", &tel.avisos);
 }
-
 /// Chamado a cada quadro, com ou sem a paleta visível: a abertura na primeira vez e as janelas.
 pub fn janelas(app: &mut CadApp, ctx: &egui::Context) {
     if ABRIR_AO_INICIAR.swap(false, Ordering::Relaxed) {
@@ -2202,11 +2365,19 @@ fn janela_dimensionar(ui: &mut egui::Ui, app: &CadApp, t: &Tokens, st: &mut Esta
             ]);
         }
         colunas.push(("", 96.0, false));
-        egui::Grid::new("ele-dimensionar-tabela").num_columns(colunas.len()).striped(true).spacing(vec2(8.0, 2.0)).show(ui, |ui| {
+        // Seleção múltipla: uma mudança numa linha selecionada vale para todas.
+        let ids: Vec<String> = r.linhas.iter().map(|l| l.circuito.id.clone()).collect();
+        let mut sel = Selecao::ler(ui, "dimensionar");
+        sel.manter(&ids);
+        let antes = acoes.len();
+        let grade = egui::Grid::new("ele-dimensionar-tabela").num_columns(colunas.len()).striped(true).spacing(vec2(8.0, 2.0)).show(ui, |ui| {
             cabecalho(ui, t, &colunas);
-            for l in &r.linhas {
+            for (i, l) in r.linhas.iter().enumerate() {
                 let id = &l.circuito.id;
-                celula(ui, 34.0, id.as_str(), false);
+                let (clique, teclas) = celula_de_selecao(ui, 34.0, id.as_str(), sel.tem(id));
+                if clique.clicked() {
+                    sel.clicar(&ids, i, teclas);
+                }
                 celula(ui, 150.0, l.descricao.as_str(), false);
                 celula(ui, 80.0, numero(fixo(l.circuito.potencia, 0)), true);
                 na_celula(ui, 80.0, |ui| {
@@ -2301,6 +2472,10 @@ fn janela_dimensionar(ui: &mut egui::Ui, app: &CadApp, t: &Tokens, st: &mut Esta
                 ui.end_row();
             }
         });
+        sel.ctrl_a(ui, grade.response.rect, &ids);
+        let novas = acoes.split_off(antes);
+        acoes.extend(em_lote(novas, &sel, "circuito"));
+        sel.guardar(ui, "dimensionar");
     });
     ui.separator();
     grupos_de_dr(ui, t, r, q, o, acoes);
@@ -3104,17 +3279,25 @@ fn quadro_de_cargas(
         .chain(r.vazios.iter().map(|v| (v.id.clone(), v.descricao.clone())))
         .collect();
 
-    egui::Grid::new("ele-cargas-tabela").num_columns(colunas.len()).striped(true).spacing(vec2(8.0, 2.0)).show(ui, |ui| {
+    // Seleção múltipla: uma mudança numa linha selecionada vale para todas.
+    let ids: Vec<String> = r.linhas.iter().map(|l| l.circuito.id.clone()).collect();
+    let mut sel = Selecao::ler(ui, "cargas");
+    sel.manter(&ids);
+    let antes = acoes.len();
+    let grade = egui::Grid::new("ele-cargas-tabela").num_columns(colunas.len()).striped(true).spacing(vec2(8.0, 2.0)).show(ui, |ui| {
         cabecalho(ui, t, &colunas);
-        for l in &r.linhas {
+        for (i, l) in r.linhas.iter().enumerate() {
             let k = &l.circuito;
             let id = &k.id;
             let destacado = destaque.as_ref().is_some_and(|(dq, dc)| *dq == q && dc.eq_ignore_ascii_case(id));
-            // O número liga o destaque no desenho.
+            // O número seleciona a linha; o clique simples também liga o destaque no desenho.
             let rotulo = if destacado { RichText::new(id.as_str()).strong().color(COR_DESTAQUE_PONTO) } else { RichText::new(id.as_str()) };
-            let link = ui.allocate_ui_with_layout(vec2(largura(0), LINHA), Layout::left_to_right(Align::Center), |ui| ui.link(rotulo)).inner;
-            if link.on_hover_text(format!("{} · clique para destacar no desenho", k.natureza.nome())).clicked() {
-                *destaque = if destacado { None } else { Some((q, id.clone())) };
+            let (clique, teclas) = celula_de_selecao(ui, largura(0), rotulo, sel.tem(id));
+            if clique.clicked() {
+                sel.clicar(&ids, i, teclas);
+                if !teclas.command && !teclas.shift {
+                    *destaque = if destacado { None } else { Some((q, id.clone())) };
+                }
             }
             let lugares: Vec<[f64; 2]> = analise.pontos.iter().filter(|p| k.pontos.contains(&p.handle)).map(|p| p.posicao).collect();
             campo_descricao(ui, c, q, id, &l.descricao, largura(1), acoes);
@@ -3207,6 +3390,10 @@ fn quadro_de_cargas(
         }
         ui.end_row();
     });
+    sel.ctrl_a(ui, grade.response.rect, &ids);
+    let novas = acoes.split_off(antes);
+    acoes.extend(em_lote(novas, &sel, "circuito"));
+    sel.guardar(ui, "cargas");
     if r.linhas.is_empty() && r.vazios.is_empty() {
         ui.label(pequeno("Nenhum circuito neste quadro: crie um acima ou use Criar circuito na paleta.", t.text_dim));
     }
@@ -3585,11 +3772,19 @@ fn aba_lista_eletrodutos(ui: &mut egui::Ui, app: &CadApp, t: &Tokens, st: &mut E
         ("Ocupação", 70.0, true),
         ("", 170.0, false),
     ];
-    egui::Grid::new("ele-eletrodutos-tabela").num_columns(colunas.len()).striped(true).spacing(vec2(8.0, 2.0)).show(ui, |ui| {
+    // Seleção múltipla: uma mudança num trecho selecionado vale para todos.
+    let ids: Vec<String> = e.trechos.iter().map(|tr| tr.handle.hex()).collect();
+    let mut sel = Selecao::ler(ui, "eletrodutos");
+    sel.manter(&ids);
+    let antes = acoes.len();
+    let grade = egui::Grid::new("ele-eletrodutos-tabela").num_columns(colunas.len()).striped(true).spacing(vec2(8.0, 2.0)).show(ui, |ui| {
         cabecalho(ui, t, &colunas);
-        for tr in &e.trechos {
+        for (i, tr) in e.trechos.iter().enumerate() {
             let h = tr.handle;
-            celula(ui, colunas[0].1, nome(tr.de), false);
+            let (clique, teclas) = celula_de_selecao(ui, colunas[0].1, nome(tr.de), sel.tem(&h.hex()));
+            if clique.clicked() {
+                sel.clicar(&ids, i, teclas);
+            }
             celula(ui, colunas[1].1, nome(tr.para), false);
             ui.allocate_ui_with_layout(vec2(colunas[2].1, LINHA), Layout::left_to_right(Align::Center), |ui| {
                 egui::ComboBox::from_id_salt(("ele-trecho-tipo", h)).selected_text(tr.tipo.abreviado()).width(colunas[2].1 - 4.0).show_ui(ui, |ui| {
@@ -3652,6 +3847,10 @@ fn aba_lista_eletrodutos(ui: &mut egui::Ui, app: &CadApp, t: &Tokens, st: &mut E
             ui.end_row();
         }
     });
+    sel.ctrl_a(ui, grade.response.rect, &ids);
+    let novas = acoes.split_off(antes);
+    acoes.extend(em_lote(novas, &sel, "eletroduto"));
+    sel.guardar(ui, "eletrodutos");
     if !e.soltos.is_empty() {
         ui.add_space(6.0);
         ui.label(RichText::new("Soltos: não ligam dois blocos, ficam fora do cálculo").color(COR_AVISO));
@@ -3787,13 +3986,20 @@ fn lista_de_pontos(ui: &mut egui::Ui, t: &Tokens, analise: &ele::Analise, s: &Se
         ("", 90.0, false),
     ];
     egui::ScrollArea::vertical().id_salt("ele-pontos-lista").auto_shrink([false, true]).show(ui, |ui| {
-        egui::Grid::new("ele-pontos-tabela").num_columns(colunas.len()).striped(true).spacing(vec2(10.0, 2.0)).show(ui, |ui| {
+        // Seleção múltipla: a altura dada numa linha selecionada vale para todas; as selecionadas ficam
+        // selecionadas no desenho.
+        let ids: Vec<String> = lista.iter().map(|q| q.handle.hex()).collect();
+        let mut sel = Selecao::ler(ui, "pontos");
+        sel.manter(&ids);
+        let antes = acoes.len();
+        let grade = egui::Grid::new("ele-pontos-tabela").num_columns(colunas.len()).striped(true).spacing(vec2(10.0, 2.0)).show(ui, |ui| {
             cabecalho(ui, t, &colunas);
-            for q in &lista {
-                let link =
-                    ui.allocate_ui_with_layout(vec2(colunas[0].1, LINHA), Layout::left_to_right(Align::Center), |ui| ui.link(q.rotulo())).inner;
-                if link.on_hover_text("Selecionar no desenho").clicked() {
-                    acoes.push(Acao::Selecionar(vec![q.handle]));
+            for (i, q) in lista.iter().enumerate() {
+                let (clique, teclas) = celula_de_selecao(ui, colunas[0].1, q.rotulo(), sel.tem(&q.handle.hex()));
+                if clique.clicked() {
+                    sel.clicar(&ids, i, teclas);
+                    let hs: Vec<Handle> = lista.iter().filter(|x| sel.tem(&x.handle.hex())).map(|x| x.handle).collect();
+                    acoes.push(Acao::Selecionar(hs));
                 }
                 celula(ui, colunas[1].1, q.bloco.as_str(), false);
                 celula(ui, colunas[2].1, q.tipo.nome(), false);
@@ -3820,6 +4026,10 @@ fn lista_de_pontos(ui: &mut egui::Ui, t: &Tokens, analise: &ele::Analise, s: &Se
                 ui.end_row();
             }
         });
+        sel.ctrl_a(ui, grade.response.rect, &ids);
+        let novas = acoes.split_off(antes);
+        acoes.extend(em_lote(novas, &sel, "pontos"));
+        sel.guardar(ui, "pontos");
     });
 }
 
@@ -4910,6 +5120,48 @@ mod tests {
             assert_eq!(rotulos.len(), total);
         }
         assert_eq!(chave_da_secao("Eletrodutos"), "eletrica/Eletrodutos");
+    }
+
+    #[test]
+    fn selecao_com_ctrl_e_shift_e_edicao_em_lote() {
+        use super::{Acao, Selecao, em_lote};
+        use serde_json::json;
+        let ids: Vec<String> = ["1", "2", "3", "4", "5"].map(String::from).to_vec();
+        let nada = egui::Modifiers::NONE;
+        let ctrl = egui::Modifiers { command: true, ctrl: true, ..egui::Modifiers::NONE };
+        let shift = egui::Modifiers { shift: true, ..egui::Modifiers::NONE };
+        let mut s = Selecao::default();
+        // Clique simples: só ela; Ctrl+clique soma e tira; Shift+clique pega o intervalo desde a última.
+        s.clicar(&ids, 1, nada);
+        assert!(s.tem("2") && s.linhas.len() == 1);
+        s.clicar(&ids, 3, ctrl);
+        assert_eq!(s.linhas.iter().map(String::as_str).collect::<Vec<_>>(), ["2", "4"]);
+        s.clicar(&ids, 3, ctrl);
+        assert_eq!(s.linhas.len(), 1);
+        // O Shift parte da última linha clicada.
+        s.clicar(&ids, 1, nada);
+        s.clicar(&ids, 4, shift);
+        assert_eq!(s.linhas.iter().map(String::as_str).collect::<Vec<_>>(), ["2", "3", "4", "5"]);
+        // Uma mudança numa linha selecionada vale para todas; numa de fora, só para ela.
+        let acoes = vec![
+            Acao::Rodar("eletrica.circuito.definir", json!({ "quadro": "A", "circuito": "3", "esquema": "2F+T" })),
+            Acao::Rodar("eletrica.circuito.definir", json!({ "quadro": "A", "circuito": "1", "curva": "B" })),
+            Acao::Rodar("eletrica.circuito.excluir", json!({ "quadro": "A", "circuito": "3" })),
+        ];
+        let v = em_lote(acoes, &s, "circuito");
+        let alvos: Vec<(String, String)> = v
+            .iter()
+            .filter_map(|a| if let Acao::Rodar(id, p) = a { Some((id.to_string(), p["circuito"].as_str()?.to_string())) } else { None })
+            .collect();
+        assert_eq!(alvos.iter().filter(|(c, _)| c == "eletrica.circuito.definir").count(), 5, "4 em lote e 1 sozinha: {alvos:?}");
+        assert_eq!(alvos.iter().filter(|(c, _)| c == "eletrica.circuito.excluir").count(), 1, "excluir não vai em lote");
+        // Numa lista de pontos, a ação leva todos os selecionados de uma vez.
+        let v = em_lote(vec![Acao::Rodar("eletrica.telecom.ponto", json!({ "pontos": ["4"], "quantidade": 2 }))], &s, "pontos");
+        let Some(Acao::Rodar(_, p)) = v.first() else { panic!("ação") };
+        assert_eq!(p["pontos"].as_array().unwrap().len(), 4);
+        // Ctrl+A em código: manter tira o que saiu da tabela.
+        s.manter(&ids[..3]);
+        assert_eq!(s.linhas.len(), 2);
     }
 
     #[test]

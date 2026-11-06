@@ -351,7 +351,7 @@ pub fn show(app: &mut crate::CadApp, ui: &mut egui::Ui) {
         ui,
         &workspace.layout,
         &style,
-        |panel| crate::i18n::t(panel.label()).into(),
+        |panel| crate::eletrica::titulo_do_painel(*panel).map_or_else(|| crate::i18n::t(panel.label()).into(), Into::into),
         permissions,
         panel_limits,
         |ui, panel| match panel {

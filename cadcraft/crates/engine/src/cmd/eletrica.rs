@@ -112,7 +112,7 @@ pub fn specs() -> Vec<CommandSpec> {
             .params("{eletrodutos?: [hex], limpar?: bool, ancora?: [x, y], modo?: direct | leader, tag?: [x, y], eletroduto?: hex} → the same as elefiacao; without a point, a tag in the middle of every telecom conduit: point IDs above (D-01..D-04), cables and diameter below (4x Cat6 Ø25)")
             .interactive(|_| Ok(Box::new(FiacaoM { telecom: true, ..FiacaoM::default() }))),
         CommandSpec::new("eletrica.telecom.ponto", "Telecom Point Cable", run_telecom_ponto)
-            .params("{pontos: [hex], cabo?: telecom catalog name, quantidade?: 1 to 48} → sets the cable and the number of cables of telecom points (TIPO_CABO, QTD_CABOS) and updates tags and tables: {pontos}"),
+            .params("{pontos: [hex], cabo?: telecom catalog name, quantidade?: 1 to 48, id?: text (the point number, its rack port; empty takes it off), descricao?: text (empty: back to the legend), rack?: hex | TAG | null (null unlinks the point, even with a single rack)} → edits telecom points (TIPO_CABO, QTD_CABOS, ID_PONTO, DESC_PORTA, RACK_PAI) and updates tags and tables: {pontos}"),
         CommandSpec::new("teletabela", "Rack Table", run_teletabela)
             .params("{rack?: hex | TAG (default: the first), ponto: [x, y]} → draws the rack (telecom enclosure) table: port, point ID, description, cable, 3D length and status; an existing one moves: {tabela}")
             .interactive(|_| Ok(Box::new(TabelaRackM::default()))),
@@ -1012,11 +1012,26 @@ fn run_telecom_ponto(s: &mut Session, p: &Value) -> Result<Value> {
         Some(v) => Some(v.as_u64().and_then(|n| u32::try_from(n).ok()).ok_or_else(|| bad(CMD, "`quantidade` must be a whole number"))?),
         None => None,
     };
-    if cabo.is_none() && quantidade.is_none() {
-        return Err(bad(CMD, "give `cabo` or `quantidade`"));
+    let texto = |k: &str| -> Result<Option<String>> {
+        match p.get(k) {
+            None => Ok(None),
+            Some(Value::Null) => Ok(Some(String::new())),
+            Some(Value::String(t)) if t.chars().count() <= 120 => Ok(Some(t.clone())),
+            Some(Value::Number(n)) => Ok(Some(n.to_string())),
+            Some(_) => Err(bad(CMD, format!("`{k}` must be text of up to 120 characters"))),
+        }
+    };
+    let rack = match p.get("rack") {
+        None => None,
+        Some(Value::Null) => Some(None),
+        Some(v) => Some(Some(achar_rack(&analise(s)?, Some(v))?)),
+    };
+    let e = ele::telecom::EdicaoPonto { cabo, quantidade, id: texto("id")?, descricao: texto("descricao")?, rack };
+    if e.cabo.is_none() && e.quantidade.is_none() && e.id.is_none() && e.descricao.is_none() && e.rack.is_none() {
+        return Err(bad(CMD, "give `cabo`, `quantidade`, `id`, `descricao` or `rack`"));
     }
     let setup = ele::setup::atual();
-    ele::telecom::definir_cabo(s.doc_mut()?, &setup, &pontos, cabo.as_deref(), quantidade).map_err(|e| bad(CMD, e))?;
+    ele::telecom::editar_pontos(s.doc_mut()?, &setup, &pontos, &e).map_err(|e| bad(CMD, e))?;
     ele::fiacao::regenerar_se_houver(s.doc_mut()?, &setup).map_err(erro)?;
     Ok(json!({ "pontos": pontos.len() }))
 }

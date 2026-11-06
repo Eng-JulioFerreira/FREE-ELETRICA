@@ -256,21 +256,24 @@ fn paleta_ferramentas_e_fluxo_completo() {
     h.run_steps(3);
     h.get_by_label("Quadro VDI / Rack...").click();
     h.run_steps(4);
-    h.get_by_label("Quadro VDI / Rack");
-    for b in ["Numerar e vincular", "Dimensionar telecom", "Tabela no desenho"] {
+    // O título da aba e do painel é o do quadro de telecom, nunca o do quadro de cargas.
+    assert!(h.query_all_by_label("Quadro de Telecomunicações").count() >= 2, "a aba e o painel");
+    assert_eq!(cadcraft_ui_egui::eletrica::titulo_do_painel(Panel::QuadroCargas), Some("Quadro de Telecomunicações"));
+    for b in ["Rack / Quadro:", "+ Nova porta / ponto", "Numerar e vincular", "Dimensionar telecom", "Tabela no desenho"] {
         h.get_by_label(b);
     }
     assert!(h.state().ui.docking.layout.contains(&Panel::QuadroCargas), "acoplado embaixo do desenho");
     // O quadro de cargas e o VDI dividem o lugar: abrir um fecha o outro; o X fecha.
     h.state_mut().run("ui.eletrica.cargas", Value::Null).unwrap();
     h.run_steps(4);
-    assert!(h.query_by_label("Quadro VDI / Rack").is_none());
+    assert!(h.query_by_label("Quadro de Telecomunicações").is_none());
+    assert_eq!(cadcraft_ui_egui::eletrica::titulo_do_painel(Panel::QuadroCargas), None);
     h.state_mut().run("ui.eletrica.telecom.vdi", Value::Null).unwrap();
     h.run_steps(4);
-    h.get_by_label("Quadro VDI / Rack");
+    assert!(h.query_all_by_label("Quadro de Telecomunicações").count() >= 1);
     h.get_by_label("Fechar").click();
     h.run_steps(4);
-    assert!(h.query_by_label("Quadro VDI / Rack").is_none());
+    assert!(h.query_by_label("Quadro de Telecomunicações").is_none());
     assert!(!h.state().ui.docking.layout.contains(&Panel::QuadroCargas));
     h.get_by_label("Elétrica").click();
     h.run_steps(3);

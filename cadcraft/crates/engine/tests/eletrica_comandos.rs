@@ -1577,7 +1577,7 @@ fn telecom_por_comandos() {
     // Vincular e numerar: um rack só.
     let v = s.execute("televincular", &json!({})).unwrap();
     let ids: Vec<&str> = v["pontos"].as_array().unwrap().iter().map(|p| p["id"].as_str().unwrap()).collect();
-    assert_eq!(ids, ["D-01", "D-02"]);
+    assert_eq!(ids, ["1", "2"], "o número do ponto é a porta no rack");
     assert!(v["pontos"].as_array().unwrap().iter().all(|p| p["rack"] == rack.as_str() && p["cabo"] == "UTP Cat 6"));
     assert!(s.execute("televincular", &json!({ "rack": a })).is_err(), "a não é rack");
     assert!(s.execute("televincular", &json!({ "pontos": "x" })).is_err());
@@ -1587,8 +1587,12 @@ fn telecom_por_comandos() {
     // Dimensionar telecom: dois cabos no tronco, um eletroduto pela ocupação de 40 %.
     let t = s.execute("telerotear", &json!({})).unwrap();
     let trecho = t["trechos"].as_array().unwrap().iter().find(|x| x["eletroduto"] == tronco.as_str()).unwrap().clone();
-    assert_eq!(trecho["textoIds"], "D-01, D-02");
-    assert!(trecho["textoCabos"].as_str().unwrap().starts_with("2x Cat6 %%c"), "{trecho}");
+    assert_eq!(trecho["textoIds"], "1, 2");
+    assert_eq!(
+        (trecho["textoCabos"].as_str(), trecho["textoDiametro"].as_str().map(|d| d.starts_with("%%c"))),
+        (Some("2x UTP Cat 6"), Some(true)),
+        "{trecho}"
+    );
     assert!(trecho["ocupacao"].as_f64().unwrap() <= 0.40);
     let enlaces = t["racks"][0]["enlaces"].as_array().unwrap();
     assert_eq!(enlaces.len(), 2);
@@ -1633,6 +1637,16 @@ fn telecom_por_comandos() {
     assert!(s.execute("eletrica.telecom.ponto", &json!({ "pontos": [b], "quantidade": 0 })).is_err());
     assert!(s.execute("eletrica.telecom.ponto", &json!({ "pontos": [rack], "quantidade": 1 })).is_err(), "o rack não é ponto");
     assert!(s.execute("eletrica.telecom.ponto", &json!({ "pontos": [b] })).is_err());
+    // O número, a descrição e desvincular: com um rack só, desvinculado fica sem rack.
+    s.execute("eletrica.telecom.ponto", &json!({ "pontos": [b], "id": "9", "descricao": "Sala de reunião" })).unwrap();
+    let t = s.execute("eletrica.telecom", &json!({})).unwrap();
+    let e = t["racks"][0]["enlaces"].as_array().unwrap().iter().find(|e| e["ponto"] == b.as_str()).unwrap().clone();
+    assert_eq!((e["id"].as_str(), e["porta"].as_str(), e["descricao"].as_str()), (Some("9"), Some("9-10"), Some("Sala de reunião")));
+    s.execute("eletrica.telecom.ponto", &json!({ "pontos": [b], "rack": null })).unwrap();
+    assert_eq!(s.execute("eletrica.telecom", &json!({})).unwrap()["semRack"].as_array().unwrap().len(), 1);
+    s.execute("eletrica.telecom.ponto", &json!({ "pontos": [b], "rack": "RACK" })).unwrap();
+    assert!(s.execute("eletrica.telecom", &json!({})).unwrap()["semRack"].as_array().unwrap().is_empty());
+    assert!(s.execute("eletrica.telecom.ponto", &json!({ "pontos": [b], "rack": a })).is_err());
 }
 
 #[test]

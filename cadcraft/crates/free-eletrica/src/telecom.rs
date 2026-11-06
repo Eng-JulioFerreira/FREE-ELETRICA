@@ -121,6 +121,16 @@ impl TipoTelecom {
     }
 }
 
+/// `RACK_PAI` de um ponto desvinculado à mão: fica sem rack mesmo com um rack só no projeto.
+pub const SEM_RACK: &str = "-";
+/// A descrição da porta no quadro VDI (sem ela, a legenda do ponto).
+pub const TAGS_DESCRICAO: &[&str] = &["DESC_PORTA"];
+
+/// O ponto foi desvinculado à mão.
+fn desvinculado(p: &PontoEletrico) -> bool {
+    p.valor(&[CHAVE_RACK]).is_some_and(|v| v.trim() == SEM_RACK)
+}
+
 /// O rack gravado no ponto: o handle no XDATA ou, num atributo, a identificação do rack.
 fn rack_gravado(p: &PontoEletrico, analise: &Analise) -> Option<Handle> {
     let v = p.valor(&[CHAVE_RACK])?.trim();
@@ -130,8 +140,11 @@ fn rack_gravado(p: &PontoEletrico, analise: &Analise) -> Option<Handle> {
         .or_else(|| racks().find(|r| r.tag.as_deref().is_some_and(|t| t.eq_ignore_ascii_case(v))).map(|r| r.handle))
 }
 
-/// O rack do ponto: o gravado ou, com um rack só no projeto, ele.
+/// O rack do ponto: o gravado ou, com um rack só no projeto, ele. Desvinculado à mão: nenhum.
 pub fn rack_do_ponto(p: &PontoEletrico, analise: &Analise) -> Option<Handle> {
+    if desvinculado(p) {
+        return None;
+    }
     rack_gravado(p, analise).or_else(|| match racks(analise).as_slice() {
         [r] => Some(r.handle),
         _ => None,
@@ -214,15 +227,16 @@ pub fn ordem_dos_ids(a: &str, b: &str) -> std::cmp::Ordering {
     chave(a).cmp(&chave(b)).then(crate::circuito::ordem_natural(a, b))
 }
 
-/// O número de uma identificação com o prefixo: `D-07` → 7.
-fn numero_do_id(id: &str, prefixo: &str) -> Option<u32> {
-    let resto = id.trim().to_uppercase();
-    resto.strip_prefix(prefixo)?.trim_start_matches(['-', ' ']).parse().ok()
+/// A porta de uma identificação numérica: `7` → 7. Identificações de versões anteriores (`D-07`) não são porta.
+pub fn porta_do_id(id: &str) -> Option<u32> {
+    id.trim().parse().ok().filter(|n| *n > 0)
 }
 
 /// Vincula os pontos de telecom ao rack e numera os que não têm identificação (com `renumerar`, todos).
 /// `rack`: o rack de todos; sem ele, o de cada ponto, o único do projeto ou o mais perto pela rede. `alvos`:
-/// só esses pontos. A numeração segue a distância até o rack pela rede, e depois a posição na planta.
+/// só esses pontos. O número do ponto é a porta dele no rack (`1`, `2`, `3`...): um ponto com dois cabos ocupa
+/// duas portas seguidas e leva o número da primeira. A numeração segue a distância até o rack pela rede, e
+/// depois a posição na planta.
 pub fn vincular(doc: &mut Drawing, setup: &Setup, rack: Option<Handle>, alvos: Option<&[Handle]>, renumerar: bool) -> Result<Vinculo, String> {
     let analise = crate::analisar(doc);
     let lista_racks = racks(&analise);
@@ -260,13 +274,14 @@ pub fn vincular(doc: &mut Drawing, setup: &Setup, rack: Option<Handle>, alvos: O
         }
         com_rack.push((p, r));
     }
-    // A numeração: as identificações que ficam são reservadas; as novas pegam os números livres de cada prefixo.
+    // A numeração: as portas dos números que ficam são reservadas, em cada rack; os novos pegam as primeiras
+    // portas livres seguidas.
     let renumerados: Vec<Handle> = com_rack.iter().filter(|(p, _)| renumerar || id_do_ponto(p).is_none()).map(|(p, _)| p.handle).collect();
-    let mut usados: HashMap<&'static str, Vec<u32>> = HashMap::new();
+    let mut usados: HashMap<Option<u64>, Vec<u32>> = HashMap::new();
     for p in todos.iter().filter(|p| !renumerados.contains(&p.handle)) {
-        let prefixo = TipoTelecom::de_ponto(p, setup).prefixo();
-        if let Some(n) = id_do_ponto(p).and_then(|id| numero_do_id(&id, prefixo)) {
-            usados.entry(prefixo).or_default().push(n);
+        let r = com_rack.iter().find(|(x, _)| x.handle == p.handle).map_or_else(|| rack_do_ponto(p, &analise), |(_, r)| *r);
+        if let Some(n) = id_do_ponto(p).and_then(|id| porta_do_id(&id)) {
+            usados.entry(r.map(|h| h.0)).or_default().extend(n..n + quantidade_do_ponto(p));
         }
     }
     let mut ordem: Vec<&(&PontoEletrico, Option<Handle>)> = com_rack.iter().filter(|(p, _)| renumerados.contains(&p.handle)).collect();
@@ -279,12 +294,12 @@ pub fn vincular(doc: &mut Drawing, setup: &Setup, rack: Option<Handle>, alvos: O
             .then(a.posicao[0].total_cmp(&b.posicao[0]))
     });
     let mut novos: HashMap<Handle, String> = HashMap::new();
-    for (p, _) in ordem {
-        let prefixo = TipoTelecom::de_ponto(p, setup).prefixo();
-        let lista = usados.entry(prefixo).or_default();
-        let n = (1..).find(|k| !lista.contains(k)).unwrap_or(1);
-        lista.push(n);
-        novos.insert(p.handle, format!("{prefixo}-{n:02}"));
+    for (p, r) in ordem {
+        let q = quantidade_do_ponto(p);
+        let lista = usados.entry(r.map(|h| h.0)).or_default();
+        let n = (1..).find(|k| (*k..*k + q).all(|x| !lista.contains(&x))).unwrap_or(1);
+        lista.extend(n..n + q);
+        novos.insert(p.handle, n.to_string());
     }
     for (p, r) in &com_rack {
         let id = novos.get(&p.handle).cloned().or_else(|| id_do_ponto(p)).unwrap_or_default();
@@ -304,6 +319,46 @@ pub fn vincular(doc: &mut Drawing, setup: &Setup, rack: Option<Handle>, alvos: O
     }
     vinculo.pontos.sort_by(|a, b| ordem_dos_ids(&a.id, &b.id));
     Ok(vinculo)
+}
+
+/// O que trocar num ponto de telecom, pelo quadro VDI. `None` não mexe.
+#[derive(Clone, Debug, Default)]
+pub struct EdicaoPonto {
+    /// Um nome do catálogo de telecom.
+    pub cabo: Option<String>,
+    /// De 1 a 48.
+    pub quantidade: Option<u32>,
+    /// O número do ponto (a porta). Vazio tira.
+    pub id: Option<String>,
+    /// A descrição da porta. Vazio volta à legenda do ponto.
+    pub descricao: Option<String>,
+    /// `Some(Some(rack))` vincula a esse rack; `Some(None)` desvincula (fica sem rack).
+    pub rack: Option<Option<Handle>>,
+}
+
+/// Troca o cabo, a quantidade, o número, a descrição ou o rack dos pontos.
+pub fn editar_pontos(doc: &mut Drawing, setup: &Setup, pontos: &[Handle], e: &EdicaoPonto) -> Result<(), String> {
+    definir_cabo(doc, setup, pontos, e.cabo.as_deref(), e.quantidade)?;
+    let analise = crate::analisar(doc);
+    if let Some(Some(r)) = e.rack
+        && !racks(&analise).iter().any(|x| x.handle == r)
+    {
+        return Err(format!("o objeto {} não é um rack / quadro VDI", r.hex()));
+    }
+    for h in pontos {
+        if let Some(id) = &e.id {
+            crate::editar::definir(doc, *h, TAGS_ID_TELECOM, Some(id.trim()).filter(|t| !t.is_empty()))?;
+        }
+        if let Some(d) = &e.descricao {
+            crate::editar::gravar_xdata(doc, *h, TAGS_DESCRICAO[0], Some(d.trim()).filter(|t| !t.is_empty()))?;
+        }
+        match e.rack {
+            Some(Some(r)) => crate::editar::gravar_xdata(doc, *h, CHAVE_RACK, Some(&r.hex()))?,
+            Some(None) => crate::editar::gravar_xdata(doc, *h, CHAVE_RACK, Some(SEM_RACK))?,
+            None => {}
+        }
+    }
+    Ok(())
 }
 
 /// Troca o cabo (um nome do catálogo de telecom) e a quantidade de cabos (1 a 48) dos pontos. `None` não mexe.
@@ -407,9 +462,11 @@ pub struct TrechoTelecom {
     pub eletroduto_escolhido: Option<TamanhoEletroduto>,
     pub ocupacao: Option<f64>,
     pub diametro_travado: bool,
-    /// O texto de cima da tag (`D-01..D-03`) e o de baixo (`3x Cat6 Ø25`).
+    /// Os pontos que passam (`1..3`), os cabos (`3x UTP Cat 6`, o texto de cima da tag) e o diâmetro (`Ø25`, o
+    /// de baixo).
     pub texto_ids: String,
     pub texto_cabos: String,
+    pub texto_diametro: String,
 }
 
 /// Um rack com os enlaces dele, em ordem de porta.
@@ -447,14 +504,9 @@ impl Telecom {
     }
 }
 
-/// O nome curto de um cabo para a tag: `UTP Cat 6` → `Cat6`, `Fibra óptica N2` → `FO-N2`, `Coaxial RG 59` →
-/// `RG59`.
+/// O nome do cabo na tag: o do catálogo, com a fibra encurtada (`Fibra óptica N2` → `Fibra N2`).
 pub fn abreviar_cabo(nome: &str) -> String {
-    let n = nome.trim();
-    let n = n.strip_prefix("UTP ").unwrap_or(n);
-    let n = n.replace("Fibra óptica ", "FO-").replace("Fibra optica ", "FO-");
-    let n = n.strip_prefix("Coaxial ").unwrap_or(&n).to_string();
-    n.replace(' ', "")
+    nome.trim().replace("Fibra óptica", "Fibra").replace("Fibra optica", "Fibra")
 }
 
 /// As identificações em faixas: `D-01, D-02, D-03, D-05, CFTV-01` → `D-01..D-03, D-05, CFTV-01`. Três ou mais
@@ -464,7 +516,8 @@ pub fn texto_ids(cabos: &[CaboNoTrecho]) -> String {
     let mut soltos: Vec<String> = Vec::new();
     for c in cabos {
         let id = c.id.trim();
-        match id.rsplit_once('-').and_then(|(p, n)| n.parse::<u32>().ok().map(|n| (p.to_string(), n))) {
+        let numerado = id.parse::<u32>().ok().map(|n| (String::new(), n));
+        match numerado.or_else(|| id.rsplit_once('-').and_then(|(p, n)| n.parse::<u32>().ok().map(|n| (p.to_string(), n)))) {
             Some((p, n)) => por_prefixo.entry(p).or_default().push((n, id.to_string())),
             None if !id.is_empty() => soltos.push(id.to_string()),
             None => soltos.push("?".into()),
@@ -473,7 +526,7 @@ pub fn texto_ids(cabos: &[CaboNoTrecho]) -> String {
     let mut partes: Vec<String> = Vec::new();
     // D primeiro, depois os outros prefixos em ordem alfabética.
     let mut prefixos: Vec<&String> = por_prefixo.keys().collect();
-    prefixos.sort_by_key(|p| (p.as_str() != "D", (*p).clone()));
+    prefixos.sort_by_key(|p| (!p.is_empty() && p.as_str() != "D", (*p).clone()));
     for p in prefixos {
         let mut v = por_prefixo[p].clone();
         v.sort();
@@ -498,15 +551,18 @@ pub fn texto_ids(cabos: &[CaboNoTrecho]) -> String {
     partes.join(", ")
 }
 
-/// A quantidade e o tipo de cabo, e o diâmetro: `4x Cat6 %%c25` (`%%c` é o Ø do CAD).
-pub fn texto_cabos(cabos: &[CaboNoTrecho], diametro: Option<f64>) -> String {
+/// A quantidade e o tipo de cabo, agrupados: `3x UTP Cat 6 + 1x Fibra N2`. É o texto de cima da tag.
+pub fn texto_cabos(cabos: &[CaboNoTrecho]) -> String {
     let mut por_cabo: BTreeMap<String, u32> = BTreeMap::new();
     for c in cabos {
         *por_cabo.entry(abreviar_cabo(&c.cabo)).or_default() += c.quantidade;
     }
-    let cabos = por_cabo.into_iter().map(|(c, n)| format!("{n}x {c}")).collect::<Vec<_>>().join(" + ");
-    let d = diametro.map_or_else(|| "%%c?".to_string(), |n| format!("%%c{}", br(n)));
-    format!("{cabos} {d}")
+    por_cabo.into_iter().map(|(c, n)| format!("{n}x {c}")).collect::<Vec<_>>().join(" + ")
+}
+
+/// O diâmetro do eletroduto, o texto de baixo da tag: `%%c25` (`%%c` é o Ø do CAD).
+pub fn texto_diametro(diametro: Option<f64>) -> String {
+    diametro.map_or_else(|| "%%c?".to_string(), |n| format!("%%c{}", br(n)))
 }
 
 /// O menor eletroduto do trecho com os cabos até [`OCUPACAO_MAXIMA`]; um diâmetro travado só tem a ocupação
@@ -583,7 +639,13 @@ pub fn rotear(doc: &Drawing, analise: &Analise, setup: &Setup) -> Telecom {
         let mut enlace = Enlace {
             ponto: p.handle,
             id: id.clone(),
-            descricao: p.legenda.clone().unwrap_or_else(|| tipo.nome().to_string()),
+            descricao: p
+                .valor(TAGS_DESCRICAO)
+                .map(str::trim)
+                .filter(|d| !d.is_empty())
+                .map(str::to_string)
+                .or_else(|| p.legenda.clone())
+                .unwrap_or_else(|| tipo.nome().to_string()),
             tipo,
             cabo: cabo.clone(),
             quantidade,
@@ -637,25 +699,33 @@ pub fn rotear(doc: &Drawing, analise: &Analise, setup: &Setup) -> Telecom {
     }
     for r in racks(analise) {
         let mut enlaces = por_rack.remove(&r.handle.0).unwrap_or_default();
-        enlaces.sort_by(|a, b| ordem_dos_ids(&a.id, &b.id));
-        let mut porta = 0u32;
+        // O número do ponto é a porta; os sem número (ou de versões anteriores, como D-01) vêm depois da maior.
+        enlaces.sort_by(|a, b| match (porta_do_id(&a.id), porta_do_id(&b.id)) {
+            (Some(x), Some(y)) => x.cmp(&y),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => ordem_dos_ids(&a.id, &b.id),
+        });
+        let mut maior = 0u32;
         for e in &mut enlaces {
-            let primeira = porta + 1;
-            porta += e.quantidade;
-            e.porta = if e.quantidade > 1 { format!("{primeira}-{porta}") } else { primeira.to_string() };
+            let primeira = porta_do_id(&e.id).filter(|n| *n > maior).unwrap_or(maior + 1);
+            let ultima = primeira + e.quantidade.max(1) - 1;
+            maior = ultima;
+            e.porta = if ultima > primeira { format!("{primeira}-{ultima}") } else { primeira.to_string() };
         }
-        t.racks.push(RackTelecom { rack: r.handle, tag: r.rotulo(), enlaces, portas: porta });
+        let portas = enlaces.iter().map(|e| e.quantidade).sum();
+        t.racks.push(RackTelecom { rack: r.handle, tag: r.rotulo(), enlaces, portas });
     }
     for (e, mut cabos) in por_aresta {
         let Some(a) = rede.arestas.get(e) else { continue };
         cabos.sort_by(|x, y| ordem_dos_ids(&x.id, &y.id));
         let travado = crate::fiacao::diametro_travado(doc, a.eletroduto);
         let (escolhido, ocupacao, diametro_travado) = dimensionar(&cabos, a.perfil.as_deref(), a.tipo, travado, setup, &mut t.avisos);
-        let texto_cabos = texto_cabos(&cabos, escolhido.as_ref().map(|e| e.nominal));
         t.trechos.push(TrechoTelecom {
             eletroduto: a.eletroduto,
             texto_ids: texto_ids(&cabos),
-            texto_cabos,
+            texto_cabos: texto_cabos(&cabos),
+            texto_diametro: texto_diametro(escolhido.as_ref().map(|e| e.nominal)),
             cabos,
             eletroduto_escolhido: escolhido,
             ocupacao,
@@ -724,19 +794,12 @@ pub fn titulo_da_tabela(tag: &str) -> String {
 }
 
 /// As linhas da tabela: o cabeçalho e um enlace por linha.
-fn linhas_da_tabela(r: &RackTelecom) -> Vec<[String; 6]> {
-    let mut v = vec![["PORTA", "ID DO PONTO", "DESCRIÇÃO", "CABO", "COMPRIMENTO 3D (m)", "STATUS"].map(String::from)];
+fn linhas_da_tabela(r: &RackTelecom) -> Vec<[String; 5]> {
+    let mut v = vec![["PORTA / PONTO", "DESCRIÇÃO", "CABO", "COMPRIMENTO 3D (m)", "STATUS"].map(String::from)];
     for e in &r.enlaces {
         let comprimento = format!("{}{}", if e.estimado { "~" } else { "" }, format!("{:.1}", e.comprimento).replace('.', ","));
         let cabo = if e.quantidade > 1 { format!("{}x {}", e.quantidade, e.cabo) } else { e.cabo.clone() };
-        v.push([
-            e.porta.clone(),
-            if e.id.is_empty() { "-".into() } else { e.id.clone() },
-            e.descricao.clone(),
-            cabo,
-            comprimento,
-            e.status.texto().into(),
-        ]);
+        v.push([e.porta.clone(), e.descricao.clone(), cabo, comprimento, e.status.texto().into()]);
     }
     v
 }
@@ -744,14 +807,14 @@ fn linhas_da_tabela(r: &RackTelecom) -> Vec<[String; 6]> {
 fn pecas_da_tabela(r: &RackTelecom, m: f64) -> Vec<EntityKind> {
     let u = |v: f64| v / m;
     let celulas = linhas_da_tabela(r);
-    let larguras: Vec<f64> = (0..6)
+    let larguras: Vec<f64> = (0..5)
         .map(|c| celulas.iter().map(|l| l[c].chars().count() as f64 * ALTURA * LARGURA_CARACTERE).fold(4.0 * ALTURA, f64::max) + ALTURA)
         .collect();
     let titulo = titulo_da_tabela(&r.tag);
     let total = larguras.iter().sum::<f64>().max(titulo.chars().count() as f64 * ALTURA_TITULO * LARGURA_CARACTERE + ALTURA);
     let sobra = total - larguras.iter().sum::<f64>();
     let mut larguras = larguras;
-    if let Some(d) = larguras.get_mut(2) {
+    if let Some(d) = larguras.get_mut(1) {
         *d += sobra;
     }
     let alto_titulo = LINHA * 1.5;
@@ -766,7 +829,7 @@ fn pecas_da_tabela(r: &RackTelecom, m: f64) -> Vec<EntityKind> {
         let mut x = 0.0;
         for (c, t) in l.iter().enumerate() {
             let w = larguras.get(c).copied().unwrap_or(0.0);
-            p.push(if c == 2 {
+            p.push(if c == 1 {
                 texto(t, [u(x + ALTURA / 2.0), u(y - LINHA / 2.0)], u(ALTURA), HAlign::Left)
             } else {
                 texto(t, [u(x + w / 2.0), u(y - LINHA / 2.0)], u(ALTURA), HAlign::Center)
@@ -776,7 +839,7 @@ fn pecas_da_tabela(r: &RackTelecom, m: f64) -> Vec<EntityKind> {
         y -= LINHA;
     }
     let mut x = 0.0;
-    for w in larguras.iter().take(5) {
+    for w in larguras.iter().take(4) {
         x += w;
         p.push(linha([u(x), u(-alto_titulo)], [u(x), u(fundo)]));
     }
