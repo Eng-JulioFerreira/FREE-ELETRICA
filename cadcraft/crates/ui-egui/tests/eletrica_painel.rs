@@ -601,6 +601,20 @@ fn paleta_ferramentas_e_fluxo_completo() {
     h.get_by_label("NUMERO_FASES");
     h.get_by_label("Sistema do Quadro");
     h.get_by_label("Alimentado por");
+    // Num ponto de carga, a tensão é editável: o campo grava o TENSAO dele.
+    let pontos = h.state_mut().run("eletrica.analisar", json!({})).unwrap()["pontos"].clone();
+    let tug = hex(&pontos.as_array().unwrap().iter().find(|p| p["tipo"] == "tomada").unwrap()["handle"]);
+    h.state_mut().session.set_selection(vec![Handle::parse_hex(&tug).unwrap()]);
+    h.run_steps(3);
+    h.get_by_label("Tensão");
+    h.state_mut().run("eletrica.ponto.tensao", json!({ "pontos": [tug], "tensao": 220 })).unwrap();
+    h.run_steps(3);
+    let pontos = h.state_mut().run("eletrica.analisar", json!({})).unwrap()["pontos"].clone();
+    let lido = pontos.as_array().unwrap().iter().find(|p| p["handle"] == tug.as_str()).unwrap()["tensao"].clone();
+    assert_eq!(lido, 220.0, "o TENSAO do ponto");
+    h.get_by_label("Tensão");
+    h.state_mut().session.set_selection(vec![Handle::parse_hex(&qd).unwrap()]);
+    h.run_steps(3);
     // Imagem do inspetor, quando pedida.
     if let Ok(saida) = std::env::var("FREE_ELETRICA_PNG_INSPETOR") {
         h.render().unwrap().save(saida).unwrap();
@@ -764,6 +778,7 @@ fn paleta_ferramentas_e_fluxo_completo() {
     h.get_by_label("Referência de altura padrão");
     h.get_by_label("Caixa física associada");
     h.get_by_label("Classe de Demanda");
+    h.get_by_label("Tensão Padrão (V)");
     h.get_by_label("Fator de Demanda (0,00 a 1,00)");
     h.get_by_label("Automático, pela tabela da concessionária").click();
     h.run_steps(3);

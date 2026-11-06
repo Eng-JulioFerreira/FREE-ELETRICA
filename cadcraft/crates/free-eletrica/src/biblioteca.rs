@@ -193,6 +193,9 @@ pub fn inserir_ponto(
         if let Some(fp) = f.fp.filter(|_| livre("FP", &v)) {
             v.push(("FP".into(), crate::ponto::br(fp)));
         }
+        if let Some(t) = f.tensao.filter(|_| livre("TENSAO", &v)) {
+            v.push(("TENSAO".into(), format!("{}V", crate::ponto::br(t))));
+        }
     }
     let h = inserir(doc, nome, pos, rotacao, &v)?;
     // Sem família e sem altura pedida, o padrão que o próprio bloco traz fica como está.
@@ -1133,13 +1136,16 @@ pub fn definir_conector(doc: &mut Drawing, p: [f64; 2], metros: f64) -> Result<H
     doc.add(&Space::Model, c, EntityKind::Circle(Circle { center: Vec3::new(0.0, 0.0, 0.0), radius: 0.02 / m })).map_err(|e| e.to_string())
 }
 
-/// Cria no bloco em edição os atributos padrão da categoria, os que ainda não existem. Devolve
-/// quantos entraram.
-pub fn gerar_atributos(doc: &mut Drawing, categoria: FamilyCategory, metros: f64) -> Result<usize, String> {
+/// Cria no bloco em edição os atributos padrão da categoria, só os que ainda não existem: rodar de novo não
+/// duplica nada e completa um bloco antigo (como o TENSAO que faltava). `tensao` é o valor inicial do TENSAO
+/// (a tensão padrão da família); `None` deixa vazio, e vale a do quadro. Devolve quantos entraram.
+pub fn gerar_atributos(doc: &mut Drawing, categoria: FamilyCategory, metros: f64, tensao: Option<f64>) -> Result<usize, String> {
     use FamilyCategory as C;
     let m = if metros > 0.0 { metros } else { 1.0 };
     let altura = |pos| visivel("ALTURA", "", "Altura fora da legenda", pos);
-    let lista: Vec<Att> = match categoria {
+    let texto_tensao = tensao.filter(|v| v.is_finite() && *v > 0.0).map_or(String::new(), |v| format!("{}V", crate::ponto::br(v)));
+    let tensao_att = || att("TENSAO", &texto_tensao, "Tensão (V); vazio: a do quadro");
+    let mut lista: Vec<Att> = match categoria {
         C::Nenhum => return Err("um bloco CAD comum não tem atributos elétricos: escolha uma categoria".into()),
         C::PontoForca => vec![
             constante("TIPO_PONTO", "TUG"),
@@ -1147,6 +1153,7 @@ pub fn gerar_atributos(doc: &mut Drawing, categoria: FamilyCategory, metros: f64
             visivel("CIRCUITO", "", "Circuito", (0.10, 0.10)),
             altura((0.10, 0.03)),
             att("POTENCIA", "100VA", "Potência"),
+            tensao_att(),
             att("TIPO_CARGA", "ILUM_TUG", "Tipo de carga"),
             att("FP", "0,92", "Fator de potência"),
         ],
@@ -1157,6 +1164,7 @@ pub fn gerar_atributos(doc: &mut Drawing, categoria: FamilyCategory, metros: f64
             visivel("COMANDO", "", "Letra do comando", (0.0, 0.0)),
             visivel("CIRCUITO", "", "Circuito", (0.0, 0.0)),
             altura((0.118, -0.09)),
+            tensao_att(),
             att("TIPO_CARGA", "ILUM_TUG", "Tipo de carga"),
             att("FP", "0,92", "Fator de potência"),
         ],
@@ -1166,12 +1174,18 @@ pub fn gerar_atributos(doc: &mut Drawing, categoria: FamilyCategory, metros: f64
             visivel("COMANDO", "", "Letra do comando (a, b, c...)", (0.10, 0.10)),
             att("CIRCUITO", "", "Circuito"),
             att("POTENCIA", "0W", "Potência (interruptor: 0W)"),
+            tensao_att(),
             altura((0.10, 0.03)),
         ],
         C::Dados => vec![constante("TIPO_PONTO", "DADOS"), visivel("ID_PONTO", "", "Identificação do ponto", (0.10, 0.10)), altura((0.10, 0.03))],
-        C::Especial => {
-            vec![constante("TIPO_PONTO", "ESPECIAL"), visivel("ID_PONTO", "", "Identificação do ponto", (0.10, 0.10)), altura((0.10, 0.03))]
-        }
+        C::Especial => vec![
+            constante("TIPO_PONTO", "ESPECIAL"),
+            visivel("ID_PONTO", "", "Identificação do ponto", (0.10, 0.10)),
+            att("CIRCUITO", "", "Circuito"),
+            att("POTENCIA", "100VA", "Potência"),
+            tensao_att(),
+            altura((0.10, 0.03)),
+        ],
         C::QuadroEletrico => vec![
             constante("TIPO_PONTO", "QUADRO"),
             visivel("TAG", "QD", "Identificação do quadro", (0.12, -0.045)),
@@ -1184,6 +1198,9 @@ pub fn gerar_atributos(doc: &mut Drawing, categoria: FamilyCategory, metros: f64
         }
         C::Caixa => vec![constante("TIPO_PONTO", "CAIXA DE PASSAGEM"), att("TAG", "", "Identificação"), altura((0.07, -0.02))],
     };
+    // O nome na legenda e a descrição de material: vazios, valem os da família até o projetista preencher.
+    lista.push(att("LEGENDA", "", "Nome na legenda (vazio: o da família)"));
+    lista.push(att("DESC_MATERIAL", "", "Descrição na lista de materiais (vazio: a da família)"));
     let existe =
         |doc: &Drawing, tag: &str| doc.model.iter().any(|e| matches!(&e.kind, EntityKind::AttDef(a) if a.tag.trim().eq_ignore_ascii_case(tag)));
     let mut n = 0;
@@ -1199,6 +1216,24 @@ pub fn gerar_atributos(doc: &mut Drawing, categoria: FamilyCategory, metros: f64
         }
     }
     Ok(n)
+}
+
+/// Troca o valor inicial (o texto padrão) do ATTDEF `tag` no bloco em edição. Devolve se havia o atributo.
+pub fn definir_padrao_do_atributo(doc: &mut Drawing, tag: &str, valor: &str) -> bool {
+    let alvos: Vec<Entity> = doc
+        .model
+        .iter()
+        .filter(|e| matches!(&e.kind, EntityKind::AttDef(a) if a.tag.trim().eq_ignore_ascii_case(tag)))
+        .map(|e| (**e).clone())
+        .collect();
+    let achou = !alvos.is_empty();
+    for mut e in alvos {
+        if let EntityKind::AttDef(a) = &mut e.kind {
+            a.text.value = valor.to_string();
+        }
+        doc.model.replace(e);
+    }
+    achou
 }
 
 /// A rotação (graus) que alinha um ponto à parede mais próxima: a linha mais perto de `q`, fora das

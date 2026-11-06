@@ -20,7 +20,7 @@ Seguindo o paradigma de **Programação Orientada a Objetos (POO)**, todo ponto 
 | :--- | :--- | :--- | :--- |
 | `TIPO_PONTO` | Categoria do elemento | `TOMADA`, `TUG`, `TUE`, `ILUM` | `INTERRUPTOR`, `INT_SIMPLES` |
 | `POTENCIA` | Potência nominal | `100W`, `600VA`, `5400W` | **`0W` (Sempre zerada: 0)** |
-| `TENSAO` | Tensão nominal | `127V`, `220V` | `127V`, `220V` |
+| `TENSAO` | Tensão nominal; vazia ou ilegível, vale a da família e depois a do quadro | `127V`, `220V` | `127V`, `220V` |
 | `NUMERO_FASES` | Quantidade de fases | `1`, `2`, `3` | `1` |
 | `CIRCUITO` | Circuito associado | `1`, `2` | `1`, `2` |
 | `COMANDO` | Tecla / acionamento | `a` (em lâmpadas) ou vazio | **`a`, `b`, `c` (Obrigatório)** |

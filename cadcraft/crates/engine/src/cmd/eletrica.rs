@@ -74,10 +74,12 @@ pub fn specs() -> Vec<CommandSpec> {
             .params("{bloco? (default: the block being edited)} → the family, or null")
             .noundo(),
         CommandSpec::new("eletrica.familia.definir", "Family Properties", run_familia_definir)
-            .params("{bloco? (default: the block being edited), categoria?: NONE | ELECTRICAL_FIXTURE | LIGHTING_FIXTURE | LIGHTING_DEVICE | DATA_DEVICE | FIRE_SECURITY_DEVICE | ELECTRICAL_EQUIPMENT | TELECOM_ENCLOSURE | JUNCTION_BOX, dominio?: POWER | DATA_TELECOM | FIRE_SECURITY | INFRA, refAltura?: LOW | MEDIUM | HIGH | CEILING | FLOOR | FIXED, cotaFixa?: m, caixa?: NONE | 4X2 | 4X4 | OCTAGONAL | PULL_15X15 | PULL_20X20 | PULL_30X30, potencia?: VA | null, fp?: 0-1 | null, teclas?: 1-3, classeDemanda?: ILUM_TUG | AQUECIMENTO | AR | MOTORES | ELETRODOMESTICOS | FATOR_MANUAL | null, fatorDemanda?: 0-1 | null (null: automatic, from the utility's table), legenda?: text (name in the symbol legend), descMaterial?: text (description in the materials list), remover?: bool} → the family"),
+            .params("{bloco? (default: the block being edited), categoria?: NONE | ELECTRICAL_FIXTURE | LIGHTING_FIXTURE | LIGHTING_DEVICE | DATA_DEVICE | FIRE_SECURITY_DEVICE | ELECTRICAL_EQUIPMENT | TELECOM_ENCLOSURE | JUNCTION_BOX, dominio?: POWER | DATA_TELECOM | FIRE_SECURITY | INFRA, refAltura?: LOW | MEDIUM | HIGH | CEILING | FLOOR | FIXED, cotaFixa?: m, caixa?: NONE | 4X2 | 4X4 | OCTAGONAL | PULL_15X15 | PULL_20X20 | PULL_30X30, potencia?: VA | null, fp?: 0-1 | null, teclas?: 1-3, classeDemanda?: ILUM_TUG | AQUECIMENTO | AR | MOTORES | ELETRODOMESTICOS | FATOR_MANUAL | null, fatorDemanda?: 0-1 | null (null: automatic, from the utility's table), legenda?: text (name in the symbol legend), descMaterial?: text (description in the materials list), tensao?: V | null (default value of TENSAO; null: the board's), remover?: bool} → the family"),
         CommandSpec::new("eletrica.familia.geometria", "Family Base Geometry", run_familia_geometria)
             .params("{forma: tomada | comando | luminaria | contorno4x2 | contorno4x4} → inserts it into the block being edited: {entidades}")
             .enabled(no_editor_de_blocos),
+        CommandSpec::new("eletrica.ponto.tensao", "Point Voltage", run_ponto_tensao)
+            .params("{pontos: [hex], tensao: V | \"220V\" | null (null or \"QUADRO\": the family's, or the board's)} → writes TENSAO on the points (attribute, or XDATA when the block has none): {pontos, tensao}"),
         CommandSpec::new("eletrica.familia.atributos", "Family Attributes", run_familia_atributos)
             .params("{categoria? (default: the family's)} → creates the standard ATTDEFs missing from the block being edited: {criados}")
             .enabled(no_editor_de_blocos),
@@ -2576,9 +2578,17 @@ fn run_familia_definir(s: &mut Session, p: &Value) -> Result<Value> {
         if let Some(v) = p.get("teclas").filter(|v| !v.is_null()) {
             f.teclas = v.as_u64().and_then(|n| u8::try_from(n).ok()).ok_or_else(|| bad(CMD, "`teclas` must be from 1 to 3"))?;
         }
+        if let Some(v) = p.get("tensao") {
+            f.tensao = tensao_de(CMD, v)?;
+        }
         Some(f)
     };
     ele::familia::gravar(s.doc_mut()?, &bloco, familia.as_ref()).map_err(|e| bad(CMD, e))?;
+    // A tensão padrão é o valor inicial do TENSAO: no bloco em edição, o ATTDEF acompanha.
+    if em_edicao && p.get("tensao").is_some() {
+        let texto = familia.as_ref().and_then(|f| f.tensao).map_or(String::new(), |v| format!("{}V", ele::ponto::br(v)));
+        ele::biblioteca::definir_padrao_do_atributo(s.doc_mut()?, "TENSAO", &texto);
+    }
     // No editor, o desenho de trás recebe junto: a família não depende de salvar a geometria.
     if let Some(b) = s.state_mut()?.block_edit.as_mut() {
         ele::familia::gravar(std::sync::Arc::make_mut(&mut b.host.doc), &bloco, familia.as_ref()).map_err(erro)?;
@@ -2602,8 +2612,41 @@ fn run_familia_atributos(s: &mut Session, p: &Value) -> Result<Value> {
         None => ele::familia::ler(s.doc()?, &bloco).map(|f| f.categoria).ok_or_else(|| bad(CMD, "the block has no family yet: give `categoria`"))?,
     };
     let m = metros(s)?;
-    let n = ele::biblioteca::gerar_atributos(s.doc_mut()?, categoria, m).map_err(|e| bad(CMD, e))?;
+    let tensao = ele::familia::ler(s.doc()?, &bloco).and_then(|f| f.tensao);
+    let n = ele::biblioteca::gerar_atributos(s.doc_mut()?, categoria, m, tensao).map_err(|e| bad(CMD, e))?;
     Ok(json!({ "criados": n }))
+}
+
+/// Uma tensão em V: número (127), texto ("220V", "127 V") ou `null`/"QUADRO" (a do quadro). De 1 a 1000 V.
+fn tensao_de(cmd: &str, v: &Value) -> Result<Option<f64>> {
+    let valor = match v {
+        Value::Null => return Ok(None),
+        Value::Number(n) => n.as_f64(),
+        Value::String(t) if t.trim().is_empty() || t.trim().eq_ignore_ascii_case("QUADRO") => return Ok(None),
+        Value::String(t) => ele::ponto::numero(t),
+        _ => None,
+    };
+    valor
+        .filter(|x| x.is_finite() && *x > 0.0 && *x <= 1000.0)
+        .map(Some)
+        .ok_or_else(|| bad(cmd, "`tensao` must be a voltage from 1 to 1000 V, or null (the board's)"))
+}
+
+fn run_ponto_tensao(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "eletrica.ponto.tensao";
+    let hs = handles(CMD, p, "pontos")?;
+    let tensao = tensao_de(CMD, p.get("tensao").ok_or_else(|| bad(CMD, "`tensao` (V or null) is required"))?)?;
+    let texto = tensao.map(|v| format!("{}V", ele::ponto::br(v)));
+    for h in &hs {
+        if ele::ponto::ler_ponto(s.doc()?, *h).is_none() {
+            return Err(bad(CMD, format!("the object {} is not an electrical point", h.hex())));
+        }
+    }
+    for h in &hs {
+        // No atributo TENSAO, se o bloco tem; senão, no XDATA. Vazio: a da família ou a do quadro.
+        ele::editar::definir(s.doc_mut()?, *h, ele::ponto::TAGS_TENSAO, texto.as_deref()).map_err(erro)?;
+    }
+    Ok(json!({ "pontos": hs.len(), "tensao": tensao }))
 }
 
 fn run_familia_conector(s: &mut Session, p: &Value) -> Result<Value> {

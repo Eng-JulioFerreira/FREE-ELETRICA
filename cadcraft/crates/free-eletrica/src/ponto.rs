@@ -360,7 +360,8 @@ impl PontoEletrico {
             tipo,
             tipo_informado: tipo_attr.is_some() || familia.is_some(),
             potencia: valor(TAGS_POTENCIA).and_then(potencia_va).or_else(|| familia.as_ref().and_then(|f| f.potencia)),
-            tensao: valor(TAGS_TENSAO).and_then(numero),
+            // Sem TENSAO (vazia, ausente ou ilegível), a da família; sem ela, o circuito usa a do quadro.
+            tensao: valor(TAGS_TENSAO).and_then(numero).filter(|v| v.is_finite() && *v > 0.0).or_else(|| familia.as_ref().and_then(|f| f.tensao)),
             fases: valor(TAGS_FASES).and_then(fases),
             // Versões anteriores mostravam o circuito do ponto de luz entre traços (-1-): o circuito é o de dentro.
             circuito: valor(TAGS_CIRCUITO).map(|c| c.trim().trim_matches('-').trim().to_string()),
@@ -435,8 +436,13 @@ impl PontoEletrico {
                 if self.potencia.is_none() {
                     v.push("ponto de carga sem POTENCIA".into());
                 }
-                if self.tensao.is_none() {
-                    v.push("ponto sem TENSAO: usando a do sistema das configurações".into());
+                // Um texto ilegível (vazio não conta) cai na tensão da família ou na do quadro, mas vale avisar.
+                let ilegivel =
+                    self.valor(TAGS_TENSAO).map(str::trim).filter(|t| !t.is_empty() && numero(t).filter(|v| v.is_finite() && *v > 0.0).is_none());
+                if let Some(t) = ilegivel {
+                    v.push(format!("TENSAO \"{t}\" inválida: usando a da família ou a do quadro (ex.: 127V, 220V)"));
+                } else if self.tensao.is_none() {
+                    v.push("ponto sem TENSAO: usando a do quadro".into());
                 }
                 if self.fases.is_none() {
                     v.push("ponto sem NUMERO_FASES: considerado monofásico".into());

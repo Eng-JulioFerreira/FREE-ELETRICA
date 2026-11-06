@@ -1932,18 +1932,18 @@ fn utilitarios_do_editor_de_blocos() {
     // Atributos: os da categoria, sem duplicar; ALTURA fica visível e vazio.
     use familia::FamilyCategory as C;
     let mut d = metros();
-    let n = biblioteca::gerar_atributos(&mut d, C::Interruptor, 1.0).unwrap();
+    let n = biblioteca::gerar_atributos(&mut d, C::Interruptor, 1.0, None).unwrap();
     assert!(n >= 5);
-    assert_eq!(biblioteca::gerar_atributos(&mut d, C::Interruptor, 1.0).unwrap(), 0);
+    assert_eq!(biblioteca::gerar_atributos(&mut d, C::Interruptor, 1.0, None).unwrap(), 0);
     let tags: Vec<String> = d.model.iter().filter_map(|e| if let EntityKind::AttDef(a) = &e.kind { Some(a.tag.clone()) } else { None }).collect();
     for t in ["CIRCUITO", "COMANDO", "ALTURA"] {
         assert!(tags.iter().any(|x| x == t), "{t}");
     }
     assert!(d.model.iter().any(|e| matches!(&e.kind, EntityKind::AttDef(a) if a.tag == "ALTURA" && !a.invisible && a.text.value.is_empty())));
-    assert!(biblioteca::gerar_atributos(&mut d, C::Nenhum, 1.0).is_err());
+    assert!(biblioteca::gerar_atributos(&mut d, C::Nenhum, 1.0, None).is_err());
     for c in C::TODAS.into_iter().filter(|c| *c != C::Nenhum) {
         let mut d = metros();
-        assert!(biblioteca::gerar_atributos(&mut d, c, 1.0).unwrap() >= 2, "{c:?}");
+        assert!(biblioteca::gerar_atributos(&mut d, c, 1.0, None).unwrap() >= 2, "{c:?}");
         assert!(d.model.iter().any(|e| matches!(&e.kind, EntityKind::AttDef(a) if a.tag == "ALTURA")), "{c:?}");
     }
 }
@@ -4281,4 +4281,70 @@ fn legenda_separada_por_disciplina() {
     // Inserir de novo a mesma disciplina só move.
     assert_eq!(legenda::inserir(&mut d, &an, [30.0, 0.0], 1.0, Some(D::Telecom)).unwrap(), ht);
     assert_eq!(legenda::legendas(&d).len(), 2);
+}
+
+#[test]
+fn familia_nova_nasce_com_tensao_e_o_ponto_cai_no_quadro_sem_ela() {
+    use familia::FamilyCategory as C;
+    let setup = Setup::default();
+    let tags = |d: &Drawing| -> Vec<(String, String)> {
+        d.model.iter().filter_map(|e| if let EntityKind::AttDef(a) = &e.kind { Some((a.tag.clone(), a.text.value.clone())) } else { None }).collect()
+    };
+    // As categorias de carga e de comando nascem com TENSAO, LEGENDA e DESC_MATERIAL; a tensão padrão da família
+    // é o valor inicial do TENSAO.
+    for c in [C::PontoForca, C::Luminaria, C::Interruptor, C::Especial] {
+        let mut d = metros();
+        biblioteca::gerar_atributos(&mut d, c, 1.0, Some(220.0)).unwrap();
+        let t = tags(&d);
+        assert!(t.iter().any(|(k, v)| k == "TENSAO" && v == "220V"), "{c:?}: {t:?}");
+        for k in ["CIRCUITO", "POTENCIA", "ALTURA", "LEGENDA", "DESC_MATERIAL"] {
+            assert!(t.iter().any(|(x, _)| x == k), "{c:?} sem {k}");
+        }
+    }
+    // Idempotente: um bloco antigo, sem TENSAO, ganha só o que falta.
+    let mut d = metros();
+    biblioteca::gerar_atributos(&mut d, C::PontoForca, 1.0, None).unwrap();
+    let tensao = d.model.iter().find(|e| matches!(&e.kind, EntityKind::AttDef(a) if a.tag == "TENSAO")).unwrap().handle;
+    d.model.remove(tensao);
+    assert_eq!(biblioteca::gerar_atributos(&mut d, C::PontoForca, 1.0, None).unwrap(), 1, "só o TENSAO");
+    assert_eq!(tags(&d).iter().filter(|(k, _)| k == "TENSAO").count(), 1);
+    assert!(biblioteca::definir_padrao_do_atributo(&mut d, "TENSAO", "127V"));
+    assert!(tags(&d).iter().any(|(k, v)| k == "TENSAO" && v == "127V"));
+
+    // A família guarda a tensão padrão; fora de 1 a 1000 V é recusada.
+    let mut d = metros();
+    biblioteca::garantir_base(&mut d, &setup, 1.0);
+    let mut f = familia::Familia::da_categoria(C::PontoForca);
+    f.tensao = Some(220.0);
+    // Uma família própria desenhada antes, sem o atributo TENSAO.
+    let mut b = Block::new("MINHA-TUG");
+    for e in d.blocks["TOM-SIM-BAIXA"].entities.iter() {
+        if !matches!(&e.kind, EntityKind::AttDef(a) if a.tag == "TENSAO") {
+            b.entities.push((**e).clone());
+        }
+    }
+    d.blocks.insert("MINHA-TUG".into(), Arc::new(b));
+    familia::gravar(&mut d, "MINHA-TUG", Some(&f)).unwrap();
+    assert_eq!(familia::ler(&d, "MINHA-TUG").unwrap().tensao, Some(220.0));
+    f.tensao = Some(5000.0);
+    assert!(familia::gravar(&mut d, "MINHA-TUG", Some(&f)).is_err());
+    // Um ponto sem o atributo TENSAO: vale a da família.
+    let q = qd(&mut d, 0.0, 0.0);
+    let h = biblioteca::inserir_ponto(&mut d, "MINHA-TUG", [3.0, 0.0], 0.0, &[("CIRCUITO".into(), "1".into())], &setup).unwrap();
+    assert_eq!(ponto::ler_ponto(&d, h).unwrap().tensao, Some(220.0));
+    // A tensão gravada no ponto vale sobre a da família; vazia, volta a ela.
+    editar::definir(&mut d, h, ponto::TAGS_TENSAO, Some("127V")).unwrap();
+    assert_eq!(ponto::ler_ponto(&d, h).unwrap().tensao, Some(127.0));
+    // Ilegível ou vazia num bloco antigo, sem família: sem pânico; o circuito usa a do quadro (ou a do sistema),
+    // com aviso.
+    let velho = inserir(&mut d, "VELHO", 6.0, 0.0, &[("TIPO_PONTO", "TUG"), ("POTENCIA", "100VA"), ("TENSAO", "abc"), ("CIRCUITO", "2")]);
+    assert_eq!(ponto::ler_ponto(&d, velho).unwrap().tensao, None);
+    let avisos = ponto::ler_ponto(&d, velho).unwrap().avisos();
+    assert!(avisos.iter().any(|a| a.contains("TENSAO \"abc\" inválida")), "{avisos:?}");
+    let vazio = inserir(&mut d, "VELHO2", 7.0, 0.0, &[("TIPO_PONTO", "TUG"), ("POTENCIA", "100VA"), ("TENSAO", ""), ("CIRCUITO", "2")]);
+    assert_eq!(ponto::ler_ponto(&d, vazio).unwrap().tensao, None);
+    let r = quadro::rotear(&d, &analisar(&d), &setup, q).unwrap();
+    let l2 = r.linhas.iter().find(|l| l.circuito.id == "2").unwrap();
+    assert!(l2.tensao > 0.0 && l2.escolha.secao.is_some(), "{l2:?}");
+    assert!(l2.escolha.avisos.iter().any(|a| a.contains("sem tensão nos pontos")), "{:?}", l2.escolha.avisos);
 }

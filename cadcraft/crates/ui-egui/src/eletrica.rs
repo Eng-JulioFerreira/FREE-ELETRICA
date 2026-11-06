@@ -2996,9 +2996,41 @@ fn campo_de_texto(ui: &mut egui::Ui, chave: egui::Id, gravado: &str, largura: f3
 }
 
 /// O nome na legenda e a descrição na lista de materiais de um ponto. Vazio volta ao texto da família.
+/// As tensões oferecidas nas escolhas rápidas (V).
+const TENSOES_RAPIDAS: [f64; 3] = [127.0, 220.0, 380.0];
+
 fn campos_de_documentacao(ui: &mut egui::Ui, p: &PontoEletrico, acoes: &mut Vec<Acao>) {
     let h = p.handle.hex();
     egui::Grid::new("ele-atributos-documentacao").num_columns(2).spacing(vec2(12.0, 4.0)).show(ui, |ui| {
+        // A tensão do ponto: as rápidas ou um valor digitado; vazio volta à da família ou à do quadro.
+        if p.tipo.e_carga() || p.tipo == TipoPonto::Interruptor {
+            ui.label("Tensão").on_hover_text("Grava o atributo TENSAO do ponto (ou o XDATA, se o bloco não tem o atributo)");
+            ui.horizontal(|ui| {
+                let propria = p.valor(ele::ponto::TAGS_TENSAO).is_some();
+                let texto = match (p.tensao, propria) {
+                    (Some(v), true) => format!("{} V", br(v)),
+                    (Some(v), false) => format!("{} V (da família)", br(v)),
+                    (None, _) => "Do quadro".to_string(),
+                };
+                egui::ComboBox::from_id_salt(("ele-ponto-tensao", p.handle)).selected_text(texto).width(170.0).show_ui(ui, |ui| {
+                    if ui.selectable_label(!propria, "Da família / do quadro").clicked() {
+                        acoes.push(Acao::Rodar("eletrica.ponto.tensao", json!({ "pontos": [h], "tensao": null })));
+                    }
+                    for v in TENSOES_RAPIDAS {
+                        if ui.selectable_label(propria && p.tensao.is_some_and(|x| (x - v).abs() < 1e-6), format!("{} V", br(v))).clicked() {
+                            acoes.push(Acao::Rodar("eletrica.ponto.tensao", json!({ "pontos": [h], "tensao": v })));
+                        }
+                    }
+                });
+                let atual = if propria { p.tensao.map_or(String::new(), br) } else { String::new() };
+                if let Some(v) = campo_de_texto(ui, egui::Id::new(("ele-ponto-tensao-texto", p.handle)), &atual, 60.0) {
+                    let valor = if v.trim().is_empty() { Value::Null } else { json!(v) };
+                    acoes.push(Acao::Rodar("eletrica.ponto.tensao", json!({ "pontos": [h], "tensao": valor })));
+                }
+                ui.label("V");
+            });
+            ui.end_row();
+        }
         ui.label("Nome na Legenda").on_hover_text("Aparece na Legenda de Símbolos da prancha. Vazio: o da família");
         if let Some(v) = campo_de_texto(ui, egui::Id::new(("ele-ponto-legenda", p.handle)), p.legenda.as_deref().unwrap_or(""), 340.0) {
             acoes.push(Acao::Rodar("eletrica.ponto.documentacao", json!({ "pontos": [h], "legenda": v })));
@@ -4115,6 +4147,19 @@ fn propriedades_da_familia(ui: &mut egui::Ui, t: &Tokens, nome: &str, familia: O
     if ui.add(campo(&mut fp, 0.0..=1.0, 0.01, 2, "")).changed() {
         enviar(acoes, "fp", if fp > 0.0 { json!(fp) } else { Value::Null });
     }
+    linha(ui, "Tensão Padrão (V)");
+    let texto = f.tensao.map_or("Definida pelo Quadro".to_string(), |v| format!("{} V", br(v)));
+    egui::ComboBox::from_id_salt("ele-familia-tensao").selected_text(texto).width(largura).show_ui(ui, |ui| {
+        if ui.selectable_label(f.tensao.is_none(), "Definida pelo Quadro").on_hover_text("O atributo TENSAO nasce vazio: vale a do quadro").clicked()
+        {
+            enviar(acoes, "tensao", Value::Null);
+        }
+        for v in TENSOES_RAPIDAS {
+            if ui.selectable_label(f.tensao.is_some_and(|x| (x - v).abs() < 1e-6), format!("{} V", br(v))).clicked() {
+                enviar(acoes, "tensao", json!(v));
+            }
+        }
+    });
     linha(ui, "Nº de teclas/pontos");
     let mut teclas = f.teclas;
     if ui.add(egui::DragValue::new(&mut teclas).range(1..=3)).changed() {

@@ -28,6 +28,7 @@ const CHAVE_CLASSE: &str = "demand_class";
 const CHAVE_FATOR: &str = "demand_factor";
 const CHAVE_LEGENDA: &str = "legend_name";
 const CHAVE_DESC_MATERIAL: &str = "material_desc";
+const CHAVE_TENSAO: &str = "voltage_v";
 /// Bloco de fábrica que o projetista excluiu: a preparação do desenho não o recria.
 const CHAVE_EXCLUIDA: &str = "factory_block_deleted";
 /// O tamanho máximo dos textos da família: um grupo do XDATA tem limite.
@@ -287,6 +288,8 @@ pub struct Familia {
     pub legenda: String,
     /// A descrição comercial na Lista de Materiais.
     pub desc_material: String,
+    /// Tensão padrão dos pontos (V): o valor inicial do atributo TENSAO. `None`: a do quadro.
+    pub tensao: Option<f64>,
 }
 
 impl Default for Familia {
@@ -316,6 +319,7 @@ impl Familia {
             fator_demanda: None,
             legenda: String::new(),
             desc_material: String::new(),
+            tensao: None,
         }
     }
 
@@ -338,6 +342,11 @@ impl Familia {
             && !(f.is_finite() && (0.0..=1.0).contains(&f))
         {
             return Err(format!("fator de demanda {f} inválido: use de 0,00 a 1,00"));
+        }
+        if let Some(v) = self.tensao
+            && !(v.is_finite() && v > 0.0 && v <= 1000.0)
+        {
+            return Err(format!("tensão {v} V inválida: use de 1 a 1000 V"));
         }
         if !(1..=3).contains(&self.teclas) {
             return Err(format!("{} teclas: use de 1 a 3", self.teclas));
@@ -380,6 +389,7 @@ fn de_xdata(x: &[RawTag]) -> Option<Familia> {
         fator_demanda: num(CHAVE_FATOR),
         legenda: valor(CHAVE_LEGENDA).unwrap_or_default().to_string(),
         desc_material: valor(CHAVE_DESC_MATERIAL).unwrap_or_default().to_string(),
+        tensao: num(CHAVE_TENSAO),
     };
     // Um arquivo editado à mão não derruba a leitura: volta ao natural da categoria.
     Some(if f.validar().is_ok() { f } else { base })
@@ -396,7 +406,7 @@ pub fn gravar(doc: &mut Drawing, bloco: &str, familia: Option<&Familia>) -> Resu
     let foreign = Arc::make_mut(&mut doc.foreign);
     let registro: &mut ForeignExtra = foreign.records.entry(chave(bloco)).or_default();
     let texto = |v: f64| v.to_string();
-    let pares: [(&str, Option<String>); 13] = [
+    let pares: [(&str, Option<String>); 14] = [
         (crate::rota::CHAVE_ESQUEMA, familia.map(|_| crate::rota::VERSAO_ESQUEMA.to_string())),
         (CHAVE_DOMINIO, familia.map(|f| f.dominio.codigo().to_string())),
         (CHAVE_CATEGORIA, familia.map(|f| f.categoria.codigo().to_string())),
@@ -410,6 +420,7 @@ pub fn gravar(doc: &mut Drawing, bloco: &str, familia: Option<&Familia>) -> Resu
         (CHAVE_FATOR, familia.and_then(|f| f.fator_demanda).map(texto)),
         (CHAVE_LEGENDA, familia.map(|f| f.legenda.trim().to_string()).filter(|t| !t.is_empty())),
         (CHAVE_DESC_MATERIAL, familia.map(|f| f.desc_material.trim().to_string()).filter(|t| !t.is_empty())),
+        (CHAVE_TENSAO, familia.and_then(|f| f.tensao).map(texto)),
     ];
     for (k, v) in &pares {
         xdata::gravar(&mut registro.xdata, k, v.as_deref());

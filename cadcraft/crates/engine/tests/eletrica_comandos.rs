@@ -1704,3 +1704,56 @@ fn protecao_geral_dps_metodo_e_criterio_por_comandos() {
     assert_eq!(rot["linhas"][0]["escolha"]["disjuntor"].as_f64(), Some(10.0));
     assert!(s.execute("eletrica.dimensionar", &json!({ "quadro": q, "criterioDisjuntor": "outro" })).is_err());
 }
+
+#[test]
+fn tensao_na_familia_nova_e_no_ponto_por_comandos() {
+    let _setup = trava_setup();
+    let mut s = Session::new();
+    let mut d = Drawing::new_metric();
+    d.header.set_i64("INSUNITS", 6);
+    s.open_drawing(d, "Tensao", None);
+    s.execute("eletrica.bootstrap", &json!({})).unwrap();
+    let attdefs = |s: &Session| -> Vec<(String, String)> {
+        s.doc()
+            .unwrap()
+            .model
+            .iter()
+            .filter_map(|e| if let EntityKind::AttDef(a) = &e.kind { Some((a.tag.clone(), a.text.value.clone())) } else { None })
+            .collect()
+    };
+    // Uma família nova de tomada: os atributos padrão já trazem o TENSAO; gerar de novo não duplica.
+    s.execute("bedit", &json!({ "name": "MINHA-TOMADA", "create": true })).unwrap();
+    s.execute("eletrica.familia.definir", &json!({ "categoria": "ELECTRICAL_FIXTURE", "tensao": 220 })).unwrap();
+    s.execute("eletrica.familia.geometria", &json!({ "forma": "tomada" })).unwrap();
+    s.execute("eletrica.familia.atributos", &json!({})).unwrap();
+    assert!(attdefs(&s).iter().any(|(k, v)| k == "TENSAO" && v == "220V"), "{:?}", attdefs(&s));
+    assert_eq!(s.execute("eletrica.familia.atributos", &json!({})).unwrap()["criados"], 0, "idempotente");
+    // A tensão padrão da família muda o valor inicial do ATTDEF; null volta à do quadro (vazio).
+    s.execute("eletrica.familia.definir", &json!({ "tensao": "127V" })).unwrap();
+    assert!(attdefs(&s).iter().any(|(k, v)| k == "TENSAO" && v == "127V"));
+    s.execute("eletrica.familia.definir", &json!({ "tensao": null })).unwrap();
+    assert!(attdefs(&s).iter().any(|(k, v)| k == "TENSAO" && v.is_empty()));
+    assert!(s.execute("eletrica.familia.definir", &json!({ "tensao": 5000 })).is_err());
+    assert!(s.execute("eletrica.familia.definir", &json!({ "tensao": "muita" })).is_err());
+    s.execute("eletrica.familia.definir", &json!({ "tensao": 220 })).unwrap();
+    s.execute("elefamilia_conector", &json!({ "ponto": [0.0, 0.0] })).unwrap();
+    s.execute("bclose", &json!({ "save": true })).unwrap();
+    assert_eq!(s.execute("eletrica.familia.ler", &json!({ "bloco": "MINHA-TOMADA" })).unwrap()["tensao"], 220.0);
+
+    // O ponto inserido nasce com a tensão da família; o inspetor troca a de um ponto, e null volta à da família.
+    let h = s.execute("eleponto", &json!({ "bloco": "MINHA-TOMADA", "pontos": [[2.0, 0.0]] })).unwrap()["pontos"][0].as_str().unwrap().to_string();
+    let tensao = |s: &mut Session, h: &str| {
+        s.execute("eletrica.analisar", &json!({})).unwrap()["pontos"].as_array().unwrap().iter().find(|p| p["handle"] == h).unwrap()["tensao"].clone()
+    };
+    assert_eq!(tensao(&mut s, &h), 220.0);
+    s.execute("eletrica.ponto.tensao", &json!({ "pontos": [h], "tensao": 127 })).unwrap();
+    assert_eq!(tensao(&mut s, &h), 127.0);
+    s.execute("eletrica.ponto.tensao", &json!({ "pontos": [h], "tensao": "QUADRO" })).unwrap();
+    assert_eq!(tensao(&mut s, &h), 220.0, "vazio: a da família");
+    // Um bloco sem atributo TENSAO recebe no XDATA; entrada ruim é recusada.
+    let q = s.execute("eleponto", &json!({ "bloco": "QDG", "pontos": [[0.0, 5.0]] })).unwrap()["pontos"][0].as_str().unwrap().to_string();
+    assert!(s.execute("eletrica.ponto.tensao", &json!({ "pontos": [h], "tensao": -1 })).is_err());
+    assert!(s.execute("eletrica.ponto.tensao", &json!({ "pontos": [h] })).is_err());
+    assert!(s.execute("eletrica.ponto.tensao", &json!({ "pontos": ["FFFFF"], "tensao": 127 })).is_err());
+    let _ = q;
+}

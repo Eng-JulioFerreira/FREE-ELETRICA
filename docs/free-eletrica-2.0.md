@@ -413,3 +413,12 @@ Ajustes de interface e de prancha:
   delas (esquema, cabo, método, grupo DR, curva, fases, seção e disjuntor, cabo e quantidade de telecom, altura, tipo, cota e
   diâmetro de eletroduto) vale para todas.
 - Identificações de versões anteriores (`D-01`) continuam valendo; **Numerar e vincular** com renumerar passa todas para porta.
+
+## Tensão nos blocos e atributos padrão das famílias
+
+- **Atributos padrão:** toda família nova nasce com `CIRCUITO`, `POTENCIA`, `TENSAO`, `FP`, `COMANDO`, `ALTURA`, `LEGENDA` e
+  `DESC_MATERIAL` conforme a categoria. **Gerar Atributos Padrão** só acrescenta os que faltam, sem duplicar.
+- **Tensão Padrão (V)** no painel da família: 127, 220, 380 ou **Definida pelo Quadro** (`voltage_v` no `BLOCK_RECORD` e o
+  valor padrão do ATTDEF `TENSAO`). Cada ponto inserido herda a tensão da família.
+- **Tensão** no inspetor de um ponto selecionado grava o `TENSAO` dele (`eletrica.ponto.tensao`); vazio volta à família ou ao quadro.
+- **Sem travar:** um `TENSAO` vazio ou ilegível cai na tensão da família e, sem ela, na do quadro (ou do Setup), com aviso.
