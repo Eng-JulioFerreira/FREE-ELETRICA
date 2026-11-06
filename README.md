@@ -7,16 +7,18 @@ simbologia da NBR 5444) e de **cabeamento estruturado / telecomunicações** (AB
 [CADCraft](https://github.com/storytold/cadcraft): você desenha na planta, e o programa calcula, dimensiona e documenta
 a prancha. Software livre, em português.
 
-## Baixar para Windows
+## Baixar (Windows e Linux)
 
-**[Baixar a versão mais recente](https://github.com/Eng-JulioFerreira/Free-Eletrica/releases/latest)**
+**[Página da versão mais recente](https://github.com/Eng-JulioFerreira/Free-Eletrica/releases/latest)**, com os pacotes
+das duas plataformas. Versão atual: **v0.3.0** ([novidades](CHANGELOG.md)).
 
-1. Baixe o arquivo `.zip` da página acima.
-2. Extraia em qualquer pasta.
-3. Clique duas vezes em `FreeEletrica.exe`.
+| Sistema | Arquivo | Como usar |
+| :--- | :--- | :--- |
+| **Windows** 10 e 11, 64 bits | [`FreeEletrica-v0.3.0-win64.zip`](https://github.com/Eng-JulioFerreira/Free-Eletrica/releases/download/v0.3.0/FreeEletrica-v0.3.0-win64.zip) | Extraia em qualquer pasta e clique duas vezes em `FreeEletrica.exe`. |
+| **Linux** x86_64 (Ubuntu 22.04 ou mais novo, e distribuições equivalentes) | [`FreeEletrica-v0.3.0-x86_64.AppImage`](https://github.com/Eng-JulioFerreira/Free-Eletrica/releases/download/v0.3.0/FreeEletrica-v0.3.0-x86_64.AppImage) | Marque como executável (`chmod +x FreeEletrica-v0.3.0-x86_64.AppImage`) e abra. |
 
-Não precisa instalar nada: nem Rust, nem compilador, nem scripts. Funciona no Windows 10 e 11, 64 bits. Na primeira vez,
-o Windows pode avisar que o aplicativo é desconhecido: clique em **Mais informações** e **Executar assim mesmo**. Veja o
+Não precisa instalar nada: nem Rust, nem compilador, nem scripts. No Windows, na primeira vez, pode aparecer o aviso de
+aplicativo desconhecido: clique em **Mais informações** e **Executar assim mesmo**. Veja o
 [guia de instalação](docs/INSTALL.md).
 
 ## Principais recursos
