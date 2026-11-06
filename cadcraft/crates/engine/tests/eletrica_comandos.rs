@@ -1624,6 +1624,15 @@ fn telecom_por_comandos() {
     // ELEREGEN refaz a tabela do rack.
     let reg = s.execute("eleregen", &json!({})).unwrap();
     assert_eq!(reg["racks"], 1);
+    // O cabo e a quantidade de um ponto, trocados no quadro VDI: valem no próximo cálculo.
+    s.execute("eletrica.telecom.ponto", &json!({ "pontos": [b], "cabo": "Fibra óptica N4", "quantidade": 2 })).unwrap();
+    let t = s.execute("eletrica.telecom", &json!({})).unwrap();
+    let e = t["racks"][0]["enlaces"].as_array().unwrap().iter().find(|e| e["ponto"] == b.as_str()).unwrap().clone();
+    assert_eq!((e["cabo"].as_str(), e["quantidade"].as_u64()), (Some("Fibra óptica N4"), Some(2)));
+    assert!(s.execute("eletrica.telecom.ponto", &json!({ "pontos": [b], "cabo": "Não existe" })).is_err());
+    assert!(s.execute("eletrica.telecom.ponto", &json!({ "pontos": [b], "quantidade": 0 })).is_err());
+    assert!(s.execute("eletrica.telecom.ponto", &json!({ "pontos": [rack], "quantidade": 1 })).is_err(), "o rack não é ponto");
+    assert!(s.execute("eletrica.telecom.ponto", &json!({ "pontos": [b] })).is_err());
 }
 
 #[test]

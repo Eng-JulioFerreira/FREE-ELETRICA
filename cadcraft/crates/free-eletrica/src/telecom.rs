@@ -306,6 +306,39 @@ pub fn vincular(doc: &mut Drawing, setup: &Setup, rack: Option<Handle>, alvos: O
     Ok(vinculo)
 }
 
+/// Troca o cabo (um nome do catálogo de telecom) e a quantidade de cabos (1 a 48) dos pontos. `None` não mexe.
+pub fn definir_cabo(doc: &mut Drawing, setup: &Setup, pontos: &[Handle], cabo: Option<&str>, quantidade: Option<u32>) -> Result<(), String> {
+    let analise = crate::analisar(doc);
+    for h in pontos {
+        if !analise.ponto(*h).is_some_and(|p| Disciplina::Telecom.e_ponto(p)) {
+            return Err(format!("o objeto {} não é um ponto de telecom", h.hex()));
+        }
+    }
+    let cabo = match cabo.map(str::trim) {
+        Some(c) => Some(
+            setup
+                .cabos_telecom
+                .iter()
+                .find(|x| x.nome.eq_ignore_ascii_case(c))
+                .map(|x| x.nome.clone())
+                .ok_or_else(|| format!("o cabo \"{c}\" não está no catálogo de telecom"))?,
+        ),
+        None => None,
+    };
+    if quantidade.is_some_and(|q| !(1..=MAXIMO_DE_CABOS).contains(&q)) {
+        return Err(format!("quantidade de cabos de 1 a {MAXIMO_DE_CABOS}"));
+    }
+    for h in pontos {
+        if let Some(c) = &cabo {
+            crate::editar::definir(doc, *h, TAGS_CABO, Some(c))?;
+        }
+        if let Some(q) = quantidade {
+            crate::editar::definir(doc, *h, TAGS_QTD, Some(&q.to_string()))?;
+        }
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------- rotear e dimensionar
 
 /// A situação de um enlace.

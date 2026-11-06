@@ -376,3 +376,25 @@ Ajustes de interface e de prancha:
 - **Disciplinas (`disciplina.rs`):** Elétrica (radial), Telecom (estrela) e Alarme de incêndio (NBR 17240, laço classe A ou B)
   dizem qual é a central, quais pontos são de cada uma e por quais blocos um cabo passa. O alarme fica preparado, sem blocos nem
   interface ainda.
+
+## Auditoria técnica: proteção geral, métodos de instalação, DR, quadro DIN, disciplinas e materiais
+
+- **Proteção geral e DPS por quadro:** disjuntor geral e seção do alimentador travados à mão (`DISJ_GERAL`, `SECAO_GERAL`), conferidos
+  contra Ib ≤ In ≤ Iz sem impedir; DPS opcional (`USAR_DPS`), classe I, II ou I+II (`CLASSE_DPS`) e disjuntor exclusivo antes dele
+  (`DISJ_DPS`). O unifilar e a vista frontal seguem: sem DPS, nenhum; com o disjuntor dele, em série antes.
+- **Critério do disjuntor:** o menor acima de Ib (padrão) ou o maior até o Iz do cabo escolhido, nas Configurações e no
+  Dimensionar projeto.
+- **Métodos de instalação:** A1, A2, B1, B2, C e D (tabelas 36 e 37) e E e F (tabelas 38 e 39), no quadro (`METODO_QUADRO`), por
+  circuito (`METODO.<circuito>`) e nas Configurações. No F as capacidades começam em 25 mm²; no D o FCT do solo e o FCA da tabela 44
+  ainda não são aplicados (aviso no quadro).
+- **Neutro e PE:** PE pela tabela 58 e neutro reduzido pela tabela 48 (só em 3F+N+T), na tag (`#50 N25 T25`), no diâmetro do
+  eletroduto, no PE compartilhado e nos materiais.
+- **Grupos de DR:** **+ Adicionar circuito...** em cada grupo, **Adicionar ao DR ▾** em cada circuito sem DR e a coluna **Grupo DR**
+  na tabela do Dimensionar projeto.
+- **Vista frontal:** trilho de 12, 16, 18 ou 24 módulos (`MODULOS_TRILHO`), barramento pente ou espinha de peixe
+  (`BARRAMENTO_FASE`), neutro e terra em cima e embaixo ou nas laterais (`BARRAMENTO_NT`).
+- **Disciplinas:** legenda elétrica (`ELELEGENDA`, `LEGENDA_SIMBOLOS_ELETRICA`) e de telecom (`TELELEGENDA`,
+  `LEGENDA_SIMBOLOS_TELECOM`); `TELEFIACAO` com a mini-barra das tags; cabo e quantidade de cada ponto no quadro VDI
+  (`eletrica.telecom.ponto`).
+- **Materiais:** disjuntores por polos, corrente e curva (inclusive o geral e o do DPS); DR, DPS, barramentos de neutro, terra e
+  das fases, e a caixa com a capacidade em módulos DIN.

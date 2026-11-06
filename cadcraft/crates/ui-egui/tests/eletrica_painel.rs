@@ -234,9 +234,26 @@ fn paleta_ferramentas_e_fluxo_completo() {
     h.state_mut().session.input(Input::Enter).unwrap();
     h.run_steps(3);
     // O cabeamento (NBR 14565): vincular, dimensionar, o quadro VDI acoplado, as tags e a tabela do rack.
-    for f in ["Cabeamento (NBR 14565)", "Numerar e vincular ao rack", "Dimensionar telecom...", "Tags de cabeamento", "Tabela do rack"] {
+    for f in [
+        "Cabeamento (NBR 14565)",
+        "Numerar e vincular ao rack",
+        "Dimensionar telecom...",
+        "Tags de cabeamento",
+        "Tabela do rack",
+        "Legenda de símbolos de telecom",
+    ] {
         h.get_by_label(f);
     }
+    // As tags de telecom têm a mesma mini-barra das de fiação.
+    h.get_by_label("Tags de cabeamento").click();
+    h.run_steps(3);
+    assert_eq!(h.state().session.running.as_ref().map(|r| r.id.as_str()), Some("telefiacao"));
+    assert!(
+        h.query_all_by_label("Com linha de chamada").count() + h.query_all_by_label("Direto no eletroduto").count() >= 1,
+        "a mini-barra das tags"
+    );
+    h.state_mut().session.input(Input::Cancel).unwrap();
+    h.run_steps(3);
     h.get_by_label("Quadro VDI / Rack...").click();
     h.run_steps(4);
     h.get_by_label("Quadro VDI / Rack");
@@ -354,6 +371,8 @@ fn paleta_ferramentas_e_fluxo_completo() {
     {
         h.get_by_label(campo);
     }
+    // A proteção geral, o DPS e a montagem também ficam aqui, recolhidos.
+    h.get_by_label("Proteção geral, DPS e montagem");
     for coluna in ["Descrição", "Esquema", "Pontos", "Potência (VA)", "Ib (A)", "Fase R (VA)", "Fases", "Grupo DR", "Cabo / disjuntor", "Situação"]
     {
         assert!(h.query_all_by_label(coluna).count() >= 1, "coluna {coluna}");
@@ -486,6 +505,33 @@ fn paleta_ferramentas_e_fluxo_completo() {
     let r = h.state_mut().run("eletrica.rotear", json!({})).unwrap();
     assert_eq!(r["linhas"][0]["grupoDr"], "IDR1", "{r}");
     h.get_by_label("Tirar do DR");
+    // Cada grupo adiciona um circuito com um clique; a tabela tem o grupo e o método de cada circuito.
+    assert!(h.query_all_by_label("+ Adicionar circuito...").count() >= 1);
+    for coluna in ["Método", "Grupo DR", "Critério do disjuntor"] {
+        assert!(h.query_all_by_label(coluna).count() >= 1, "{coluna}");
+    }
+    // A proteção geral, o DPS e a montagem do quadro.
+    h.get_by_label("Proteção geral, DPS e montagem do quadro").click();
+    h.run_steps(3);
+    for campo in [
+        "Disjuntor geral",
+        "Seção do alimentador",
+        "Disjuntor exclusivo de proteção do DPS",
+        "Método de instalação",
+        "Módulos por trilho DIN",
+        "Barramento das fases",
+        "Neutro e terra",
+    ] {
+        assert!(h.query_all_by_label(campo).count() >= 1, "{campo}");
+    }
+    h.get_by_label("Incluir DPS no Quadro").click();
+    h.run_steps(3);
+    let r = h.state_mut().run("eletrica.rotear", json!({})).unwrap();
+    assert_eq!(r["alimentador"]["dps"], false, "desmarcar tira o DPS do quadro");
+    h.state_mut().run("eletrica.quadro", json!({ "usarDps": null })).unwrap();
+    h.run_steps(3);
+    h.get_by_label("Proteção geral, DPS e montagem do quadro").click();
+    h.run_steps(3);
     // Calcular não grava; aparece o resultado, editável, e Aplicar grava.
     h.get_by_label("Calcular Dimensionamento").click();
     h.run_steps(3);

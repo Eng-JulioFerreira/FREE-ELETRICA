@@ -63,7 +63,7 @@ continuam sendo lidos.
 | :--- | :--- |
 | `BLOCK_RECORD` | `schema_ver`, `domain`, `category`, `height_ref`, `fixed_elevation_m`, `physical_box`, `power_va`, `power_factor`, `keys`, `demand_class`, `demand_factor` |
 | Ponto (`INSERT`) | Atributos do bloco, incluindo `TIPO_CARGA` e `FATOR_DEMANDA`; `elevation_m` fora da legenda; `target_handles.<letra>` no interruptor |
-| Quadro (`INSERT`) | `SISTEMA_QUADRO`, `TENSAO_NOMINAL`, `CABO_PADRAO_QUADRO`, `ALIMENTADO_POR`; `DESC.`, `SECAO.`, `DISJ.`, `CURVA.`, `CABO.`, `CABONOME.`, `ESQUEMA.`, `TENSAO.`, `FASE.`, `DR.`, `DIM.` + circuito |
+| Quadro (`INSERT`) | `SISTEMA_QUADRO`, `TENSAO_NOMINAL`, `CABO_PADRAO_QUADRO`, `ALIMENTADO_POR`, `DISJ_GERAL`, `SECAO_GERAL`, `USAR_DPS`, `CLASSE_DPS`, `DISJ_DPS`, `METODO_QUADRO`, `MODULOS_TRILHO`, `BARRAMENTO_FASE`, `BARRAMENTO_NT`; `DESC.`, `SECAO.`, `DISJ.`, `CURVA.`, `CABO.`, `CABONOME.`, `ESQUEMA.`, `TENSAO.`, `FASE.`, `DR.`, `DIM.`, `METODO.` + circuito |
 | Eletroduto | `schema_ver`, `from_handle`, `to_handle`, `install_elevation`, `conduit_type`, `conduit_profile`, `nominal_diameter_mm`, `manual_diameter_lock`, `passing_wires.<n>`, `tag_handle` |
 | Tag de fiação | `schema_ver`, `parent_conduit_handle`, `anchor_x`, `anchor_y`, `user_offset_x`, `user_offset_y` |
 | Ponto de telecom (`INSERT`) | `RACK_PAI` (handle do rack, no XDATA); `ID_PONTO`, `TIPO_CABO` e `QTD_CABOS` no atributo ou no XDATA; `telecom_link_m` (comprimento do último cálculo) |
@@ -89,7 +89,7 @@ próprio `CommandSpec`.
 | Eletrodutos | `eleeletroduto`, `eletrica.eletroduto.modelo`, `.dividir`, `.definir`, `eletrica.eletrodutos` |
 | Cálculo | `eletrica.dimensionar`, `eletrica.rotear`, `eletrica.sobrescrever`, `eletrica.quadro`, `eletrica.quadro.equilibrar`, `eletrica.cargas`, `eletrica.demanda.tabelas`, `.salvar`, `.excluir`, `eletrica.setup` |
 | Documentação | `elefiacao` (com `ancora`: direto no eletroduto; com `tag` também: linha de chamada), `eletrica.fiacao.modo`, `eleregen`, `elequadro_tabela`, `eletrica.unifilar`, `eleunifilar`, `eletrica.quadro.frontal`, `elequadro_frontal`, `elelegenda`, `eletrica.materiais`, `eletrica.inspecionar`, `eletrica.analisar` |
-| Telecom | `televincular`, `telerotear`, `eletrica.telecom`, `telefiacao` (os mesmos modos do `elefiacao`), `teletabela` |
+| Telecom | `televincular`, `telerotear`, `eletrica.telecom`, `eletrica.telecom.ponto`, `telefiacao` (os mesmos modos do `elefiacao`), `teletabela`, `telelegenda` |
 
 Comandos que só existem na interface, porque abrem janelas: `ELETRICA`, `ELECONFIG`, `ELEPONTOS`, `ELEBLOCOS`, `ELEATRIBUTOS`,
 `ELECARGAS`, `ELEROTEAR`, `ELEDIMENSIONAR`, `ELEMATERIAIS`, `ELECONFERIR`, `ELEINSPECAO`, `TELEVDI`. `ELETRICA` abre a aba

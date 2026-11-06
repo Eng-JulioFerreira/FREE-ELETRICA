@@ -111,6 +111,8 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("telefiacao", "Telecom Cabling Tags", run_telefiacao)
             .params("{eletrodutos?: [hex], limpar?: bool, ancora?: [x, y], modo?: direct | leader, tag?: [x, y], eletroduto?: hex} → the same as elefiacao; without a point, a tag in the middle of every telecom conduit: point IDs above (D-01..D-04), cables and diameter below (4x Cat6 Ø25)")
             .interactive(|_| Ok(Box::new(FiacaoM { telecom: true, ..FiacaoM::default() }))),
+        CommandSpec::new("eletrica.telecom.ponto", "Telecom Point Cable", run_telecom_ponto)
+            .params("{pontos: [hex], cabo?: telecom catalog name, quantidade?: 1 to 48} → sets the cable and the number of cables of telecom points (TIPO_CABO, QTD_CABOS) and updates tags and tables: {pontos}"),
         CommandSpec::new("teletabela", "Rack Table", run_teletabela)
             .params("{rack?: hex | TAG (default: the first), ponto: [x, y]} → draws the rack (telecom enclosure) table: port, point ID, description, cable, 3D length and status; an existing one moves: {tabela}")
             .interactive(|_| Ok(Box::new(TabelaRackM::default()))),
@@ -997,6 +999,26 @@ fn run_telefiacao(s: &mut Session, p: &Value) -> Result<Value> {
     }
     preparar(s)?;
     json_de(&regenerar_criando(s, &lista)?)
+}
+
+fn run_telecom_ponto(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "eletrica.telecom.ponto";
+    let pontos = handles(CMD, p, "pontos")?;
+    let cabo = match p.get("cabo").filter(|v| !v.is_null()) {
+        Some(v) => Some(v.as_str().ok_or_else(|| bad(CMD, "`cabo` must be text"))?.to_string()),
+        None => None,
+    };
+    let quantidade = match p.get("quantidade").filter(|v| !v.is_null()) {
+        Some(v) => Some(v.as_u64().and_then(|n| u32::try_from(n).ok()).ok_or_else(|| bad(CMD, "`quantidade` must be a whole number"))?),
+        None => None,
+    };
+    if cabo.is_none() && quantidade.is_none() {
+        return Err(bad(CMD, "give `cabo` or `quantidade`"));
+    }
+    let setup = ele::setup::atual();
+    ele::telecom::definir_cabo(s.doc_mut()?, &setup, &pontos, cabo.as_deref(), quantidade).map_err(|e| bad(CMD, e))?;
+    ele::fiacao::regenerar_se_houver(s.doc_mut()?, &setup).map_err(erro)?;
+    Ok(json!({ "pontos": pontos.len() }))
 }
 
 fn run_teletabela(s: &mut Session, p: &Value) -> Result<Value> {
