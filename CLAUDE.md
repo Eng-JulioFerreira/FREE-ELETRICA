@@ -1,5 +1,3 @@
-@AGENTS.md
-
 # Free Elétrica — instruções para agentes
 
 Free Elétrica é um addon de projeto elétrico predial de baixa tensão (NBR 5410) e telecom para o
